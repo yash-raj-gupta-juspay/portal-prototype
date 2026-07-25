@@ -11,7 +11,7 @@
   window.AppState = {
     portal: 'bank',
     sidebarCollapsed: false,
-    expanded: { merchants: true, reconciliation: true },
+    expanded: { merchants: true, reconciliation: true, 'ops-configs': true },
     active: { section: 'home', child: null },
     tabs: { feeConfigs: 'current', feeBreakdown: 'query', reports: 'library', profile: 'overview', merchantPerf: 'portfolio', disputes: 'All' },
     filters: {
@@ -23,6 +23,7 @@
     loading: {},
     // ---- Ops Portal (Phase 2) ----
     opsActive: 'ops-home',
+    opsChild: null,          // active nested sub-item (Phase 3: Platform Configs)
     query: {},
     ops: {
       approvalTab: 'pending', approvalsTenant: 'all', approvalsSla: 'all',
@@ -231,13 +232,23 @@
     { id: 'users', label: 'Users & Access', icon: 'users', route: '#/dashboard/bank/users' }
   ];
 
-  // Ops Portal sidebar — 6 sections (Part 4). Single items, no children.
+  // Ops Portal sidebar — 7 sections. Platform Configs (Phase 3) is the only
+  // nested parent, matching the Bank Portal's Merchants / Reconciliation pattern.
   var OPS_NAV = [
     { id: 'ops-home', label: 'Ops Home', icon: 'home', route: '#/dashboard/ops' },
     { id: 'ops-approvals', label: 'Fee Config Approvals', icon: 'check-square', route: '#/dashboard/ops/approvals' },
     { id: 'ops-recon', label: 'Reconciliation', icon: 'git-compare', route: '#/dashboard/ops/reconciliation' },
     { id: 'ops-files', label: 'Settlement File Monitoring', icon: 'upload', route: '#/dashboard/ops/files' },
     { id: 'ops-onboarding', label: 'Bank Onboarding', icon: 'building', route: '#/dashboard/ops/onboarding' },
+    {
+      // Sub-items inherit the parent's icon style — no separate icons (Part 2.1),
+      // which is what leaves room for the labels at the nested indent.
+      id: 'ops-configs', label: 'Platform Configs', icon: 'settings-2', route: '#/dashboard/ops/configs', children: [
+        { id: 'ops-cfg-network', label: 'Network File', full: 'Network File Configs', noIcon: true, route: '#/dashboard/ops/configs/network-files' },
+        { id: 'ops-cfg-settlement', label: 'Settlement', full: 'Settlement Configs', noIcon: true, route: '#/dashboard/ops/configs/settlement' },
+        { id: 'ops-cfg-incoming', label: 'Incoming Parsing', full: 'Incoming Parsing Configs', noIcon: true, route: '#/dashboard/ops/configs/incoming' }
+      ]
+    },
     { id: 'ops-disputes', label: 'Dispute Ops Support', icon: 'life-buoy', route: '#/dashboard/ops/disputes' }
   ];
 
@@ -253,15 +264,16 @@
           '<span class="nav-icon">' + icon(item.icon, 22) + '</span><span class="nav-label">' + item.label + '</span></div>';
       } else {
         var expanded = S.expanded[item.id];
+        var activeChild = isOps ? S.opsChild : a.child;
         html += '<div class="nav-group ' + (expanded ? 'expanded' : '') + '">' +
-          '<div class="nav-item ' + (isActiveSection && !a.child ? 'active' : '') + '" data-route="' + item.route + '" data-label="' + item.label + '" role="button" tabindex="0">' +
+          '<div class="nav-item ' + (isActiveSection && !activeChild ? 'active' : '') + '" data-route="' + item.route + '" data-label="' + item.label + '" role="button" tabindex="0">' +
           '<span class="nav-icon">' + icon(item.icon, 22) + '</span><span class="nav-label">' + item.label + '</span>' +
           '<span class="nav-chevron" data-action="toggle-section" data-section="' + item.id + '" aria-label="Toggle ' + item.label + '">' + icon('chevron-right', 16) + '</span></div>' +
           '<div class="nav-children">';
         item.children.forEach(function (ch) {
-          var chActive = a.section === item.id && a.child === ch.id;
-          html += '<div class="nav-item ' + (chActive ? 'active' : '') + '" data-route="' + ch.route + '" data-label="' + ch.label + '" role="button" tabindex="0">' +
-            '<span class="nav-icon">' + icon(ch.icon, 18) + '</span><span class="nav-label">' + ch.label + '</span></div>';
+          var chActive = isActiveSection && activeChild === ch.id;
+          html += '<div class="nav-item ' + (chActive ? 'active' : '') + (ch.noIcon ? ' no-icon' : '') + '" data-route="' + ch.route + '" data-label="' + (ch.full || ch.label) + '" title="' + (ch.full || ch.label) + '" role="button" tabindex="0">' +
+            (ch.noIcon ? '' : '<span class="nav-icon">' + icon(ch.icon, 18) + '</span>') + '<span class="nav-label">' + ch.label + '</span></div>';
         });
         html += '</div></div>';
       }
@@ -1363,6 +1375,12 @@
     // apply any ?query presets onto S.ops (used by clickable counts)
     Object.keys(S.query).forEach(function (k) { if (S.ops.hasOwnProperty(k)) S.ops[k] = S.query[k]; });
     var head = rest[0] || 'home';
+    if (head !== 'configs') S.opsChild = null;
+    if (head === 'configs') {
+      // Platform Configs (Phase 3) — the module sets S.opsChild then re-renders the sidebar.
+      S.opsActive = 'ops-configs';
+      return CFGUI.route(rest.slice(1));
+    }
     if (!rest.length || head === 'home') { S.opsActive = 'ops-home'; renderSidebar(); return viewOpsHome(); }
     if (head === 'approvals') { S.opsActive = 'ops-approvals'; renderSidebar(); return rest[1] ? viewApprovalDetail(rest[1]) : viewApprovals(); }
     if (head === 'reconciliation') { S.opsActive = 'ops-recon'; renderSidebar(); return viewOpsRecon(); }
@@ -1938,6 +1956,21 @@
     'holiday-view': function (t) { S.ops.holidayView = t.getAttribute('data-view'); viewOpsHolidays(); }
   };
 
+  /* ---- Platform Configs (Phase 3) ----------------------------------------
+     The configs module is a separate file; it receives the shared design-system
+     helpers from this shell so every screen renders with the same primitives. */
+  var CFGKIT = {
+    icon: icon, esc: esc, pill: pill, cardBox: cardBox, emptyState: emptyState, errorState: errorState,
+    setView: setView, toast: toast, el: el, go: go, num: num, fmt: fmt, pct: pct,
+    tenantTag: tenantTag, slaBadge: slaBadge,
+    immutableEntry: immutableEntry, immutablePair: immutablePair, immutableTimeline: immutableTimeline,
+    renderSidebar: renderSidebar, field: field
+  };
+  var CFGUI = window.ConfigsUI(CFGKIT);
+  var CFGQ = window.ConfigsQueue(CFGUI);
+  Object.keys(CFGUI.actions).forEach(function (k) { ACTIONS[k] = CFGUI.actions[k]; });
+  Object.keys(CFGQ.actions).forEach(function (k) { ACTIONS[k] = CFGQ.actions[k]; });
+
   function openAddUser() {
     el('overlay-mount').innerHTML = '<div class="overlay" data-action="close-overlay"><div class="modal" onclick="event.stopPropagation()">' +
       '<div class="modal-head"><div class="section-title">Add user</div><button class="icon-btn" data-action="close-overlay">' + icon('x', 16) + '</button></div>' +
@@ -1970,13 +2003,25 @@
   document.addEventListener('input', function (e) {
     var t = e.target.closest('[data-action]'); if (!t) return;
     var a = t.getAttribute('data-action');
+    // Configs: 'cfgi-*' actions are live-typing bindings (model update + targeted re-render).
+    if (a.indexOf('cfgi-') === 0) { ACTIONS[a](t); return; }
     if (a === 'filter-merchants') ACTIONS[a](t);
   });
   document.addEventListener('change', function (e) {
     var t = e.target.closest('[data-action]'); if (!t) return;
     var a = t.getAttribute('data-action');
+    // Configs: 'cfgc-*' actions are select / checkbox / radio bindings.
+    if (a.indexOf('cfgc-') === 0) { ACTIONS[a](t); return; }
     if (['filter-merchant-status', 'filter-merchant-mcc', 'fb-group', 'holiday-country', 'propose-merchant', 'report-delivery',
       'ops-approval-tenant', 'ops-approval-sla', 'recon-tenant', 'recon-cycle', 'files-tenant', 'files-status', 'ops-disp-tenant', 'ops-disp-urgency', 'holiday-ops-country'].indexOf(a) >= 0) ACTIONS[a](t);
+  });
+  // Tag inputs commit on Enter (Part 6.2 eligibility flags, Part 7.2 ack filenames).
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    var t = e.target.closest('[data-action="cfg-tag-add"]');
+    if (!t) return;
+    e.preventDefault();
+    ACTIONS['cfg-tag-add'](t);
   });
   document.addEventListener('keydown', function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); var s = el('globalSearch'); if (s) s.focus(); }
