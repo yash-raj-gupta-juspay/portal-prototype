@@ -1362,16 +1362,6 @@
     var txt = hoursLeft <= 0 ? 'Overdue ' + Math.abs(hoursLeft) + 'h' : hoursLeft + 'h left';
     return '<span class="sla ' + cls + '">' + icon(hoursLeft <= 0 ? 'alert-circle' : 'clock', 13) + txt + '</span>';
   }
-  function miniDots(states) {
-    var prevDone = true, out = '<span class="matrix-dots">';
-    ['authorized', 'parsed', 'settled'].forEach(function (k) {
-      var s = states[k] || { done: false }, cls;
-      if (s.done) cls = 'dot-done'; else if (prevDone) cls = 'dot-progress'; else cls = 'dot-pending';
-      out += '<span class="net-dot ' + cls + '"></span>'; prevDone = s.done;
-    });
-    return out + '</span>';
-  }
-
   function routeOps(rest) {
     // apply any ?query presets onto S.ops (used by clickable counts)
     Object.keys(S.query).forEach(function (k) { if (S.ops.hasOwnProperty(k)) S.ops[k] = S.query[k]; });
@@ -1385,6 +1375,9 @@
     if (!rest.length || head === 'home') { S.opsActive = 'ops-home'; renderSidebar(); return viewOpsHome(); }
     if (head === 'approvals') { S.opsActive = 'ops-approvals'; renderSidebar(); return rest[1] ? viewApprovalDetail(rest[1]) : viewApprovals(); }
     if (head === 'reconciliation') { S.opsActive = 'ops-recon'; renderSidebar(); return viewOpsRecon(); }
+    // Cycle Snapshot — the drill-in behind every Cross-Tenant Cycle Status cell.
+    // It belongs to Ops Home, so the sidebar keeps Ops Home selected.
+    if (head === 'cycle-snapshot') { S.opsActive = 'ops-home'; renderSidebar(); return CYCUI.route(rest.slice(1)); }
     if (head === 'files') { S.opsActive = 'ops-files'; renderSidebar(); return viewFiles(); }
     // IRD Reject Resolver (refinement §6) — Ops resolves a wrong / missing IRD
     // and re-stages the file without escalating to Tech.
@@ -1416,16 +1409,9 @@
       '<div class="kpi-card clickable" data-route="#/dashboard/ops/approvals?approvalTab=pending"><div class="kpi-label">Pending Fee Approvals</div><div class="kpi-value">' + k.pendingApprovals + '</div><div class="kpi-foot"><span class="kpi-link">Review queue ' + icon('arrow-right', 12) + '</span></div></div>' +
       '<div class="kpi-card clickable" data-route="#/dashboard/ops/disputes"><div class="kpi-label">Open Disputes</div><div class="kpi-value">' + k.openDisputes + '</div><div class="kpi-foot"><span class="kpi-link">Across portfolio ' + icon('arrow-right', 12) + '</span></div></div>';
 
-    // cross-tenant cycle status matrix
-    var matrixRows = O.tenants.map(function (t) {
-      var cur = O.currentCycleByTenant[t.id];
-      var cells = O.NETWORKS.map(function (net) {
-        return '<td><span class="matrix-cell" data-route="#/dashboard/ops/reconciliation?reconTenant=' + t.id + '">' + miniDots(cur.states[net.key]) + '</span></td>';
-      }).join('');
-      return '<tr><td>' + tenantTag(t.id) + '</td>' + cells + '</tr>';
-    }).join('');
-    var matrix = '<table class="ops-matrix"><thead><tr><th>Tenant</th>' + O.NETWORKS.map(function (n) { return '<th>' + n.short + '</th>'; }).join('') + '</tr></thead><tbody>' + matrixRows + '</tbody></table>' +
-      '<div class="meta mt-16">Dots: ' + '<span class="net-dot dot-done" style="display:inline-block"></span> settled · <span class="net-dot dot-progress" style="display:inline-block"></span> in progress · <span class="net-dot dot-pending" style="display:inline-block"></span> pending. Click a cell to open reconciliation for that tenant.</div>';
+    // cross-tenant cycle status grid — three legs per cell (CLR / INC / STL),
+    // each cut-off aware; a cell opens the Cycle Snapshot for that tenant × network.
+    var matrix = CYCUI.gridHtml();
 
     // action queues
     var pend = O.feeApprovals.filter(function (a) { return a.status === 'Pending'; }).sort(function (a, b) { return (48 - b.submittedHoursAgo) - (48 - a.submittedHoursAgo); });
@@ -1977,6 +1963,9 @@
   // IRD Reject Resolver shares the same design-system kit.
   var IRDUI = window.IrdUI(CFGKIT);
   Object.keys(IRDUI.actions).forEach(function (k) { ACTIONS[k] = IRDUI.actions[k]; });
+  // Cross-Tenant Cycle Status grid (Ops Home) + Cycle Snapshot drill-in.
+  var CYCUI = window.CycleUI(CFGKIT);
+  Object.keys(CYCUI.actions).forEach(function (k) { ACTIONS[k] = CYCUI.actions[k]; });
 
   function openAddUser() {
     el('overlay-mount').innerHTML = '<div class="overlay" data-action="close-overlay"><div class="modal" onclick="event.stopPropagation()">' +

@@ -57,6 +57,10 @@
   <!-- IRD Reject Resolver (refinement §6) -->
   <script src="ird-data.js"></script>
   <script src="ird-screen.js"></script>
+  <!-- Cross-Tenant Cycle Status grid + Cycle Snapshot (Ops Home refinement).
+       cycle-data.js needs window.OPS, so it loads after ops-data.js. -->
+  <script src="cycle-data.js"></script>
+  <script src="cycle-screen.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

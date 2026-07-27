@@ -524,16 +524,8 @@ textarea.input { resize: vertical; min-height: 80px; }
 .kpi-card.clickable:hover { background: var(--bg-subtle); border-color: var(--border-strong); }
 .kpi-card .kpi-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--primary); font-weight: 500; }
 
-/* Cross-tenant cycle status matrix */
-.ops-matrix { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--border-default); border-radius: 8px; overflow: hidden; }
-.ops-matrix th, .ops-matrix td { padding: 12px 14px; text-align: center; border-bottom: 1px solid var(--border-subtle); border-right: 1px solid var(--border-subtle); }
-.ops-matrix th { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary); font-weight: 500; background: var(--bg-subtle); }
-.ops-matrix th:first-child, .ops-matrix td:first-child { text-align: left; }
-.ops-matrix tr:last-child td { border-bottom: none; }
-.ops-matrix th:last-child, .ops-matrix td:last-child { border-right: none; }
-.matrix-cell { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; border-radius: 6px; padding: 5px 8px; }
-.matrix-cell:hover { background: var(--bg-subtle); }
-.matrix-dots { display: inline-flex; gap: 3px; }
+/* Cross-tenant cycle status — the three-dot matrix this component used to be was
+   replaced by the three-leg grid at the end of this file (.cyc-grid). */
 
 /* Action queues (clickable callouts) */
 .queue-col { border: 1px solid var(--border-default); border-radius: 8px; padding: 18px; }
@@ -1139,3 +1131,190 @@ tr.fee-expand td { background: var(--bg-subtle); padding: 0 !important; }
 .kt-other:hover { border-color: var(--border-strong); background: var(--bg-subtle); }
 .kt-other strong { font-size: 13px; }
 .kt-other span { font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
+
+/* =============================================================================
+   CROSS-TENANT CYCLE STATUS + CYCLE SNAPSHOT (Ops Home refinement) — additions
+   only. Every colour below resolves to an existing Phase 1/2 token or an rgba
+   tint of one. No new palette entries, no font-size scale changes.
+   ============================================================================= */
+
+/* One state vocabulary (Part 2.1) shared by the grid cell, the timeline and the
+   detail cards. The class only carries the colour; each component paints with it. */
+.st-complete   { --cyc-c: var(--status-success-fg); }
+.st-inprogress { --cyc-c: var(--primary); }
+.st-pending    { --cyc-c: var(--text-secondary); }
+.st-delayed    { --cyc-c: var(--status-warning-fg); }
+.st-failed     { --cyc-c: var(--status-danger-fg); }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* ---- The grid ------------------------------------------------------------ */
+.cyc-grid-wrap { overflow-x: auto; }
+.cyc-grid { width: 100%; min-width: 860px; border-collapse: separate; border-spacing: 8px; table-layout: fixed; }
+.cyc-grid .cyc-th { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary);
+  font-weight: 500; text-align: center; padding: 2px 0 6px; }
+.cyc-grid .cyc-th-tenant { text-align: left; width: 20%; }
+.cyc-net { display: inline-flex; align-items: center; gap: 7px; }
+.cyc-net-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
+.cyc-grid .cyc-tenant { text-align: left; font-size: 14px; font-weight: 500; padding-right: 12px;
+  white-space: nowrap; vertical-align: middle; }
+.cyc-td { padding: 0; }
+
+.cyc-cell { width: 100%; height: 96px; padding: 10px 10px 8px; font-size: inherit; color: inherit; border: 1px solid var(--border-default);
+  border-radius: 8px; background: #fff; display: flex; align-items: center; justify-content: center;
+  text-align: center; transition: border-color .12s, box-shadow .12s, filter .12s; }
+.cyc-cell:hover { border-color: var(--border-strong); box-shadow: 0 1px 3px rgba(15, 23, 42, .08); filter: brightness(.985); }
+.cyc-cell:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* Overall-state tints — 5% of the matching status token (Part 3.3) */
+.cyc-cell.tint-ok   { background: rgba(34, 197, 94, .05); }
+.cyc-cell.tint-warn { background: rgba(146, 64, 14, .05); border-color: #FDE68A; }
+.cyc-cell.tint-fail { background: rgba(239, 68, 68, .05); border-color: #FECACA; border-left: 4px solid var(--chart-negative); }
+
+.cyc-legs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; width: 100%; max-width: 172px; margin: 0 auto; }
+.cyc-seg { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 1px; border-radius: 6px; }
+.cyc-seg.st-failed { border: 1px solid #FECACA; background: rgba(239, 68, 68, .04); }
+.cyc-seg-label { font-size: 10px; font-weight: 700; letter-spacing: .6px; color: var(--text-tertiary); }
+.cyc-seg-icon { display: flex; color: var(--cyc-c); }
+.cyc-seg-icon svg { width: 15px; height: 15px; }
+.cyc-seg-ts { font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap;
+  color: var(--text-primary); }
+.cyc-seg.st-pending .cyc-seg-ts, .cyc-seg.st-inprogress .cyc-seg-ts { color: var(--text-secondary); font-weight: 500; }
+.cyc-seg.st-delayed .cyc-seg-ts, .cyc-seg.st-failed .cyc-seg-ts { color: var(--cyc-c); }
+.cyc-seg.st-failed .cyc-seg-ts { text-decoration: underline; text-decoration-style: dotted; }
+.cyc-seg.st-inprogress .cyc-seg-icon svg { animation: cyc-spin 1.4s linear infinite; }
+.cyc-seg.st-inprogress .cyc-seg-ts { animation: cyc-pulse 1.8s ease-in-out infinite; }
+.cyc-overrun { font-size: 9.5px; font-weight: 700; line-height: 14px; height: 14px; padding: 0 5px; border-radius: 999px;
+  font-variant-numeric: tabular-nums; background: var(--status-warning-bg); color: var(--status-warning-fg); white-space: nowrap; }
+.cyc-seg.st-failed .cyc-overrun { background: var(--status-danger-bg); color: var(--status-danger-fg); }
+.cyc-overrun-spacer { height: 14px; }
+.cyc-flat { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-tertiary); }
+.cyc-flat svg { width: 15px; height: 15px; }
+
+@keyframes cyc-spin { to { transform: rotate(360deg); } }
+@keyframes cyc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
+/* ---- Legend (Part 3.4) --------------------------------------------------- */
+.cyc-legend { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-subtle);
+  display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: var(--text-secondary); }
+.cyc-lg-key { font-size: 10px; font-weight: 700; letter-spacing: .6px; color: var(--text-primary);
+  background: var(--status-neutral-bg); border-radius: 4px; padding: 1px 5px; }
+.cyc-lg-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cyc-lg-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--cyc-c); font-weight: 500; }
+.cyc-lg-item svg { width: 14px; height: 14px; }
+.cyc-lg-item + .cyc-lg-item::before { content: '·'; color: var(--text-tertiary); margin-right: 3px; }
+.cyc-lg-link { color: var(--primary); font-weight: 500; text-decoration: underline; cursor: pointer; }
+
+/* ---- Cycle Snapshot header ----------------------------------------------- */
+.cyc-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cyc-net-badge { font-size: 13px; font-weight: 600; padding: 3px 12px; border-radius: 999px; border: 1px solid; }
+.cyc-head-right { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; flex-shrink: 0; }
+.cyc-status { text-align: right; }
+.cyc-status-line { max-width: 460px; margin-top: 4px; }
+.cyc-cycle-nav { display: flex; gap: 8px; }
+.cyc-cycle-nav .btn[disabled] { opacity: .45; }
+
+/* ---- The three-leg timeline (Part 4.2) ----------------------------------- */
+.tl { display: flex; flex-direction: column; }
+.tl-row { display: grid; grid-template-columns: 246px 1fr; gap: 20px; align-items: center; }
+.tl-axisrow { margin-bottom: 16px; }
+.tl-axis-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .4px; }
+.tl-head { padding: 12px 0; }
+.tl-title { font-size: 14.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tl-sub { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+.tl-delta { font-size: 12.5px; font-weight: 600; color: var(--cyc-c); margin-top: 7px; font-variant-numeric: tabular-nums; }
+
+.tl-track { position: relative; height: 68px; }
+.tl-track.tl-axis { height: 30px; border-bottom: 1px solid var(--border-default); }
+.tl-tick { position: absolute; bottom: 5px; transform: translateX(-50%); font-size: 11px; color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tl-tick.at-end { transform: translateX(-100%); }
+.tl-nowflag { position: absolute; top: -4px; transform: translateX(-50%); font-size: 11px; font-weight: 700;
+  font-variant-numeric: tabular-nums; color: var(--text-primary); background: var(--status-neutral-bg);
+  border-radius: 999px; padding: 1px 9px; white-space: nowrap; }
+
+.tl-rail { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 28px;
+  border-radius: 6px; background: var(--bg-subtle); border: 1px solid var(--border-subtle); }
+.tl-fill { position: absolute; left: 0; top: 50%; transform: translateY(-50%); height: 28px; border-radius: 6px 0 0 6px; }
+.tl-fill.st-complete   { background: rgba(34, 197, 94, .16); }
+.tl-fill.st-inprogress { background: rgba(37, 99, 235, .13); }
+.tl-fill.st-pending    { background: transparent; }
+.tl-fill.st-delayed    { background: rgba(146, 64, 14, .12); }
+.tl-fill.st-failed     { background: rgba(239, 68, 68, .12); }
+.tl-overrun { position: absolute; top: 50%; transform: translateY(-50%); height: 28px;
+  background-image: repeating-linear-gradient(45deg, rgba(146, 64, 14, .30) 0 4px, transparent 4px 9px); }
+.tl-overrun.st-failed { background-image: repeating-linear-gradient(45deg, rgba(239, 68, 68, .32) 0 4px, transparent 4px 9px); }
+.tl-now { position: absolute; top: 2px; bottom: 2px; width: 0; border-left: 2px dotted var(--text-primary); opacity: .35; }
+.tl-cut { position: absolute; top: 6px; bottom: 6px; width: 0; border-left: 2px dashed var(--text-secondary); }
+.tl-cut.st-delayed, .tl-cut.st-failed { border-left-color: var(--cyc-c); }
+.tl-cut-flag { position: absolute; bottom: 100%; left: 0; transform: translateX(-50%); margin-bottom: 3px;
+  font-size: 10.5px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; background: #fff;
+  padding: 0 5px; border-radius: 4px; font-variant-numeric: tabular-nums; }
+.tl-cut.at-end .tl-cut-flag { transform: translateX(-100%); }
+.tl-ev { position: absolute; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.tl-ev-dot { width: 12px; height: 12px; border-radius: 999px; background: var(--cyc-c); border: 2px solid #fff;
+  box-shadow: 0 0 0 1.5px var(--cyc-c); margin-left: -6px; flex-shrink: 0; }
+.tl-ev-dot.hollow { background: #fff; }
+.tl-ev-time { font-size: 11.5px; font-weight: 700; color: var(--cyc-c); background: #fff; padding: 0 4px;
+  border-radius: 4px; font-variant-numeric: tabular-nums; }
+.tl-ev.at-end { flex-direction: row-reverse; }
+.tl-ev.at-end .tl-ev-dot { margin-left: 0; margin-right: -6px; }
+
+.tl-key { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-top: 18px; padding-top: 14px;
+  border-top: 1px solid var(--border-subtle); font-size: 12px; color: var(--text-secondary); }
+.tl-key-item { display: inline-flex; align-items: center; gap: 7px; }
+.tl-key-cut { width: 0; height: 14px; border-left: 2px dashed var(--text-secondary); }
+.tl-key-now { width: 0; height: 14px; border-left: 2px dotted var(--text-primary); opacity: .5; }
+.tl-key-dot { width: 10px; height: 10px; border-radius: 999px; background: var(--text-secondary); }
+.tl-key-hatch { width: 22px; height: 12px; background-image: repeating-linear-gradient(45deg, rgba(146, 64, 14, .30) 0 4px, transparent 4px 9px); }
+
+/* ---- Snapshot detail sections (Part 4.3 / 4.4 / 4.5) --------------------- */
+.cyc-sections { display: flex; flex-direction: column; gap: 16px; }
+.cyc-head-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600;
+  color: var(--cyc-c); margin-left: 8px; }
+.cyc-head-chip svg { width: 13px; height: 13px; }
+.cyc-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 36px; align-items: start; }
+.cyc-kv { display: grid; grid-template-columns: 196px 1fr; gap: 11px 18px; font-size: 14px; align-content: start; }
+.cyc-kv dt { color: var(--text-secondary); display: flex; align-items: center; gap: 5px; }
+.cyc-kv dd { font-weight: 500; font-variant-numeric: tabular-nums; }
+.cyc-tip { display: inline-flex; color: var(--text-tertiary); cursor: help; }
+.cyc-tip svg { width: 12px; height: 12px; }
+.cyc-strong { font-weight: 700; }
+.cyc-stamp { font-weight: 600; color: var(--cyc-c); font-variant-numeric: tabular-nums; }
+.cyc-neg { display: inline-block; font-size: 11.5px; font-weight: 500; color: var(--status-warning-fg);
+  background: var(--status-warning-bg); border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+.cyc-sub-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-secondary); margin: 22px 0 8px; }
+
+.cyc-math { border: 1px solid var(--border-default); border-radius: 8px; padding: 6px 16px; align-self: start; }
+.cyc-math-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 9px 0;
+  font-size: 14px; border-bottom: 1px solid var(--border-subtle); }
+.cyc-math-row:last-child { border-bottom: none; }
+.cyc-math-row span:first-child { color: var(--text-secondary); }
+.cyc-math-row .num { font-weight: 600; white-space: nowrap; }
+.cyc-math-row.total { border-top: 1px solid var(--border-strong); }
+.cyc-math-row.total span { color: var(--text-primary); font-weight: 700; }
+.cyc-math-row.good .num { color: var(--status-success-fg); }
+.cyc-math-row.bad .num { color: var(--status-danger-fg); }
+
+.cyc-file { display: flex; align-items: center; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--border-subtle); }
+.cyc-file:last-child { border-bottom: none; }
+.cyc-file-ic { color: var(--text-tertiary); display: flex; }
+.cyc-file-body { flex: 1; min-width: 0; }
+.cyc-file-name { font-size: 14px; font-weight: 500; word-break: break-all; }
+.cyc-file-meta { font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.cyc-rej .btn-ghost { padding-left: 0; }
+
+/* ---- Reconciliation callout (Part 4.6) ----------------------------------- */
+.cyc-recon { display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  border: 1px solid var(--border-default); border-radius: 8px; padding: 16px 18px; }
+.cyc-recon.success { background: rgba(34, 197, 94, .05); border-color: #BBF7D0; }
+.cyc-recon.danger  { background: rgba(239, 68, 68, .05); border-color: #FECACA; }
+.cyc-recon.neutral { background: var(--bg-subtle); }
+.cyc-recon-head { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.cyc-recon .btn { flex-shrink: 0; }
+
+@media (max-width: 1280px) {
+  .tl-row { grid-template-columns: 200px 1fr; gap: 14px; }
+  .cyc-kv { grid-template-columns: 170px 1fr; }
+}
