@@ -46,11 +46,17 @@
   <!-- App -->
   <script src="data.js"></script>
   <script src="ops-data.js"></script>
-  <!-- Platform Configs extension (Phase 3) — must load before app.js -->
+  <!-- Platform Configs extension (Phase 3) — must load before app.js.
+       configs-formats.js first: it owns the output_format catalogues that
+       configs-data.js seeds its bodies from. -->
+  <script src="configs-formats.js"></script>
   <script src="configs-data.js"></script>
   <script src="configs-core.js"></script>
   <script src="configs-screens.js"></script>
   <script src="configs-queue.js"></script>
+  <!-- IRD Reject Resolver (refinement §6) -->
+  <script src="ird-data.js"></script>
+  <script src="ird-screen.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

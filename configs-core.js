@@ -6,7 +6,7 @@
    ============================================================================= */
 window.CFGCORE = (function () {
   'use strict';
-  var D = window.DATA, U = D.util, C = window.CFGDATA;
+  var D = window.DATA, U = D.util, C = window.CFGDATA, F = window.CFGFMT;
 
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function escT(s) { return String(s).replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
@@ -440,27 +440,129 @@ window.CFGCORE = (function () {
     if (!body || typeof body !== 'object') { out.push(err('SYNTAX', 'Config body is not an object.', '')); return split(out); }
 
     if (cfg.family === 'network-file') {
-      // 4.8 #2 — schema conformance
-      if (!body.format) out.push(err('SCHEMA', 'format is required (e.g. fixed_width).', 'header'));
-      if (!body.encoding) out.push(err('SCHEMA', 'encoding is required (ASCII or EBCDIC).', 'header'));
-      if (String(body.padding_char || '').length !== 1) out.push(warn('SCHEMA', 'padding_char should be exactly one character.', 'header'));
+      // 4.8 #2 — schema conformance, branched on the declared output format.
+      // Positional invariants only mean something for fixed_width; asserting
+      // record_length or byte coverage on an XML or CSV config would be noise.
+      var fmt = F.formatOf(body), fc = F.caps(body);
+      if (F.FORMAT_KEYS.indexOf(fmt) < 0) out.push(err('SCHEMA', 'output_format must be one of ' + F.FORMAT_KEYS.join(' / ') + '.', 'header'));
       if (!Array.isArray(body.record_types) || !body.record_types.length) out.push(err('SCHEMA', 'At least one record type is required.', 'layout'));
-      (body.record_types || []).forEach(function (rt) {
-        validateLayout(body.record_length, rt.fields, 'record type ' + (rt.record_type || '?'), out);
-      });
+
+      if (fmt === 'fixed_width') {
+        if (!body.encoding) out.push(err('SCHEMA', 'encoding is required (ASCII or EBCDIC).', 'header'));
+        if (String(body.padding_char || '').length !== 1) out.push(warn('SCHEMA', 'padding_char should be exactly one character.', 'header'));
+        (body.record_types || []).forEach(function (rt) {
+          validateLayout(body.record_length, rt.fields, 'record type ' + (rt.record_type || '?'), out);
+        });
+      } else if (fmt === 'xml') {
+        var xc = body.xml_file_config || {};
+        if (!String(xc.root_element || '').trim()) out.push(err('SCHEMA', 'xml_file_config.root_element is required.', 'header'));
+        if (!String(xc.declaration || '').trim()) out.push(warn('SCHEMA', 'xml_file_config.declaration is empty — the file will be written without an XML declaration.', 'header'));
+        (body.record_types || []).forEach(function (rt) {
+          var lbl = 'record ' + (rt.record_type || '?');
+          if (!String(rt.xml_element || rt.record_type || '').trim()) out.push(err('SCHEMA', 'Record has no XML element name.', lbl));
+          if (!(rt.fields || []).length) out.push(err('LAYOUT_EMPTY', 'Record has no fields defined.', lbl));
+          (rt.fields || []).forEach(function (f, i) {
+            var pos = 'field ' + (i + 1) + ' "' + (f.name || '(unnamed)') + '"';
+            if (!String(f.name || '').trim()) out.push(err('FIELD_NAME', 'Field name is required.', lbl + ' · ' + pos));
+            if (!String(f.xml_tag || '').trim()) out.push(err('FIELD_TAG', 'Every XML field needs a tag — the engine writes <tag>value</tag>.', lbl + ' · ' + pos));
+          });
+        });
+      } else if (fmt === 'csv') {
+        var cc = body.csv_config || {};
+        if (!String(cc.delimiter || '').length) out.push(err('SCHEMA', 'csv_config.delimiter is required.', 'header'));
+        (body.record_types || []).forEach(function (rt) {
+          var lbl = 'record type ' + (rt.record_type || '?');
+          if (!(rt.fields || []).length) out.push(err('LAYOUT_EMPTY', 'Record type has no columns defined.', lbl));
+          var seenCsv = {};
+          (rt.fields || []).forEach(function (f, i) {
+            var pos = 'column ' + (i + 1) + ' "' + (f.name || '(unnamed)') + '"';
+            if (!String(f.name || '').trim()) out.push(err('FIELD_NAME', 'Column name is required.', lbl + ' · ' + pos));
+            else if (seenCsv[f.name]) out.push(err('FIELD_DUPLICATE', 'Duplicate column "' + f.name + '" — a CSV record cannot emit the same DE/PDS twice.', lbl));
+            seenCsv[f.name] = true;
+            if (!F.isDePds(f.name) && f.name !== 'ICC_DATA') {
+              out.push(warn('FIELD_NAME', 'Column "' + f.name + '" is not a DE/PDS code — Mastercard columns are normally DE<n> or PDS<nnnn>.', lbl));
+            }
+          });
+        });
+      }
+
       // 4.8 #4 — reference integrity across tabs
       var names = C.fieldNames(body), tf = body.transform || {};
       (tf.json_extractions || []).forEach(function (g, gi) {
         if (!g.source_column) out.push(err('SCHEMA', 'JSON extraction ' + (gi + 1) + ' has no source column.', 'transform'));
         (g.rows || []).forEach(function (r) {
-          if (!r.output) out.push(err('REF', 'Extraction "' + (r.json_key || '?') + '" has no output field.', 'transform'));
-          else if (names.indexOf(r.output) < 0) out.push(warn('REF', 'Output "' + r.output + '" does not exist in any record type on the Layout tab — it will map nowhere.', 'transform'));
+          if (!r.output) out.push(err('REF', 'Extraction "' + (r.json_key || '?') + '" has no output column.', 'transform'));
         });
       });
+      // Field mappings write layout fields; a mapping for a field the layout does
+      // not declare is dead config.
+      Object.keys(tf.field_mappings || {}).forEach(function (k) {
+        var m = tf.field_mappings[k] || {};
+        if (!String(m.source || '').trim()) out.push(err('SCHEMA', 'Field mapping "' + k + '" has no source column.', 'transform'));
+        if (names.indexOf(k) < 0) out.push(warn('REF', 'Field mapping "' + k + '" is not a field in any record type on the Layout tab — it will map nowhere.', 'transform'));
+      });
+      // Group mapping (§3.2b) — the second half of the Mastercard transform.
+      var rtKeys = (body.record_types || []).map(function (rt) { return String(rt.record_type); });
+      (tf.groups || []).forEach(function (g, gi) {
+        var lbl = 'group ' + (g.name || gi + 1);
+        if (!String(g.name || '').trim()) out.push(err('SCHEMA', 'Group ' + (gi + 1) + ' has no name.', 'transform'));
+        var rts = F.recordTypesOf(g);
+        var wrapper = (g.xml_config && g.xml_config.wrapper_only) || (g.children || []).length;
+        if (!rts.length && !wrapper) out.push(warn('SCHEMA', 'Group emits no record type and wraps no children — it will produce nothing.', lbl));
+        rts.forEach(function (rt) {
+          if (!String(rt.type || '').trim()) out.push(err('SCHEMA', 'A record type entry has no type.', lbl));
+          else if (rtKeys.length && rtKeys.indexOf(String(rt.type)) < 0) {
+            out.push(err('REF_RECORD_TYPE', 'Group emits record type "' + rt.type + '", which the Layout tab does not define.', lbl));
+          }
+          (rt.conditions || []).forEach(function (c, ci) {
+            if (!String(c.field || '').trim()) out.push(err('SCHEMA', 'Condition ' + (ci + 1) + ' has no field.', lbl));
+            if (!String(c.operator || '').trim()) out.push(err('SCHEMA', 'Condition ' + (ci + 1) + ' has no operator.', lbl));
+            if (!(c.values || []).length) out.push(err('SCHEMA', 'Condition ' + (ci + 1) + ' has no values.', lbl));
+          });
+        });
+        var gf = g.fields || {};
+        Object.keys(gf.constants || {}).forEach(function (k) {
+          if (names.length && names.indexOf(k) < 0) out.push(warn('REF', 'Constant "' + k + '" is not a field in the layout.', lbl));
+        });
+        (gf.derived || []).forEach(function (d, di) {
+          if (!String(d.name || '').trim()) out.push(err('SCHEMA', 'Derived entry ' + (di + 1) + ' has no name.', lbl));
+          if (!String(d.type || '').trim()) out.push(err('SCHEMA', 'Derived "' + (d.name || di + 1) + '" has no type.', lbl));
+          if (d.type === 'config_lookup') {
+            var cols = ((d.params || {}).lookup_columns) || [];
+            if (!cols.length) out.push(err('LOOKUP_KEYS', 'config_lookup "' + d.name + '" declares no lookup_columns — the engine has nothing to key the lookup on.', lbl));
+          }
+          if (d.type === 'sum_column' && !String((d.params || {}).column || '').trim()) {
+            out.push(err('SCHEMA', 'sum_column "' + d.name + '" has no column parameter.', lbl));
+          }
+          var writes = [d.name].concat(d.aliases || []);
+          writes.forEach(function (w) {
+            if (names.length && names.indexOf(w) < 0) {
+              out.push(warn('REF', 'Derived "' + d.name + '" writes "' + w + '", which is not a field in the layout.', lbl));
+            }
+          });
+        });
+      });
+      // Layout fields nothing writes — surfaced as a warning, since padding a
+      // field to blanks is sometimes intentional.
+      if ((tf.groups || []).length || Object.keys(tf.field_mappings || {}).length) {
+        var unmapped = names.filter(function (n) {
+          if (C.isFiller({ name: n }) || n === 'Record type') return false;
+          return F.resolveSource(body, n).kind === 'none';
+        });
+        if (unmapped.length) {
+          out.push(warn('UNMAPPED', unmapped.length + ' layout field' + (unmapped.length === 1 ? '' : 's') +
+            ' have no mapping, constant or derived entry (' + unmapped.slice(0, 6).join(', ') +
+            (unmapped.length > 6 ? ', …' : '') + ') — they will be emitted empty.', 'layout'));
+        }
+      }
       if (tf.surcharge && tf.surcharge.enabled) {
         (tf.surcharge.mappings || []).forEach(function (r) {
           if (r.output && names.indexOf(r.output) < 0) out.push(warn('REF', 'Surcharge output "' + r.output + '" does not exist in the layout.', 'transform'));
         });
+      }
+      var oc = body.output_config || {};
+      if (fc.extension && !String(oc.output_extension || '').trim()) {
+        out.push(warn('SCHEMA', 'No output file extension chosen — the generator will fall back to the format default (' + fc.defaultExtension + ').', 'header'));
       }
       var ap = tf.acquirer_profile || {};
       ['file_id', 'site_id', 'company_id', 'merchant_id', 'collection_method'].forEach(function (k) {
@@ -562,6 +664,15 @@ window.CFGCORE = (function () {
       });
       var ref = body.layout_ref ? C.byId[body.layout_ref] : null;
       if (body.layout_ref && !ref) out.push(err('REF_LAYOUT', 'layout_ref "' + body.layout_ref + '" does not resolve to an existing layout config.', 'pipeline'));
+      // §4 — the source format must agree with the referenced layout, otherwise
+      // the editor would offer positions for a layout that has none (or vice versa).
+      if (ref) {
+        var refFmt = F.formatOf(ref.body);
+        if (body.source_format && body.source_format !== refFmt) {
+          out.push(err('FORMAT_MISMATCH', 'source_format is "' + body.source_format + '" but the referenced layout ' + ref.name +
+            ' is "' + refFmt + '". Positions, record length and the byte map only apply to fixed_width sources.', 'pipeline'));
+        }
+      }
       var sec = body.sectioning || {};
       if (!String(sec.field || '').trim()) out.push(err('SCHEMA', 'sectioning.field is required.', 'pipeline'));
       else if (ref) {
@@ -588,15 +699,42 @@ window.CFGCORE = (function () {
     if (cfg.family === 'incoming-parsing' && cfg.subType === 'parser') {
       var rt = body.record_types || {};
       var keys = Object.keys(rt);
+      var pfmt = body.source_format || 'delimited';
       if (!keys.length) out.push(err('SCHEMA', 'At least one record type is required.', 'parser'));
+      if ((pfmt === 'delimited' || pfmt === 'csv') && !String(body.delimiter || '').length) {
+        out.push(err('SCHEMA', 'A delimited source needs a delimiter.', 'parser'));
+      }
       keys.forEach(function (k) {
         var g = rt[k] || {}, mp = g.mappings || {};
-        if (!Object.keys(mp).length) out.push(err('SCHEMA', 'Record type ' + k + ' has no mappings.', k));
+        // A record that only declares field windows (a trailer whose counts feed
+        // aggregation rather than an internal field) is legitimate.
+        if (!Object.keys(mp).length && !(g.fields || []).length) {
+          out.push(err('SCHEMA', 'Record type ' + k + ' has neither mappings nor field windows — it parses nothing.', k));
+        } else if (!Object.keys(mp).length) {
+          out.push(warn('SCHEMA', 'Record type ' + k + ' parses fields but maps none of them to an internal field.', k));
+        }
         Object.keys(mp).forEach(function (t) {
           // 7.3 — mapping targets are known internal field names
           if (C.INTERNAL_FIELDS.indexOf(t) < 0) out.push(warn('REF_MAPPING', 'Mapping target "' + t + '" is not a known internal field name.', k));
           if (!String(mp[t] || '').trim()) out.push(err('SCHEMA', 'Mapping "' + t + '" has no source column.', k));
         });
+        // Positional field windows only exist on a fixed-width source; on any
+        // other source they would be silently ignored by the parser.
+        if (pfmt === 'fixed_width') {
+          (g.fields || []).forEach(function (f, i) {
+            var pos = 'field ' + (i + 1) + ' "' + (f.name || '(unnamed)') + '"';
+            if (!(+f.start >= 1)) out.push(err('FIELD_START', 'Start position must be 1-indexed (≥ 1).', k + ' · ' + pos));
+            if (!(+f.length >= 1)) out.push(err('FIELD_LENGTH', 'Length must be at least 1 byte.', k + ' · ' + pos));
+          });
+          if (g.min_length != null && (g.fields || []).length) {
+            var reach = (g.fields || []).reduce(function (m, f) { return Math.max(m, (+f.start || 0) + (+f.length || 0) - 1); }, 0);
+            if (reach > +g.min_length) {
+              out.push(warn('MIN_LENGTH', 'Fields reach byte ' + reach + ' but min_length is ' + g.min_length + ' — short records would be rejected before these fields are read.', k));
+            }
+          }
+        } else if ((g.fields || []).length) {
+          out.push(warn('POSITIONS_IGNORED', 'Record type ' + k + ' declares byte positions, but source_format is "' + pfmt + '" — positions are only read for fixed_width sources.', k));
+        }
         (g.filters || []).forEach(function (f, i) {
           if (!f.field) out.push(err('SCHEMA', 'Filter ' + (i + 1) + ' has no field.', k));
           if (C.CONDITIONS.indexOf(f.condition) < 0) out.push(err('SCHEMA', 'Filter ' + (i + 1) + ' operator must be one of ' + C.CONDITIONS.join(' / ') + '.', k));

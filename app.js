@@ -239,6 +239,7 @@
     { id: 'ops-approvals', label: 'Fee Config Approvals', icon: 'check-square', route: '#/dashboard/ops/approvals' },
     { id: 'ops-recon', label: 'Reconciliation', icon: 'git-compare', route: '#/dashboard/ops/reconciliation' },
     { id: 'ops-files', label: 'Settlement File Monitoring', icon: 'upload', route: '#/dashboard/ops/files' },
+    { id: 'ops-ird', label: 'IRD Rejects', icon: 'shield-alert', route: '#/dashboard/ops/ird-rejects' },
     { id: 'ops-onboarding', label: 'Bank Onboarding', icon: 'building', route: '#/dashboard/ops/onboarding' },
     {
       // Sub-items inherit the parent's icon style — no separate icons (Part 2.1),
@@ -1385,6 +1386,9 @@
     if (head === 'approvals') { S.opsActive = 'ops-approvals'; renderSidebar(); return rest[1] ? viewApprovalDetail(rest[1]) : viewApprovals(); }
     if (head === 'reconciliation') { S.opsActive = 'ops-recon'; renderSidebar(); return viewOpsRecon(); }
     if (head === 'files') { S.opsActive = 'ops-files'; renderSidebar(); return viewFiles(); }
+    // IRD Reject Resolver (refinement §6) — Ops resolves a wrong / missing IRD
+    // and re-stages the file without escalating to Tech.
+    if (head === 'ird-rejects') { S.opsActive = 'ops-ird'; renderSidebar(); return IRDUI.route(rest.slice(1)); }
     if (head === 'onboarding') {
       S.opsActive = 'ops-onboarding'; renderSidebar();
       if (rest[1] === 'new') return viewOnboardNew();
@@ -1970,6 +1974,9 @@
   var CFGQ = window.ConfigsQueue(CFGUI);
   Object.keys(CFGUI.actions).forEach(function (k) { ACTIONS[k] = CFGUI.actions[k]; });
   Object.keys(CFGQ.actions).forEach(function (k) { ACTIONS[k] = CFGQ.actions[k]; });
+  // IRD Reject Resolver shares the same design-system kit.
+  var IRDUI = window.IrdUI(CFGKIT);
+  Object.keys(IRDUI.actions).forEach(function (k) { ACTIONS[k] = IRDUI.actions[k]; });
 
   function openAddUser() {
     el('overlay-mount').innerHTML = '<div class="overlay" data-action="close-overlay"><div class="modal" onclick="event.stopPropagation()">' +
@@ -2005,6 +2012,8 @@
     var a = t.getAttribute('data-action');
     // Configs: 'cfgi-*' actions are live-typing bindings (model update + targeted re-render).
     if (a.indexOf('cfgi-') === 0) { ACTIONS[a](t); return; }
+    // IRD resolver: the apply reason is a live-typing binding.
+    if (a === 'ird-reason') { ACTIONS[a](t); return; }
     if (a === 'filter-merchants') ACTIONS[a](t);
   });
   document.addEventListener('change', function (e) {
@@ -2012,6 +2021,8 @@
     var a = t.getAttribute('data-action');
     // Configs: 'cfgc-*' actions are select / checkbox / radio bindings.
     if (a.indexOf('cfgc-') === 0) { ACTIONS[a](t); return; }
+    // IRD resolver: selects, checkboxes and the candidate radios.
+    if (a.indexOf('ird-') === 0 && a !== 'ird-reason' && ACTIONS[a]) { ACTIONS[a](t); return; }
     if (['filter-merchant-status', 'filter-merchant-mcc', 'fb-group', 'holiday-country', 'propose-merchant', 'report-delivery',
       'ops-approval-tenant', 'ops-approval-sla', 'recon-tenant', 'recon-cycle', 'files-tenant', 'files-status', 'ops-disp-tenant', 'ops-disp-urgency', 'holiday-ops-country'].indexOf(a) >= 0) ACTIONS[a](t);
   });

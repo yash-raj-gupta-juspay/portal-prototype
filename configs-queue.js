@@ -6,7 +6,7 @@
    ============================================================================= */
 window.ConfigsQueue = function (ui) {
   'use strict';
-  var api = ui.api, kit = api.kit, S = api.S, C = api.C, X = api.X;
+  var api = ui.api, kit = api.kit, S = api.S, C = api.C, X = api.X, F = window.CFGFMT;
   var D = window.DATA, U = D.util;
   var icon = kit.icon, esc = kit.esc, pill = kit.pill, cardBox = kit.cardBox, emptyState = kit.emptyState,
     setView = kit.setView, toast = kit.toast, el = kit.el, go = kit.go, slaBadge = kit.slaBadge;
@@ -36,8 +36,20 @@ window.ConfigsQueue = function (ui) {
     var s = X.showVal(v);
     return '<span class="dv-val ' + (kind === 'removed' && side === 'left' ? 'strike' : '') + '">' + esc(s) + '</span>';
   }
+  // Only fixed-width layouts have a byte map; an XML or CSV layout is compared by
+  // its record / field structure instead (§1).
   function layoutMaps(body, label) {
     if (!body || !body.record_types || !body.record_types.length) return '';
+    if (!F.isFixed(body)) {
+      return '<div class="struct-summary"><div class="ss-head">' + icon(F.caps(body).icon, 14) +
+        '<strong>' + esc(label) + '</strong><span class="meta">' + esc(F.caps(body).label) + ' — no byte positions</span></div>' +
+        '<div class="ss-rows">' + body.record_types.map(function (rt) {
+          return '<div class="ss-row"><span class="mono ss-rt">' + esc(rt.record_type || '?') + '</span>' +
+            '<span class="meta">' + (rt.fields || []).length + ' field' + ((rt.fields || []).length === 1 ? '' : 's') + '</span>' +
+            '<span class="ss-names mono">' + esc((rt.fields || []).slice(0, 10).map(function (f) { return f.name; }).join(', ')) +
+            ((rt.fields || []).length > 10 ? ' …' : '') + '</span></div>';
+        }).join('') + '</div></div>';
+    }
     return body.record_types.map(function (rt) {
       return X.byteMapHtml(body.record_length, rt.fields, { compact: true, title: label + ' · record type ' + esc(rt.record_type || '?') });
     }).join('');
@@ -65,7 +77,7 @@ window.ConfigsQueue = function (ui) {
     var hasLayout = (leftBody && leftBody.record_types) || (rightBody && rightBody.record_types);
     if (hasLayout) {
       maps = '<div class="dv-maps">' +
-        '<div class="dv-maps-head">' + icon('ruler', 15) + '<strong>Byte map comparison</strong><span class="meta">stacked so layout differences are visible at a glance</span></div>' +
+        '<div class="dv-maps-head">' + icon('ruler', 15) + '<strong>Layout comparison</strong><span class="meta">stacked so layout differences are visible at a glance</span></div>' +
         (leftBody ? layoutMaps(leftBody, leftLabel) : '<div class="meta">No previous layout — this is a new config.</div>') +
         layoutMaps(rightBody, rightLabel) +
         '</div>';
@@ -369,9 +381,9 @@ window.ConfigsQueue = function (ui) {
     'cfg-q-open': function (t) {
       var cfg = C.byId[t.getAttribute('data-id')];
       if (!cfg) return;
-      api.resetEdit();
-      S.cfg.selected[cfg.family] = cfg.configId;
-      go(api.famRoute(cfg.family, cfg.configId));
+      // A settlement config opens on its report ITEM, on the right tab (§5).
+      var target = cfg.family === 'settlement' ? (C.itemKeyForConfig(cfg) || cfg.configId) : cfg.configId;
+      go(api.famRoute(cfg.family, target));
     }
   };
 
