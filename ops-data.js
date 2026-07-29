@@ -430,13 +430,27 @@ window.OPS = (function () {
     rejTotalINR += toINR(amt, t.currency); rejTotalCount += cnt;
   });
 
+  /* Month-to-date transaction count across all tenants (Part 2.2 KPI #2).
+     Built from a per-day series so the card's sparkline is the same data the
+     headline number totals — weekends dip, the month builds. */
+  var txnSeries = (function () {
+    var r = rng(211069), out = [], mtdStart = TODAY.slice(0, 8) + '01';
+    for (var d = mtdStart; d <= TODAY; d = U.addDays(d, 1)) {
+      var wd = U.fromYmd(d).getUTCDay();
+      var weekend = (wd === 0 || wd === 6) ? 0.72 : 1;   // seeded to total 3,42,18,904 MTD (Part 7.3)
+      out.push(Math.round((1560000 + r() * 340000) * weekend));
+    }
+    return out;
+  })();
+  var totalTxnsMTD = txnSeries.reduce(function (s, v) { return s + v; }, 0);
+
   // tenant health for status strip
   function tenantHealth(t) {
     var pend = feeApprovals.filter(function (a) { return a.status === 'Pending' && a.tenantId === t.id; }).length;
     var cur = currentCycleByTenant[t.id];
     var inProg = Object.keys(cur.states).some(function (k) { return !cur.states[k].settled.done; });
     var recentBreak = settledCycles(t.id).slice(0, 2).some(function (c) { return c.hasBreak; }); // only a break in the last 2 cycles is "active"
-    if (recentBreak) return { text: 'Break under investigation', kind: 'danger', goto: '#/dashboard/ops/reconciliation', set: 'reconTenant:' + t.id };
+    if (recentBreak) return { text: 'Reconciliation break', kind: 'danger', goto: '#/dashboard/ops/reconciliation', set: 'reconTenant:' + t.id };
     if (inProg) return { text: 'Cycle in progress', kind: 'info', goto: '#/dashboard/ops/reconciliation', set: 'reconTenant:' + t.id };
     if (pend > 0) return { text: pend + ' fee approval' + (pend > 1 ? 's' : '') + ' pending', kind: 'warning', goto: '#/dashboard/ops/approvals', set: 'approvalsTenant:' + t.id + ';approvalTab:pending' };
     return { text: 'Nominal', kind: 'success', goto: '#/dashboard/ops/reconciliation', set: 'reconTenant:' + t.id };
@@ -453,7 +467,7 @@ window.OPS = (function () {
     holidays: combinedHolidays,
     onboardingTenants: onboardingTenants, onboardingById: onboardingById, configHistory: configHistory,
     ruleKey: ruleKey,
-    kpis: { activeTenants: 4, totalMtdINR: totalMtdINR, pendingApprovals: pendingApprovals, openDisputes: openDisputes, rejTotalINR: round2(rejTotalINR), rejTotalCount: rejTotalCount, rejByTenant: rejByTenant },
+    kpis: { activeTenants: 4, totalMtdINR: totalMtdINR, totalTxnsMTD: totalTxnsMTD, txnSeries: txnSeries, pendingApprovals: pendingApprovals, openDisputes: openDisputes, rejTotalINR: round2(rejTotalINR), rejTotalCount: rejTotalCount, rejByTenant: rejByTenant },
     tenantHealth: tenantHealth,
     util: U
   };

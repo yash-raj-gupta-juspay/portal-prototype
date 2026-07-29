@@ -316,6 +316,9 @@
     var seg = raw.split('/').filter(Boolean);
     if (seg[0] !== 'dashboard') { location.hash = '#/dashboard/bank/home'; return; }
     S.portal = (seg[1] === 'ops') ? 'ops' : 'bank';
+    // The Ops Portal is fully fluid (Part 1); the Bank Portal keeps its fixed
+    // reading width. One class on the shell scopes every responsive rule.
+    var appEl = el('app'); if (appEl) appEl.classList.toggle('portal-ops', S.portal === 'ops');
     renderTopbar();
 
     if (S.portal === 'ops') { return routeOps(seg.slice(2)); }
@@ -1405,13 +1408,16 @@
 
     var kpis =
       '<div class="kpi-card"><div class="kpi-label">Active Tenants</div><div class="kpi-value">' + k.activeTenants + '</div><div class="kpi-foot"><span class="meta">all provisioned</span></div></div>' +
+      '<div class="kpi-card"><div class="kpi-label">Total Transactions Processed</div><div class="kpi-value">' + num(k.totalTxnsMTD) + '</div><div class="kpi-foot"><span class="meta">MTD, all tenants</span>' + spark(k.txnSeries, 90, 30, '#2563EB') + '</div></div>' +
       '<div class="kpi-card" title="Aggregated across tenants at 1 SGD = ₹61.5, 1 HKD = ₹10.7 (rates as of prototype date)"><div class="kpi-label">Total MTD Volume <span class="meta">(INR-eq)</span></div><div class="kpi-value">' + fmtCr(k.totalMtdINR) + '</div><div class="kpi-foot"><span class="meta">' + icon('info', 12) + ' converted to INR</span></div></div>' +
       '<div class="kpi-card clickable" data-route="#/dashboard/ops/approvals?approvalTab=pending"><div class="kpi-label">Pending Fee Approvals</div><div class="kpi-value">' + k.pendingApprovals + '</div><div class="kpi-foot"><span class="kpi-link">Review queue ' + icon('arrow-right', 12) + '</span></div></div>' +
       '<div class="kpi-card clickable" data-route="#/dashboard/ops/disputes"><div class="kpi-label">Open Disputes</div><div class="kpi-value">' + k.openDisputes + '</div><div class="kpi-foot"><span class="kpi-link">Across portfolio ' + icon('arrow-right', 12) + '</span></div></div>';
 
-    // cross-tenant cycle status grid — three legs per cell (CLR / INC / STL),
-    // each cut-off aware; a cell opens the Cycle Snapshot for that tenant × network.
-    var matrix = CYCUI.gridHtml();
+    // cross-tenant cycle status grid — four legs per cell (CLR / STL / INC / JV2),
+    // each cutoff aware, with its own cycle-date stepper. A cell opens the Cycle
+    // Snapshot for that tenant × network. The whole section owns its own mount so
+    // stepping the date never re-renders the rest of this page.
+    var matrix = CYCUI.gridSection();
 
     // action queues
     var pend = O.feeApprovals.filter(function (a) { return a.status === 'Pending'; }).sort(function (a, b) { return (48 - b.submittedHoursAgo) - (48 - a.submittedHoursAgo); });
@@ -1449,8 +1455,8 @@
     setView(
       '<div class="page-head"><div><h1 class="page-title">Operations Overview</h1><div class="subtitle">' + U.prettyLong(D.TODAY) + ' · cross-tenant platform snapshot</div></div></div>' +
       '<div class="ops-status-strip">' + strip + '</div>' +
-      '<div class="grid grid-4 mb-16">' + kpis + '</div>' +
-      '<div class="section-title mb-16 mt-16">Cross-tenant cycle status</div>' + cardBox('', matrix) +
+      '<div class="grid grid-5 mb-16">' + kpis + '</div>' +
+      '<div class="mt-16">' + matrix + '</div>' +
       '<div class="section-title mb-16 mt-24">Action queues</div>' +
       '<div class="grid grid-3">' +
       '<div class="queue-col"><div class="qc-head">Fee Approvals <a class="btn-ghost" data-route="#/dashboard/ops/approvals">All ' + icon('arrow-right', 13) + '</a></div>' + feeQueue + '</div>' +

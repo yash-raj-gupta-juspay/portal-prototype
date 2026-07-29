@@ -1,29 +1,34 @@
 /* =============================================================================
    Juspay Ops Portal — Cycle status / Cycle Snapshot mock data
-   (Ops Home refinement: Cross-Tenant Cycle Status + Cycle Snapshot drill-in)
+   (Ops Home refinement — four-leg cycle model)
 
    Extends window.DATA / window.OPS. Deterministic, in-memory only.
    window.CYCLES is consumed by cycle-screen.js.
 
    ---------------------------------------------------------------------------
-   THE CLOCK MODEL (read this before touching cutoffs)
+   THE CLOCK MODEL (read this before touching any time in this file)
    ---------------------------------------------------------------------------
-   A cycle is one tenant × one network × one cycle date. The transaction cohort
-   closes at the network's clearing cut-off the evening before; the cycle is then
-   *processed* across the cycle date itself:
+   A cycle is one tenant × one network × one *transaction* date T. Everything
+   after that is processing, and it does not all happen on T — which is exactly
+   what the old three-leg model hid. So every time in this file is held as
+   **absolute minutes from midnight IST on the cycle date T**:
 
-       cohort closes  →  clearing file out  →  incoming file in  →  settled
-       (prev 22:00)      (~02:14)              (~04:07)             (by 22:00)
+       0      = T   00:00 IST
+       1440   = T+1 00:00 IST
+       2880   = T+2 00:00 IST
 
-   So every leg cut-off in Part 5 is held here as a time-of-day (minutes from
-   midnight) on that single processing clock, and both the grid and the snapshot
-   timeline render against it. That is what lets one cell show "02:14 / 04:07 /
-   by 22:00" together, and what lets the snapshot draw all three cut-offs on one
-   horizontal axis.
+   That single number is what lets a JV2 leg due at T+2 02:30 (= 3030) sit on
+   the same axis as a clearing leg that fired at T 22:00 (= 1320), and it is why
+   the snapshot timeline can draw day dividers without any date arithmetic.
+   Render with hhmm() for the clock face and dayTag() for the T+n suffix.
 
-   Times run on each tenant's own local clock (wall-clock parity: 06:35 IST for
-   the Indian tenants is 06:35 SGT for HSBC SG). The grid labels everything IST
-   per Part 7.3; the snapshot labels each tenant's own zone.
+   Two schedule profiles (Part 5). The asymmetry is real and deliberate:
+   SGT/HKT is 2.5h ahead of IST, so the SG/HK cycle fires on the *same* IST
+   calendar day as the transaction date, while the Indian cycle fires the next.
+
+   All leg times are IST — processing runs out of India for every tenant. Only
+   the transaction cohort window is stated in the tenant's own zone, because
+   that is the one thing that genuinely happened on local time.
    ============================================================================= */
 window.CYCLES = (function () {
   'use strict';
@@ -43,13 +48,27 @@ window.CYCLES = (function () {
   function seedOf(str) { var s = 7; for (var i = 0; i < str.length; i++) s = (s * 31 + str.charCodeAt(i)) >>> 0; return s; }
   function round2(n) { return Math.round(n * 100) / 100; }
 
-  var TODAY = D.TODAY;                 // 2025-11-21
-  var NOW_MIN = 6 * 60 + 35;           // 06:35 — the ops user is at their desk (Part 8.1)
+  /* =========================================================================
+     WHERE THE OPS USER IS STANDING (Part 7.1)
+     09:00 IST on 21 Nov 2025, looking at the cycle for transaction date
+     20 Nov 2025. D.TODAY is the processing day; the cycle is the day before.
+     ========================================================================= */
+  var TODAY = D.TODAY;                       // 2025-11-21 — processing day
+  var CYCLE_TODAY = U.addDays(TODAY, -1);    // 2025-11-20 — current cycle date
+  var NOW_ABS = 1440 + 9 * 60;               // T+1 09:00 IST
 
   /* ---- time helpers ------------------------------------------------------- */
-  function hhmm(min) {
-    min = ((Math.round(min) % 1440) + 1440) % 1440;
-    return String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0');
+  function hhmm(abs) {
+    var m = ((Math.round(abs) % 1440) + 1440) % 1440;
+    return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  }
+  function dayOf(abs) { return Math.floor(abs / 1440); }
+  function dayTag(abs) { var d = dayOf(abs); return d === 0 ? 'T' : 'T+' + d; }
+  function dateAt(cycleDate, abs) { return U.addDays(cycleDate, dayOf(abs)); }
+  function stamp(cycleDate, abs) { return U.prettyDate(dateAt(cycleDate, abs)) + ', ' + hhmm(abs) + ' IST'; }
+  function shortStamp(cycleDate, abs) {
+    var d = U.fromYmd(dateAt(cycleDate, abs));
+    return d.getUTCDate() + ' ' + U.MON[d.getUTCMonth()] + ' ' + hhmm(abs) + ' IST';
   }
   function dur(mins) {
     mins = Math.max(0, Math.round(mins));
@@ -58,7 +77,7 @@ window.CYCLES = (function () {
     return h + 'h' + (m ? ' ' + m + 'm' : '');
   }
 
-  /* ---- timezones (Part 7.3) ---------------------------------------------- */
+  /* ---- timezones — cohort windows only ------------------------------------ */
   var TZ = {
     yesbank: { code: 'IST', offset: 'UTC+5:30' },
     'hsbc-in': { code: 'IST', offset: 'UTC+5:30' },
@@ -68,50 +87,40 @@ window.CYCLES = (function () {
   function tzOf(tenantId) { return TZ[tenantId] || TZ['hsbc-in']; }
 
   /* =========================================================================
-     CUT-OFF MODEL (Part 5)
-     Network defaults, then per-tenant negotiated overrides. Part 5 is explicit
-     that cut-offs are per network × per tenant and that some tenants have
-     negotiated windows — HSBC SG is the one that has.
+     PART 3.1 — NETWORK AVAILABILITY MATRIX
+     The single source of truth for which cells render at all. Six of the
+     sixteen combinations do not exist and must never render as a status.
      ========================================================================= */
-  var NET_CUTOFFS = {
-    visa: { clearing: 22 * 60, incoming: 6 * 60, settled: 22 * 60 },
-    mc: { clearing: 21 * 60 + 30, incoming: 5 * 60 + 30, settled: 21 * 60 + 30 },
-    rupay: { clearing: 22 * 60 + 30, incoming: 7 * 60, settled: 22 * 60 + 30 },
-    onus: { clearing: 20 * 60, incoming: 22 * 60, settled: 20 * 60 }
+  var AVAILABILITY = {
+    yesbank: { visa: true, mc: true, rupay: true, onus: false },
+    'hsbc-in': { visa: true, mc: true, rupay: true, onus: false },
+    'hsbc-sg': { visa: true, mc: true, rupay: false, onus: false },
+    'hsbc-hk': { visa: true, mc: true, rupay: false, onus: true }
   };
-
-  /* HSBC SG runs one consolidated 06:00 SGT incoming window so every network
-     feeds a single MAS settlement run; Mastercard alone is negotiated later
-     (07:30) because GCMS delivers to the SG endpoint after the APAC batch. */
-  var TENANT_CUTOFFS = {
-    'hsbc-sg': {
-      rupay: { incoming: 6 * 60 },
-      onus: { incoming: 6 * 60 },
-      mc: { incoming: 7 * 60 + 30 }
-    }
-  };
-
-  function cutoffsFor(tenantId, netKey) {
-    var base = NET_CUTOFFS[netKey] || NET_CUTOFFS.visa;
-    var ov = (TENANT_CUTOFFS[tenantId] || {})[netKey] || {};
-    return {
-      clearing: ov.clearing != null ? ov.clearing : base.clearing,
-      incoming: ov.incoming != null ? ov.incoming : base.incoming,
-      settled: ov.settled != null ? ov.settled : base.settled,
-      negotiated: {
-        clearing: ov.clearing != null, incoming: ov.incoming != null, settled: ov.settled != null
-      },
-      platform: { clearing: base.clearing, incoming: base.incoming, settled: base.settled }
-    };
+  function enabled(tenantId, netKey) {
+    var row = AVAILABILITY[tenantId];
+    return !!(row && row[netKey]);
+  }
+  function networksFor(tenantId) {
+    return O.NETWORKS.filter(function (n) { return enabled(tenantId, n.key); });
   }
 
   /* =========================================================================
-     LEG VOCABULARY (Part 2.1)
+     PART 4.2 — THE FOUR LEGS
+     Temporal order, not file order: CLR and STL fire together, INC lands hours
+     later, JV2 a full cycle later. `band` drives the snapshot's visual grouping.
      ========================================================================= */
   var LEG_DEFS = [
-    { key: 'clearing', short: 'CLR', label: 'Clearing', sub: 'outgoing to network' },
-    { key: 'incoming', short: 'INC', label: 'Incoming', sub: 'response from network' },
-    { key: 'settled', short: 'STL', label: 'Settled', sub: 'funds to acquirer nostro' }
+    { key: 'clearing', short: 'CLR', label: 'Clearing', sub: 'outgoing to network', band: 'outgoing', verb: 'Submitted' },
+    { key: 'settlement', short: 'STL', label: 'Settlement files', sub: 'MPR · MPF · JV1 to acquirer', band: 'outgoing', verb: 'Generated' },
+    { key: 'incoming', short: 'INC', label: 'Incoming', sub: 'response from network', band: 'incoming', verb: 'Received' },
+    { key: 'jv2', short: 'JV2', label: 'JV2', sub: 'next-cycle file to acquirer', band: 'next', verb: 'Generated' }
+  ];
+  var LEG_KEYS = LEG_DEFS.map(function (l) { return l.key; });
+  var BANDS = [
+    { key: 'outgoing', label: 'Outgoing', sub: 'to network + acquirer', legs: ['clearing', 'settlement'] },
+    { key: 'incoming', label: 'Incoming', sub: 'from network', legs: ['incoming'] },
+    { key: 'next', label: 'Next-cycle outgoing', sub: 'to acquirer', legs: ['jv2'] }
   ];
   var STATE_META = {
     complete: { label: 'Complete', icon: 'check', kind: 'success' },
@@ -122,141 +131,250 @@ window.CYCLES = (function () {
   };
 
   /* =========================================================================
-     AUTHORED CYCLE PLANS
-     `at` = actual completion, `started` = in-flight start, `failed` = hard fail.
-     All values are minutes from midnight on the processing clock.
-     ========================================================================= */
+     PART 5 — THE SCHEDULE MODEL
+     Two profiles. Every `expected` is absolute minutes from T 00:00 IST.
+     Cutoff is expected + 2h, everywhere, with no exceptions (Part 5 preamble).
 
-  /* Today (Part 8.1) — ops user at ~06:35. */
-  function P(clr, inc, stl) { return { clearing: clr, incoming: inc, settled: stl }; }
+     ON-TIME TOLERANCE. Part 5.1 states the incoming leg as a *window*,
+     07:00–08:00 with 07:30 nominal — i.e. the leg is still on time up to 30
+     minutes past its nominal expected time. That 30 minutes is the platform's
+     on-time tolerance and is applied to every leg: a leg turns amber when it
+     misses expected + 30m, and is a hard breach once it passes the cutoff.
+     The overrun badge always counts from the nominal expected time.
+     ========================================================================= */
+  var GRACE_MIN = 30;
+  var CUTOFF_LAG = 120;
+
+  function legSched(expected, note) {
+    return { expected: expected, grace: expected + GRACE_MIN, cutoff: expected + CUTOFF_LAG, note: note || null };
+  }
+
+  var PROFILES = {
+    indian: {
+      id: 'indian',
+      label: 'Indian schedule',
+      tenants: 'YES BANK · HSBC IN',
+      dayNote: 'Processing runs on T+1 IST — the day after the transaction date.',
+      legs: {
+        clearing: legSched(1440 + 30, 'Clearing file to Visa / Mastercard / RuPay'),
+        settlement: legSched(1440 + 30, 'MPR, MPF and JV1 delivered to the acquirer'),
+        incoming: legSched(1440 + 7 * 60 + 30, 'Incoming from network — window 07:00–08:00, 07:30 nominal'),
+        jv2: legSched(2880 + 30, 'JV2 delivered to the acquirer, a full cycle later')
+      }
+    },
+    apac: {
+      id: 'apac',
+      label: 'Asia-Pacific schedule',
+      tenants: 'HSBC SG · HSBC HK',
+      dayNote: 'SGT / HKT runs 2.5h ahead of IST, so clearing and settlement fire on the transaction date itself in IST.',
+      legs: {
+        clearing: legSched(22 * 60, 'Clearing file to network'),
+        settlement: legSched(22 * 60 + 30, 'MPR, MPF and JV1 delivered to the acquirer'),
+        incoming: legSched(1440 + 3 * 60, 'Incoming from network'),
+        jv2: legSched(1440 + 22 * 60 + 30, 'JV2 delivered to the acquirer, a full cycle later')
+      }
+    }
+  };
+  var PROFILE_OF = {
+    yesbank: 'indian', 'hsbc-in': 'indian',
+    'hsbc-sg': 'apac', 'hsbc-hk': 'apac'
+  };
+  function profileFor(tenantId) { return PROFILES[PROFILE_OF[tenantId] || 'indian']; }
+  function scheduleFor(tenantId) { return profileFor(tenantId).legs; }
+
+  /* =========================================================================
+     AUTHORED CYCLE PLANS
+     `at` = actual completion (absolute minutes), `started` = in-flight start,
+     `failed` = hard failure. Anything not authored is generated clean.
+     ========================================================================= */
+  function P(clr, stl, inc, jv2) { return { clearing: clr, settlement: stl, incoming: inc, jv2: jv2 || {} }; }
+  function IN_(h, m) { return 1440 + h * 60 + m; }     // T+1 hh:mm IST
+  function T_(h, m) { return h * 60 + m; }             // T   hh:mm IST
+
+  /* Part 7.1 — the current cycle (20 Nov transactions), seen at T+1 09:00. */
   var TODAY_PLAN = {
     yesbank: {
-      visa: P({ at: 134 }, { at: 247 }, {}),                       // 02:14 · 04:07 · by 22:00
-      mc: P({ at: 118 }, { at: 232 }, {}),                         // 01:58 · 03:52 · by 21:30
-      rupay: P({ at: 152 }, { started: 314 }, {}),                 // 02:32 · running since 05:14
-      onus: P({ at: 105 }, { at: 200 }, {})                        // 01:45 · 03:20 · by 20:00
+      visa: P({ at: IN_(0, 28) }, { at: IN_(0, 34) }, { at: IN_(7, 22) }),
+      mc: P({ at: IN_(0, 31) }, { at: IN_(0, 36) }, { at: IN_(7, 48) }),
+      // The amber row. Incoming landed 08:22 — 52m past the 07:30 nominal, so
+      // outside the on-time window, but still inside the 09:30 cutoff.
+      rupay: P({ at: IN_(0, 33) }, { at: IN_(0, 39) }, { at: IN_(8, 22) })
     },
     'hsbc-in': {
-      visa: P({ at: 124 }, { at: 238 }, {}),                       // 02:04 · 03:58
-      mc: P({ at: 131 }, { at: 252 }, {}),                         // 02:11 · 04:12
-      rupay: P({ at: 146 }, { at: 275 }, {}),                      // 02:26 · 04:35
-      onus: P({ at: 112 }, { at: 214 }, {})                        // 01:52 · 03:34
+      visa: P({ at: IN_(0, 27) }, { at: IN_(0, 32) }, { at: IN_(7, 14) }),
+      mc: P({ at: IN_(0, 29) }, { at: IN_(0, 35) }, { at: IN_(7, 36) }),
+      rupay: P({ at: IN_(0, 34) }, { at: IN_(0, 41) }, { at: IN_(7, 58) })
     },
     'hsbc-sg': {
-      // The delayed row. Incoming has not landed against the 06:00 SGT window.
-      visa: P({ at: 129 }, {}, {}),                                // 02:09 · INC delayed +35m
-      mc: P({ at: 138 }, {}, {}),                                  // 02:18 · INC pending (negotiated 07:30)
-      rupay: P({ at: 161 }, {}, {}),                               // 02:41 · INC delayed +35m
-      onus: P({ at: 118 }, {}, {})                                 // 01:58 · INC delayed +35m
+      visa: P({ at: T_(21, 58) }, { at: T_(22, 26) }, { at: IN_(2, 47) }),
+      mc: P({ at: T_(22, 4) }, { at: T_(22, 31) }, { at: IN_(3, 12) })
     },
     'hsbc-hk': {
-      visa: P({ at: 132 }, { at: 242 }, {}),                       // 02:12 · 04:02
-      mc: P({ at: 142 }, { at: 264 }, {}),                         // 02:22 · 04:24
-      rupay: P({ at: 155 }, { at: 288 }, {}),                      // 02:35 · 04:48
-      onus: P({ at: 118 }, { at: 221 }, {})                        // 01:58 · 03:41
+      visa: P({ at: T_(22, 1) }, { at: T_(22, 29) }, { at: IN_(2, 52) }),
+      mc: P({ at: T_(22, 6) }, { at: T_(22, 34) }, { at: IN_(3, 8) }),
+      onus: P({ at: T_(21, 52) }, { at: T_(22, 18) }, { at: IN_(2, 34) })
     }
   };
 
-  /* Prior-cycle exceptions — this is where the Failed state is demonstrable.
-     Reachable from any cell's snapshot via "Previous cycle". */
-  var YDAY = U.addDays(TODAY, -1);        // 2025-11-20
-  var DAY2 = U.addDays(TODAY, -2);        // 2025-11-19
+  /* Part 7.2 — prior cycles. Failures and delays live here so stepping the
+     date control shows the full state vocabulary, not just green. */
   var AUTHORED = {};
-  AUTHORED['hsbc-sg|visa|' + YDAY] = {
-    clearing: { at: 126 },
-    incoming: { at: 341 },
-    settled: {
+
+  /* Failed settlement generation — HSBC SG · Visa · 18 Nov. JV2 cannot follow. */
+  AUTHORED['hsbc-sg|visa|2025-11-18'] = {
+    clearing: { at: T_(21, 54) },
+    incoming: { at: IN_(2, 51) },
+    settlement: {
       failed: true, at: null,
-      note: 'Settlement instruction returned by the correspondent bank — IBAN on the nostro leg did not match the standing instruction. Funds not received; re-instruction raised with treasury.'
+      note: 'MPR/MPF/JV1 generation aborted — the merchant payout run hit 214 records with an unmapped MCC (6012) and the generator refused to emit a partial file. Re-run blocked pending a fee-config correction.'
     },
-    recon: { status: 'Break under investigation', residualPctOfNet: 1 }
+    jv2: {
+      failed: true, at: null,
+      note: 'JV2 not generated — it posts against the JV1 journal, which was never produced for this cycle.'
+    },
+    recon: { status: 'Reconciliation break', residualPctOfNet: 100 }
   };
-  AUTHORED['yesbank|mc|' + DAY2] = {
+
+  /* Failed clearing — YES BANK · Mastercard · 12 Nov. Everything downstream falls. */
+  AUTHORED['yesbank|mc|2025-11-12'] = {
     clearing: {
-      failed: true, at: 1330,
-      note: 'Outgoing IPM rejected by GCMS at 22:10 — Message Reason Code 4808 on 214 records (missing IRD on interchange rate designator). File re-cut and re-submitted on the next window.'
+      failed: true, at: IN_(2, 10),
+      note: 'Outgoing IPM rejected by GCMS at 02:10 — Message Reason Code 4808 on 214 records (missing interchange rate designator). File re-cut and carried into the 13 Nov cycle.'
     },
-    incoming: { failed: true, at: null, note: 'No T140 raw file — the network never accepted the clearing batch, so no response was generated.' },
-    settled: { failed: true, at: null, note: 'No settlement raised for this cycle. The cohort rolled into the 20 Nov cycle after the file was re-cut.' },
-    recon: { status: 'Break under investigation', residualPctOfNet: 100 }
+    settlement: { failed: true, at: null, note: 'No settlement files raised — the cohort never cleared.' },
+    incoming: { failed: true, at: null, note: 'No T140 raw file. The network never accepted the clearing batch, so no response was generated.' },
+    jv2: { failed: true, at: null, note: 'No JV2 — nothing settled to post adjustments against.' },
+    recon: { status: 'Reconciliation break', residualPctOfNet: 100 }
   };
 
-  /* Cycle dates that the snapshot can navigate across (prev / next). */
+  /* Delayed incoming legs — amber, three different shapes. */
+  AUTHORED['yesbank|rupay|2025-11-17'] = { incoming: { at: IN_(11, 18) } };   // 1h 48m past cutoff
+  AUTHORED['hsbc-hk|mc|2025-11-14'] = { incoming: { at: IN_(5, 42) } };       // 42m past cutoff
+  AUTHORED['hsbc-in|visa|2025-11-11'] = { incoming: { at: IN_(9, 6) } };      // late, still inside cutoff
+
+  /* Cycle dates the date stepper can reach — 30 days back from the current cycle. */
   var cycleDates = [];
-  for (var dd = -6; dd <= 1; dd++) cycleDates.push(U.addDays(TODAY, dd));
+  for (var dd = -29; dd <= 0; dd++) cycleDates.push(U.addDays(CYCLE_TODAY, dd));
 
-  /* ---- plan resolution ---------------------------------------------------- */
-  function planFor(tenantId, netKey, date) {
-    var authored = AUTHORED[tenantId + '|' + netKey + '|' + date];
-    if (authored) return authored;
-    if (date === TODAY) return (TODAY_PLAN[tenantId] || TODAY_PLAN['hsbc-in'])[netKey];
-    if (date > TODAY) return null;                      // future cycle — not started
-    // Any other prior cycle: closed clean, deterministic times inside every window.
-    var r = rng(seedOf('plan|' + tenantId + '|' + netKey + '|' + date));
-    var c = cutoffsFor(tenantId, netKey);
-    return {
-      clearing: { at: 95 + rint(r, 0, 68) },
-      incoming: { at: Math.min(c.incoming - 20 - rint(r, 0, 55), 178 + rint(r, 0, 108)) },
-      settled: { at: c.settled - 18 - rint(r, 0, 84) }
-    };
-  }
-
+  /* ---- holidays ----------------------------------------------------------- */
   function holidayFor(tenantId, date) {
     var t = O.tenantById[tenantId];
     if (!t) return null;
     return O.holidays.find(function (h) { return h.date === date && h.country === t.country; }) || null;
   }
+  /* Every tenant holiday landing on this cycle date — drives the stepper tag. */
+  function holidaysOn(date) {
+    var seen = {}, out = [];
+    O.tenants.forEach(function (t) {
+      var h = holidayFor(t.id, date);
+      if (h && !seen[h.name + h.country]) { seen[h.name + h.country] = 1; out.push({ holiday: h, tenant: t }); }
+    });
+    return out;
+  }
+
+  /* ---- plan resolution ---------------------------------------------------- */
+  function autoPlan(tenantId, netKey, date, sched) {
+    var r = rng(seedOf('plan|' + tenantId + '|' + netKey + '|' + date));
+    var p = {};
+    LEG_KEYS.forEach(function (k) {
+      // Land inside the on-time window: never earlier than 22m before expected,
+      // never later than expected + 26m (the window closes at +30m).
+      p[k] = { at: sched[k].expected - rint(r, 0, 22) + rint(r, 0, 26) };
+    });
+    return p;
+  }
+
+  function planFor(tenantId, netKey, date, sched) {
+    if (date > CYCLE_TODAY) return null;                 // future cycle — nothing has run
+    var base = (date === CYCLE_TODAY)
+      ? ((TODAY_PLAN[tenantId] || {})[netKey] || null)
+      : autoPlan(tenantId, netKey, date, sched);
+    if (!base) return null;
+    var authored = AUTHORED[tenantId + '|' + netKey + '|' + date];
+    if (!authored) return base;
+    var merged = { recon: authored.recon || base.recon || null };
+    LEG_KEYS.forEach(function (k) { merged[k] = authored[k] || base[k] || {}; });
+    return merged;
+  }
+
+  /* The observer's clock, expressed on the selected cycle's own axis. Only the
+     current cycle has a live "now" inside its span — a cycle from last week is
+     closed, and drawing a now-line across it would be a lie. */
+  function nowFor(date) {
+    if (date === CYCLE_TODAY) return NOW_ABS;
+    if (date < CYCLE_TODAY) return 4 * 1440;      // closed — every leg is long due
+    return -1;                                    // future — nothing is due yet
+  }
+  function isLive(date) { return date === CYCLE_TODAY; }
 
   /* ---- leg construction --------------------------------------------------- */
-  function buildLeg(def, p, cut, now) {
+  function buildLeg(def, p, sched, now, live) {
     p = p || {};
     var leg = {
-      key: def.key, short: def.short, label: def.label, sub: def.sub,
-      cutoff: cut, cutoffLabel: hhmm(cut),
-      actual: null, started: null, state: 'pending', deltaMin: 0, note: p.note || null
+      key: def.key, short: def.short, label: def.label, sub: def.sub, band: def.band, verb: def.verb,
+      expected: sched.expected, grace: sched.grace, cutoff: sched.cutoff,
+      expectedLabel: hhmm(sched.expected), cutoffLabel: hhmm(sched.cutoff),
+      expectedDay: dayTag(sched.expected), cutoffDay: dayTag(sched.cutoff),
+      actual: null, started: null, state: 'pending', overrunMin: 0, breached: false,
+      live: live, note: p.note || null
     };
+    // The moment we measure lateness against: the event itself once there is
+    // one, otherwise the live clock. A leg that never produced an event on a
+    // closed cycle has nothing to be late by — it simply failed.
+    var ref = null;
     if (p.failed) {
       leg.state = 'failed';
       leg.actual = (p.at != null) ? p.at : null;
-      leg.deltaMin = ((p.at != null) ? p.at : now) - cut;
+      ref = p.at;
     } else if (p.at != null) {
       leg.actual = p.at;
-      leg.state = (p.at <= cut) ? 'complete' : 'delayed';
-      leg.deltaMin = p.at - cut;
+      leg.state = (p.at <= sched.grace) ? 'complete' : 'delayed';
+      ref = p.at;
     } else if (p.started != null) {
       leg.started = p.started;
-      leg.state = (now > cut) ? 'delayed' : 'inprogress';
-      leg.deltaMin = now - cut;
+      leg.state = (now > sched.grace) ? 'delayed' : 'inprogress';
+      ref = live ? now : null;
     } else {
-      leg.state = (now > cut) ? 'delayed' : 'pending';
-      leg.deltaMin = now - cut;
+      leg.state = (now > sched.grace) ? 'delayed' : 'pending';
+      ref = live ? now : null;
     }
+    if (ref != null) {
+      leg.overrunMin = Math.max(0, ref - sched.expected);
+      leg.breached = ref > sched.cutoff;
+    }
+    leg.toCutoffMin = live ? sched.cutoff - now : null;
     leg.meta = STATE_META[leg.state];
-    // What the cell prints under the icon (Part 3.1)
-    if (leg.state === 'complete') leg.cellTime = hhmm(leg.actual);
-    else if (leg.state === 'inprogress') leg.cellTime = hhmm(leg.started);
-    else if (leg.state === 'pending') leg.cellTime = 'by ' + hhmm(cut);
-    else leg.cellTime = hhmm(cut);                        // delayed / failed → cutoff, in state colour
-    leg.overrunMin = leg.deltaMin > 0 ? leg.deltaMin : 0;
+
+    // What the cell prints under the icon (Part 4.3): the actual completion
+    // time, or the cutoff as "by HH:MM" while the leg has not landed.
+    if (leg.actual != null) leg.cellTime = hhmm(leg.actual);
+    else if (leg.started != null) leg.cellTime = hhmm(leg.started);
+    else leg.cellTime = 'by ' + hhmm(sched.cutoff);
+    leg.cellDay = dayTag(leg.actual != null ? leg.actual : (leg.started != null ? leg.started : sched.cutoff));
     return leg;
   }
 
-  /* legsFor → the whole cell / snapshot leg set for one tenant × network × date */
+  /* legsFor → the cell / snapshot leg set for one tenant × network × date */
   function legsFor(tenantId, netKey, date) {
-    var c = cutoffsFor(tenantId, netKey);
-    var plan = planFor(tenantId, netKey, date);
-    var hol = holidayFor(tenantId, date);
+    var prof = profileFor(tenantId);
+    var sched = prof.legs;
     var out = {
       tenantId: tenantId, networkKey: netKey, date: date,
-      cutoffs: c, holiday: hol, future: date > TODAY, notStarted: !plan,
-      legs: [], byKey: {}, overall: 'pending'
+      profile: prof, sched: sched,
+      enabled: enabled(tenantId, netKey),
+      holiday: holidayFor(tenantId, date),
+      future: date > CYCLE_TODAY, live: isLive(date),
+      legs: [], byKey: {}, overall: 'pending', recon: null
     };
-    if (!plan || (hol && hol.impact === 'Full holiday')) {
-      out.overall = hol ? 'holiday' : 'notstarted';
-      return out;
-    }
+    if (!out.enabled) { out.overall = 'unavailable'; return out; }
+
+    var plan = planFor(tenantId, netKey, date, sched);
+    if (out.holiday && out.holiday.impact === 'Full holiday') { out.overall = 'holiday'; return out; }
+    if (!plan) { out.overall = 'notstarted'; return out; }
+
+    var now = nowFor(date), live = out.live;
     LEG_DEFS.forEach(function (def) {
-      var leg = buildLeg(def, plan[def.key], c[def.key], NOW_MIN);
+      var leg = buildLeg(def, plan[def.key], sched[def.key], now, live);
       out.legs.push(leg); out.byKey[def.key] = leg;
     });
     var states = out.legs.map(function (l) { return l.state; });
@@ -264,13 +382,15 @@ window.CYCLES = (function () {
     else if (states.indexOf('delayed') >= 0) out.overall = 'delayed';
     else if (states.every(function (s) { return s === 'complete'; })) out.overall = 'complete';
     else if (states.indexOf('inprogress') >= 0) out.overall = 'inprogress';
-    else out.overall = 'pending';
+    // Nothing late and nothing failed, but a later leg is not due yet — the
+    // cycle is on track, and the cell should read green, not neutral.
+    else out.overall = (states.indexOf('complete') >= 0) ? 'ontrack' : 'pending';
     out.recon = plan.recon || null;
     return out;
   }
 
   /* =========================================================================
-     SNAPSHOT DETAIL (Part 4.3 / 4.4 / 4.5 / 4.6)
+     SNAPSHOT DETAIL (Part 6.2)
      ========================================================================= */
   function clampNum(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -288,7 +408,7 @@ window.CYCLES = (function () {
     return { gross: gross, count: count, batches: rint(r, 3, 9), currency: t.currency, r: r };
   }
 
-  function rejectionsFor(tenantId, netKey, date, count, ticketBase) {
+  function rejectionsFor(tenantId, netKey, date) {
     var r = rng(seedOf('rej|' + tenantId + '|' + netKey + '|' + date));
     var t = O.tenantById[tenantId];
     var n = rint(r, 5, 25);
@@ -307,21 +427,19 @@ window.CYCLES = (function () {
   }
 
   var CLR_EXT = { visa: 'ctf', mc: 'ipm', rupay: 'npci', onus: 'csv' };
-  var INC_NAME = {
-    visa: 'VSS_TC46', mc: 'GCMS_T140', rupay: 'NPCI_RAW', onus: 'ONUS_RESP'
-  };
+  var INC_NAME = { visa: 'VSS_TC46', mc: 'GCMS_T140', rupay: 'NPCI_RAW', onus: 'ONUS_RESP' };
   var INC_EXT = { visa: 'dat', mc: 'ipm', rupay: 'txt', onus: 'csv' };
-  var SET_FILES = [
+  var STL_FILES = [
     { type: 'MPR', ext: 'csv', desc: 'Merchant Payout Report' },
     { type: 'MPF', ext: 'txt', desc: 'Merchant Payout File' },
-    { type: 'JV1', ext: 'xml', desc: 'Journal Voucher — settlement' },
-    { type: 'JV2', ext: 'xml', desc: 'Journal Voucher — fees' }
+    { type: 'JV1', ext: 'xml', desc: 'Journal Voucher — settlement' }
   ];
   function tenantSlug(tenantId) { return (O.tenantById[tenantId] || { name: tenantId }).name.replace(/\s/g, ''); }
   function checksum(r) {
     var s = ''; for (var i = 0; i < 8; i++) s += '0123456789abcdef'[rint(r, 0, 15)];
     return 'sha256:' + s + '…';
   }
+  function landed(leg) { return leg.actual != null && leg.state !== 'failed'; }
 
   function snapshot(tenantId, netKey, date) {
     var t = O.tenantById[tenantId];
@@ -334,28 +452,35 @@ window.CYCLES = (function () {
       tenant: t, network: net, date: date,
       dow: U.DOW[U.fromYmd(date).getUTCDay()],
       tz: tz, currency: t.currency,
-      cutoffs: base.cutoffs, holiday: base.holiday,
-      future: base.future, notStarted: base.notStarted,
+      profile: base.profile, sched: base.sched,
+      enabled: base.enabled, holiday: base.holiday, future: base.future, live: base.live,
       legs: base.legs, byKey: base.byKey, overall: base.overall,
-      nowLabel: hhmm(NOW_MIN) + ' ' + tz.code
+      // The observer's clock is absolute; only the current cycle carries it
+      // inside its own span, so only that cycle draws a "now" marker.
+      nowAbs: base.live ? NOW_ABS : null, nowLabel: stamp(CYCLE_TODAY, NOW_ABS),
+      // Transaction cohort — the one window stated in the tenant's own zone.
+      cohort: {
+        label: 'Txns ' + U.prettyDate(date) + ' 00:00–23:59 ' + tz.code,
+        from: U.prettyDate(date) + ' 00:00 ' + tz.code,
+        to: U.prettyDate(date) + ' 23:59 ' + tz.code,
+        fromAbs: 0, toAbs: 1439
+      }
     };
-    if (!base.legs.length) return snap;                  // holiday / future — nothing more to compute
+    if (!base.enabled || !base.legs.length) return snap;
 
     var a = amountsFor(tenantId, netKey, date);
     var r = a.r;
-    var clr = base.byKey.clearing, inc = base.byKey.incoming, stl = base.byKey.settled;
+    var clr = base.byKey.clearing, stl = base.byKey.settlement,
+      inc = base.byKey.incoming, jv2 = base.byKey.jv2;
 
-    /* ---- Clearing (Part 4.3) --------------------------------------------- */
-    var cohortEnd = hhmm(base.cutoffs.clearing);
+    /* ---- Card 1 · Clearing (outgoing to network) -------------------------- */
     var heldBack = (rint(r, 0, 5) === 0)
       ? { count: 1, amount: round2(a.gross * 0.004), reason: 'One batch held back — MCC 6012 records missing the mandated payment-facilitator identifier.' }
       : null;
     var grossCleared = round2(a.gross - (heldBack ? heldBack.amount : 0));
     snap.clearing = {
       leg: clr,
-      cohortFrom: U.prettyDate(U.addDays(date, -2)) + ' ' + hhmm(base.cutoffs.clearing + 1),
-      cohortTo: U.prettyDate(U.addDays(date, -1)) + ' ' + cohortEnd,
-      submittedAt: clr.actual != null ? (U.prettyDate(date) + ', ' + hhmm(clr.actual) + ' ' + tz.code) : null,
+      submittedAt: landed(clr) ? stamp(date, clr.actual) : null,
       gross: grossCleared, count: a.count, batches: a.batches, heldBack: heldBack,
       file: {
         name: tenantSlug(tenantId) + '_' + net.short.toUpperCase() + '_CLEARING_' + date.replace(/-/g, '') + '.' + CLR_EXT[netKey],
@@ -364,123 +489,147 @@ window.CYCLES = (function () {
       }
     };
 
-    /* ---- Incoming (Part 4.4) --------------------------------------------- */
-    var rej = rejectionsFor(tenantId, netKey, date, a.count);
-    if (inc.state === 'failed') { rej = { count: 0, amount: 0, rows: [] }; }
+    /* ---- Card 3 · Incoming (from network) --------------------------------- */
+    var rej = rejectionsFor(tenantId, netKey, date);
+    if (inc.state === 'failed') rej = { count: 0, amount: 0, rows: [] };
     var interchange = round2(grossCleared * net.ic);
     var scheme = round2(grossCleared * net.scheme);
     var otherAdj = round2(grossCleared * (netKey === 'visa' ? 0.0002 : 0.0001));
-    var incomingReceived = (inc.state === 'complete' || inc.state === 'delayed') && inc.actual != null;
     snap.incoming = {
       leg: inc,
-      receivedAt: incomingReceived ? (U.prettyDate(date) + ', ' + hhmm(inc.actual) + ' ' + tz.code) : null,
+      receivedAt: landed(inc) ? stamp(date, inc.actual) : null,
       gross: round2(grossCleared - rej.amount), count: a.count - rej.count,
       rejections: rej,
       fees: { interchange: interchange, scheme: scheme, other: otherAdj, total: round2(interchange + scheme + otherAdj) },
-      file: incomingReceived ? {
+      file: landed(inc) ? {
         name: INC_NAME[netKey] + '_' + tenantSlug(tenantId) + '_' + date.replace(/-/g, '') + '.' + INC_EXT[netKey],
         size: (0.4 + r() * 4).toFixed(1) + ' MB', checksum: checksum(r)
       } : null
     };
 
-    /* ---- Settlement (Part 4.5) ------------------------------------------- */
-    var netExpected = round2(grossCleared - snap.incoming.fees.total - rej.amount);
-    var reconPlan = base.recon || null;
-    var residual = reconPlan ? round2(netExpected * (reconPlan.residualPctOfNet / 100)) : 0;
-    var settledActual = (stl.state === 'complete' || stl.state === 'delayed') && stl.actual != null
-      ? round2(netExpected - residual) : null;
+    /* ---- Card 2 · Settlement files (outgoing to acquirer) ----------------- */
     var mdr = round2(grossCleared * net.mdr);
+    var netSettlement = round2(grossCleared - snap.incoming.fees.total - rej.amount);
     var setR = rng(seedOf('files|' + tenantId + '|' + netKey + '|' + date));
-    snap.settled = {
+    snap.settlement = {
       leg: stl,
-      settledAt: settledActual != null ? (U.prettyDate(date) + ', ' + hhmm(stl.actual) + ' ' + tz.code) : null,
-      grossCleared: grossCleared,
-      fees: snap.incoming.fees.total,
-      rejectionsDeducted: rej.amount,
-      netExpected: netExpected,
-      actual: settledActual,
-      delta: settledActual != null ? round2(settledActual - netExpected) : null,
+      generatedAt: landed(stl) ? stamp(date, stl.actual) : null,
+      grossSettlement: grossCleared,
       mdr: mdr,
-      files: SET_FILES.map(function (f, i) {
-        var genMin = (stl.actual != null ? stl.actual : base.cutoffs.settled) + 8 + i * 11;
+      netSettlement: netSettlement,
+      files: STL_FILES.map(function (f, i) {
+        var genMin = (stl.actual != null ? stl.actual : stl.cutoff) + 4 + i * 7;
         return {
           type: f.type, desc: f.desc,
           name: tenantSlug(tenantId) + '_' + f.type + '_' + date.replace(/-/g, '') + '.' + f.ext,
           size: (0.3 + setR() * 5).toFixed(1) + ' MB',
-          generatedAt: settledActual != null ? (U.prettyDate(date) + ', ' + hhmm(genMin) + ' ' + tz.code) : null
+          generatedAt: landed(stl) ? stamp(date, genMin) : null
         };
       })
     };
 
-    /* ---- Reconciliation callout (Part 4.6) ------------------------------- */
+    /* ---- Card 4 · JV2 (next-cycle outgoing to acquirer) ------------------- */
+    var reversals = round2(rej.amount);
+    snap.jv2 = {
+      leg: jv2,
+      generatedAt: landed(jv2) ? stamp(date, jv2.actual) : null,
+      countdownMin: (snap.live && jv2.actual == null && jv2.state !== 'failed') ? Math.max(0, jv2.expected - NOW_ABS) : null,
+      feesPosted: snap.incoming.fees.total,
+      rejectionReversals: reversals,
+      netAdjustment: round2(snap.incoming.fees.total + reversals),
+      file: {
+        name: tenantSlug(tenantId) + '_JV2_' + date.replace(/-/g, '') + '.xml',
+        size: (0.2 + setR() * 1.6).toFixed(1) + ' MB',
+        dest: '/out/' + tenantId + '/journals/'
+      }
+    };
+
+    /* ---- Reconciliation callout ------------------------------------------ */
+    var reconPlan = base.recon;
+    var residual = reconPlan ? round2(netSettlement * (reconPlan.residualPctOfNet / 100)) : 0;
     var reconCycle = O.cyclesByTenant[tenantId] ? O.cyclesByTenant[tenantId].find(function (c) { return c.date === date; }) : null;
-    if (date === TODAY) {
-      snap.recon = { status: 'Not yet run', kind: 'neutral', residual: 0, note: 'Two-way reconciliation runs once the settlement leg closes for this cycle.', cycleId: null };
-    } else if (reconPlan) {
+    if (reconPlan) {
       snap.recon = { status: reconPlan.status, kind: 'danger', residual: residual, note: 'Residual beyond the expected delta. Investigation open with the settlement desk.', cycleId: reconCycle ? reconCycle.id : null };
+    } else if (jv2.state === 'pending' || jv2.state === 'inprogress') {
+      snap.recon = { status: 'Not yet run', kind: 'neutral', residual: 0, note: 'Two-way reconciliation runs once JV2 closes the cycle.', cycleId: reconCycle ? reconCycle.id : null };
     } else {
       snap.recon = { status: 'Clean', kind: 'success', residual: 0, note: 'Submitted position less the expected delta matches the settled position. No residual.', cycleId: reconCycle ? reconCycle.id : null };
     }
 
-    /* ---- Overall status pill + one-line summary (Part 4.1) --------------- */
     snap.status = overallStatus(snap);
     return snap;
   }
 
+  /* ---- overall status pill + one-line summary ----------------------------- */
   function overallStatus(snap) {
     var legs = snap.legs;
-    var late = legs.filter(function (l) { return l.state === 'delayed'; });
     var bad = legs.filter(function (l) { return l.state === 'failed'; });
+    var late = legs.filter(function (l) { return l.state === 'delayed'; });
     if (bad.length) {
       return {
         text: 'Failed', kind: 'danger', icon: 'x-circle',
         line: (bad.length > 1
-          ? bad.map(function (l) { return l.label; }).join(', ') + ' legs failed'
+          ? bad.map(function (l) { return l.short; }).join(', ') + ' legs failed'
           : bad[0].label + ' leg failed') + ' — intervention required.'
       };
     }
     if (late.length) {
       return {
         text: 'Delayed', kind: 'warning', icon: 'alert-triangle',
-        line: late.map(function (l) { return l.label + ' ' + dur(l.overrunMin) + ' past its ' + l.cutoffLabel + ' cut-off'; }).join(' · ') + '.'
+        line: late.map(function (l) {
+          if (!l.overrunMin) return l.label + ' missed its ' + l.cutoffLabel + ' cutoff';
+          return l.label + ' ' + dur(l.overrunMin) + ' past its ' + l.expectedLabel + ' expected time' +
+            (l.breached ? ' — cutoff ' + l.cutoffLabel + ' breached' : ', inside the ' + l.cutoffLabel + ' cutoff');
+        }).join(' · ') + '.'
       };
     }
     if (legs.every(function (l) { return l.state === 'complete'; })) {
-      return { text: 'Clean', kind: 'success', icon: 'check-circle', line: 'All three legs complete by expected cut-offs.' };
+      return { text: 'Clean', kind: 'success', icon: 'check-circle', line: 'All four legs complete inside their expected windows.' };
     }
     var running = legs.filter(function (l) { return l.state === 'inprogress'; });
     if (running.length) {
-      return { text: 'In Progress', kind: 'info', icon: 'loader', line: running[0].label + ' is processing — started ' + hhmm(running[0].started) + ', due by ' + running[0].cutoffLabel + '.' };
+      return { text: 'In Progress', kind: 'info', icon: 'loader', line: running[0].label + ' is processing — started ' + hhmm(running[0].started) + ', cutoff ' + running[0].cutoffLabel + ' ' + running[0].cutoffDay + '.' };
     }
     var next = legs.filter(function (l) { return l.state === 'pending'; })[0];
-    return { text: 'In Progress', kind: 'info', icon: 'clock', line: next ? (next.label + ' pending — expected by ' + next.cutoffLabel + ', ' + dur(next.cutoff - NOW_MIN) + ' to go.') : 'Cycle in flight.' };
+    return {
+      text: 'On track', kind: 'success', icon: 'check-circle',
+      line: next
+        ? (next.label + ' not due yet — expected ' + next.expectedLabel + ' ' + next.expectedDay + ', ' + dur(next.expected - NOW_ABS) + ' from now.')
+        : 'Cycle in flight.'
+    };
   }
 
-  /* ---- one-line cell tooltip (Part 3.1) ---------------------------------- */
+  /* ---- one-line cell tooltip ---------------------------------------------- */
   function cellSummary(tenantId, netKey, date) {
     var t = O.tenantById[tenantId], net = D.NET_BY_KEY[netKey];
     var c = legsFor(tenantId, netKey, date);
-    if (c.holiday) return t.name + ' · ' + net.name + ' · bank holiday (' + c.holiday.name + ') — no files expected';
+    if (!c.enabled) return net.name + ' is not enabled for ' + t.name;
+    if (c.overall === 'holiday') return t.name + ' · ' + net.name + ' · bank holiday (' + c.holiday.name + ') — no files expected';
     if (!c.legs.length) return t.name + ' · ' + net.name + ' · cycle has not started';
     return t.name + ' · ' + net.name + ' · ' + c.legs.map(function (l) {
-      if (l.state === 'complete') return l.short + ' complete ' + hhmm(l.actual);
-      if (l.state === 'inprogress') return l.short + ' in progress since ' + hhmm(l.started);
-      if (l.state === 'pending') return l.short + ' pending by ' + l.cutoffLabel;
-      if (l.state === 'delayed') return l.short + ' delayed ' + dur(l.overrunMin) + ' past ' + l.cutoffLabel;
-      return l.short + ' failed (cut-off ' + l.cutoffLabel + ')';
+      if (l.state === 'complete') return l.short + ' ' + hhmm(l.actual) + ' ' + l.cellDay;
+      if (l.state === 'inprogress') return l.short + ' running since ' + hhmm(l.started);
+      if (l.state === 'pending') return l.short + ' due by ' + l.cutoffLabel + ' ' + l.cutoffDay;
+      if (l.state === 'delayed') return l.overrunMin
+        ? l.short + ' ' + dur(l.overrunMin) + ' late' + (l.breached ? ' (cutoff breached)' : '')
+        : l.short + ' missed its ' + l.cutoffLabel + ' cutoff';
+      return l.short + ' failed';
     }).join(' · ');
   }
 
   return {
-    TODAY: TODAY, NOW_MIN: NOW_MIN, cycleDates: cycleDates,
-    LEG_DEFS: LEG_DEFS, STATE_META: STATE_META,
-    hhmm: hhmm, dur: dur, tzOf: tzOf,
-    cutoffsFor: cutoffsFor, legsFor: legsFor, snapshot: snapshot,
-    cellSummary: cellSummary, holidayFor: holidayFor,
-    // exposed so the screen can point users at the demonstrable failed cycles
+    TODAY: TODAY, CYCLE_TODAY: CYCLE_TODAY, NOW_ABS: NOW_ABS, cycleDates: cycleDates,
+    LEG_DEFS: LEG_DEFS, LEG_KEYS: LEG_KEYS, BANDS: BANDS, STATE_META: STATE_META,
+    PROFILES: PROFILES, GRACE_MIN: GRACE_MIN, CUTOFF_LAG: CUTOFF_LAG,
+    AVAILABILITY: AVAILABILITY, enabled: enabled, networksFor: networksFor,
+    hhmm: hhmm, dur: dur, dayTag: dayTag, dayOf: dayOf, dateAt: dateAt, stamp: stamp, shortStamp: shortStamp,
+    tzOf: tzOf, profileFor: profileFor, scheduleFor: scheduleFor,
+    legsFor: legsFor, snapshot: snapshot, cellSummary: cellSummary,
+    holidayFor: holidayFor, holidaysOn: holidaysOn,
+    // pointers the grid uses to make the failed / delayed states reachable
     failedDemos: [
-      { tenantId: 'hsbc-sg', networkKey: 'visa', date: YDAY, what: 'settlement returned' },
-      { tenantId: 'yesbank', networkKey: 'mc', date: DAY2, what: 'clearing rejected by GCMS' }
+      { tenantId: 'hsbc-sg', networkKey: 'visa', date: '2025-11-18', what: 'settlement generation failed' },
+      { tenantId: 'yesbank', networkKey: 'mc', date: '2025-11-12', what: 'clearing rejected by GCMS' }
     ]
   };
 })();

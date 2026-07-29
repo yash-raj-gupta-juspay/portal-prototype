@@ -189,6 +189,7 @@ svg { display: block; }
 .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.grid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 /* responsive per-network card grid — 4-up on wide, wraps to 2×2 rather than clipping */
 .net-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(248px, 1fr)); }
 .row { display: flex; gap: 18px; }
@@ -487,12 +488,47 @@ textarea.input { resize: vertical; min-height: 80px; }
   .topbar .search { max-width: 260px; }
 }
 
-/* Below ~940px it's too tight for these dense financial tables → desktop nudge */
+/* Below 1024px it's too tight for these dense financial tables → desktop nudge */
 .mobile-block { display: none; }
-@media (max-width: 940px) {
+@media (max-width: 1023px) {
   .app { display: none; }
   .mobile-block { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; text-align: center; gap: 14px; padding: 40px; }
   .mobile-block svg { width: 40px; height: 40px; color: var(--text-tertiary); }
+}
+
+/* =============================================================================
+   PART 1 — OPS PORTAL RESPONSIVE LAYOUT
+   The shell is already 100vh with .main scrolling internally, so the only thing
+   standing between the Ops Portal and the full viewport is the reading-width
+   cap on .content. That cap is right for the Bank Portal's document-style
+   screens and wrong for a cross-tenant console, so it is dropped for ops only —
+   scoped by the .portal-ops class the router stamps on the shell. Nothing here
+   can reach a Bank Portal screen.
+   ============================================================================= */
+.portal-ops .content { max-width: none; width: 100%; }
+
+/* ≥1920 — a real monitor. Spend the extra width on padding and cell size,
+   not on empty gutters. */
+@media (min-width: 1920px) {
+  .portal-ops .content { padding: 36px 48px; }
+  .portal-ops .grid { gap: 22px; }
+  .portal-ops .cyc-cell { height: 128px; padding: 14px 14px 10px; }
+  .portal-ops .cyc-legs { max-width: 340px; }
+  .portal-ops .kpi-card { padding: 22px 26px; }
+}
+
+/* 1280–1439 — five KPI cards still fit, tighter. */
+@media (max-width: 1439px) {
+  .portal-ops .grid-5 { gap: 14px; }
+  .portal-ops .cyc-cell { height: 108px; padding: 9px 8px 7px; }
+}
+
+/* 1024–1279 — KPI cards wrap to 3+2, action queues to 2+1, and the grid
+   scrolls horizontally with the tenant column pinned. */
+@media (max-width: 1279px) {
+  .portal-ops .grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .portal-ops .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .portal-ops .cyc-sec-head { flex-wrap: wrap; }
 }
 
 /* =============================================================================
@@ -1149,32 +1185,67 @@ tr.fee-expand td { background: var(--bg-subtle); padding: 0 !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
+/* ---- Section header + cycle date stepper (Part 2.3) ---------------------- */
+.cyc-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.cyc-datebar { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.cyc-datebar .icon-btn[disabled] { opacity: .4; cursor: not-allowed; }
+.cyc-date-label { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 8px;
+  border: 1px solid var(--border-default); background: #fff; font-size: 14px; cursor: help; white-space: nowrap; }
+.cyc-date-key { font-size: 12px; color: var(--text-secondary); }
+.cyc-date-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.cyc-date-label svg { width: 12px; height: 12px; color: var(--text-tertiary); }
+.cyc-date-hol { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600;
+  background: var(--status-warning-bg); color: var(--status-warning-fg); border-radius: 999px; padding: 1px 8px; }
+.cyc-date-hol svg { width: 12px; height: 12px; color: inherit; }
+
 /* ---- The grid ------------------------------------------------------------ */
 .cyc-grid-wrap { overflow-x: auto; }
-.cyc-grid { width: 100%; min-width: 860px; border-collapse: separate; border-spacing: 8px; table-layout: fixed; }
+/* min-width is set by the narrowest four-segment cell that still reads: below
+   it the grid scrolls rather than crushing "by 02:30" into two lines. */
+.cyc-grid { width: 100%; min-width: 1160px; border-collapse: separate; border-spacing: 8px; table-layout: fixed; }
 .cyc-grid .cyc-th { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary);
   font-weight: 500; text-align: center; padding: 2px 0 6px; }
-.cyc-grid .cyc-th-tenant { text-align: left; width: 20%; }
+.cyc-grid .cyc-th-tenant { text-align: left; width: 17%; min-width: 150px; }
 .cyc-net { display: inline-flex; align-items: center; gap: 7px; }
 .cyc-net-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
 .cyc-grid .cyc-tenant { text-align: left; font-size: 14px; font-weight: 500; padding-right: 12px;
   white-space: nowrap; vertical-align: middle; }
+.cyc-tenant-sched { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase;
+  color: var(--text-tertiary); margin-top: 3px; cursor: help; }
+/* Narrow viewports scroll the grid rather than crushing it — the tenant column
+   stays pinned so a row never loses its identity (Part 1.4). */
+.cyc-grid .cyc-th-tenant, .cyc-grid .cyc-tenant { position: sticky; left: 0; z-index: 2;
+  background: var(--bg-card); box-shadow: 8px 0 0 var(--bg-card); }
 .cyc-td { padding: 0; }
 
-.cyc-cell { width: 100%; height: 96px; padding: 10px 10px 8px; font-size: inherit; color: inherit; border: 1px solid var(--border-default);
+.cyc-cell { width: 100%; height: 116px; padding: 10px 10px 8px; font-size: inherit; color: inherit; border: 1px solid var(--border-default);
   border-radius: 8px; background: #fff; display: flex; align-items: center; justify-content: center;
   text-align: center; transition: border-color .12s, box-shadow .12s, filter .12s; }
 .cyc-cell:hover { border-color: var(--border-strong); box-shadow: 0 1px 3px rgba(15, 23, 42, .08); filter: brightness(.985); }
 .cyc-cell:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-/* Overall-state tints — 5% of the matching status token (Part 3.3) */
+/* Overall-state tints — 5% of the matching status token */
 .cyc-cell.tint-ok   { background: rgba(34, 197, 94, .05); }
 .cyc-cell.tint-warn { background: rgba(146, 64, 14, .05); border-color: #FDE68A; }
 .cyc-cell.tint-fail { background: rgba(239, 68, 68, .05); border-color: #FECACA; border-left: 4px solid var(--chart-negative); }
 
-.cyc-legs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; width: 100%; max-width: 172px; margin: 0 auto; }
-.cyc-seg { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 2px 1px; border-radius: 6px; }
+/* Part 3.2 — a combination the tenant does not process. Recessive by design:
+   no status colour, no cursor, nothing for the eye to catch on. */
+.cyc-cell.cyc-na { cursor: default; border-style: dashed; border-color: var(--border-subtle);
+  background-color: var(--bg-subtle);
+  background-image: repeating-linear-gradient(45deg, rgba(100, 116, 139, .07) 0 5px, transparent 5px 11px); }
+.cyc-cell.cyc-na:hover { border-color: var(--border-subtle); box-shadow: none; filter: none; }
+.cyc-na-body { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.cyc-na-dash { font-size: 16px; color: var(--text-tertiary); line-height: 1; }
+.cyc-na-label { font-size: 11.5px; color: var(--text-tertiary); }
+
+.cyc-legs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; width: 100%; max-width: 268px; margin: 0 auto; }
+.cyc-seg { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 1px; border-radius: 6px; }
+/* Part 4.3 — the outgoing pair, then incoming, then next-cycle JV2. */
+.cyc-seg.cyc-sep { border-left: 1px solid var(--border-default); }
 .cyc-seg.st-failed { border: 1px solid #FECACA; background: rgba(239, 68, 68, .04); }
 .cyc-seg-label { font-size: 10px; font-weight: 700; letter-spacing: .6px; color: var(--text-tertiary); }
+.cyc-seg-day { font-size: 9.5px; font-weight: 600; letter-spacing: .3px; color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums; }
 .cyc-seg-icon { display: flex; color: var(--cyc-c); }
 .cyc-seg-icon svg { width: 15px; height: 15px; }
 .cyc-seg-ts { font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -1186,7 +1257,11 @@ tr.fee-expand td { background: var(--bg-subtle); padding: 0 !important; }
 .cyc-seg.st-inprogress .cyc-seg-ts { animation: cyc-pulse 1.8s ease-in-out infinite; }
 .cyc-overrun { font-size: 9.5px; font-weight: 700; line-height: 14px; height: 14px; padding: 0 5px; border-radius: 999px;
   font-variant-numeric: tabular-nums; background: var(--status-warning-bg); color: var(--status-warning-fg); white-space: nowrap; }
+/* A leg that is merely past its expected time is amber; one that has passed the
+   cutoff carries a ring so the harder breach reads at a glance. */
+.cyc-overrun.breached { box-shadow: 0 0 0 1px var(--status-warning-fg); }
 .cyc-seg.st-failed .cyc-overrun { background: var(--status-danger-bg); color: var(--status-danger-fg); }
+.cyc-seg.st-failed .cyc-overrun.breached { box-shadow: 0 0 0 1px var(--status-danger-fg); }
 .cyc-overrun-spacer { height: 14px; }
 .cyc-flat { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-tertiary); }
 .cyc-flat svg { width: 15px; height: 15px; }
@@ -1214,59 +1289,126 @@ tr.fee-expand td { background: var(--bg-subtle); padding: 0 !important; }
 .cyc-cycle-nav { display: flex; gap: 8px; }
 .cyc-cycle-nav .btn[disabled] { opacity: .45; }
 
-/* ---- The three-leg timeline (Part 4.2) ----------------------------------- */
-.tl { display: flex; flex-direction: column; }
-.tl-row { display: grid; grid-template-columns: 246px 1fr; gap: 20px; align-items: center; }
-.tl-axisrow { margin-bottom: 16px; }
-.tl-axis-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .4px; }
-.tl-head { padding: 12px 0; }
-.tl-title { font-size: 14.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.tl-sub { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
-.tl-delta { font-size: 12.5px; font-weight: 600; color: var(--cyc-c); margin-top: 7px; font-variant-numeric: tabular-nums; }
+/* =============================================================================
+   THE FOUR-LEG TIMELINE (Part 6.1)
+   One coordinate system shared by the axis, the cohort bracket and all four
+   lanes: every `left` / `width` is a percentage of the same absolute-minute
+   span, so a marker in the JV2 lane is vertically true against the same minute
+   in the clearing lane two days earlier. Day columns repeat behind every track,
+   which is what makes the multi-day span unmistakable.
+   ============================================================================= */
+.tl2 { display: flex; flex-direction: column; }
+.tl2-row { display: grid; grid-template-columns: 264px 1fr; gap: 20px; align-items: center; padding: 0 14px; }
+.tl2-head { padding: 10px 0; min-width: 0; }
+/* 66px gives the rail 24px in the middle with room for the expected flag above
+   it and the cutoff flag below it — both stay inside their own lane, so
+   adjacent lanes can never collide however close two markers sit in time. */
+.tl2-track { position: relative; height: 66px; }
 
-.tl-track { position: relative; height: 68px; }
-.tl-track.tl-axis { height: 30px; border-bottom: 1px solid var(--border-default); }
-.tl-tick { position: absolute; bottom: 5px; transform: translateX(-50%); font-size: 11px; color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tl-tick.at-end { transform: translateX(-100%); }
-.tl-nowflag { position: absolute; top: -4px; transform: translateX(-50%); font-size: 11px; font-weight: 700;
-  font-variant-numeric: tabular-nums; color: var(--text-primary); background: var(--status-neutral-bg);
-  border-radius: 999px; padding: 1px 9px; white-space: nowrap; }
+/* ---- axis --------------------------------------------------------------- */
+.tl2-axisrow { margin-bottom: 4px; }
+.tl2-axisrow .tl2-track { height: 52px; border-bottom: 1px solid var(--border-default); }
+.tl2-axis-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary); }
+.tl2-axis-sub { font-size: 12px; color: var(--text-tertiary); margin-top: 3px; font-variant-numeric: tabular-nums; }
+.tl2-daycol { position: absolute; top: 0; bottom: 0; background: transparent; }
+.tl2-daycol.odd { background: rgba(15, 23, 42, .022); }
+.tl2-daydiv { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid var(--border-default); }
+.tl2-daylabel { position: absolute; top: 4px; display: flex; align-items: baseline; gap: 6px; padding-left: 8px;
+  font-variant-numeric: tabular-nums; overflow: hidden; }
+.tl2-daylabel-date { font-size: 13px; font-weight: 700; color: var(--text-primary); white-space: nowrap; }
+.tl2-daylabel-tag { font-size: 10.5px; font-weight: 700; letter-spacing: .4px; color: var(--text-tertiary);
+  background: var(--status-neutral-bg); border-radius: 4px; padding: 1px 5px; }
+.tl2-tick { position: absolute; bottom: 0; transform: translateX(-50%); font-size: 10.5px; line-height: 14px;
+  color: var(--text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tl2-nowflag { position: absolute; top: 22px; transform: translateX(-50%); font-size: 10.5px; font-weight: 700;
+  line-height: 14px; font-variant-numeric: tabular-nums; color: var(--text-primary); background: var(--status-neutral-bg);
+  border-radius: 999px; padding: 0 9px; white-space: nowrap; z-index: 3; }
+.tl2-closedflag { position: absolute; top: 22px; right: 0; font-size: 10.5px; font-weight: 600; line-height: 14px;
+  color: var(--text-tertiary); background: var(--status-neutral-bg); border-radius: 999px; padding: 0 9px; }
 
-.tl-rail { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 28px;
-  border-radius: 6px; background: var(--bg-subtle); border: 1px solid var(--border-subtle); }
-.tl-fill { position: absolute; left: 0; top: 50%; transform: translateY(-50%); height: 28px; border-radius: 6px 0 0 6px; }
-.tl-fill.st-complete   { background: rgba(34, 197, 94, .16); }
-.tl-fill.st-inprogress { background: rgba(37, 99, 235, .13); }
-.tl-fill.st-pending    { background: transparent; }
-.tl-fill.st-delayed    { background: rgba(146, 64, 14, .12); }
-.tl-fill.st-failed     { background: rgba(239, 68, 68, .12); }
-.tl-overrun { position: absolute; top: 50%; transform: translateY(-50%); height: 28px;
-  background-image: repeating-linear-gradient(45deg, rgba(146, 64, 14, .30) 0 4px, transparent 4px 9px); }
-.tl-overrun.st-failed { background-image: repeating-linear-gradient(45deg, rgba(239, 68, 68, .32) 0 4px, transparent 4px 9px); }
-.tl-now { position: absolute; top: 2px; bottom: 2px; width: 0; border-left: 2px dotted var(--text-primary); opacity: .35; }
-.tl-cut { position: absolute; top: 6px; bottom: 6px; width: 0; border-left: 2px dashed var(--text-secondary); }
-.tl-cut.st-delayed, .tl-cut.st-failed { border-left-color: var(--cyc-c); }
-.tl-cut-flag { position: absolute; bottom: 100%; left: 0; transform: translateX(-50%); margin-bottom: 3px;
-  font-size: 10.5px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; background: #fff;
-  padding: 0 5px; border-radius: 4px; font-variant-numeric: tabular-nums; }
-.tl-cut.at-end .tl-cut-flag { transform: translateX(-100%); }
-.tl-ev { position: absolute; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 5px; white-space: nowrap; }
-.tl-ev-dot { width: 12px; height: 12px; border-radius: 999px; background: var(--cyc-c); border: 2px solid #fff;
+/* ---- transaction cohort bracket ----------------------------------------- */
+.tl2-cohortrow .tl2-track { height: 46px; }
+.tl2-cohort { position: absolute; top: 50%; transform: translateY(-50%); height: 26px; border-radius: 5px;
+  background: var(--primary-subtle-bg); border: 1px solid rgba(37, 99, 235, .28);
+  display: flex; align-items: center; padding: 0 9px; overflow: hidden; }
+.tl2-cohort span { font-size: 11.5px; font-weight: 600; color: var(--primary-subtle-fg); white-space: nowrap;
+  font-variant-numeric: tabular-nums; }
+
+/* ---- bands (Part 6.1 visual grouping) ------------------------------------ */
+.tl2-band { border-radius: 10px; padding: 4px 0 10px; margin-top: 10px; }
+.tl2-band.band-outgoing { background: rgba(37, 99, 235, .035); }
+.tl2-band.band-incoming { background: rgba(34, 197, 94, .04); }
+.tl2-band.band-next     { background: rgba(100, 116, 139, .05); }
+.tl2-band-head { display: flex; align-items: baseline; gap: 10px; padding: 8px 14px 2px; }
+.tl2-band-label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--text-primary); }
+.tl2-band-sub { font-size: 11.5px; color: var(--text-tertiary); }
+
+/* ---- lanes -------------------------------------------------------------- */
+.tl2-lane-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tl2-lane-sub { font-size: 11.5px; color: var(--text-tertiary); margin-top: 2px; }
+.tl2-delta { font-size: 12.5px; font-weight: 600; color: var(--cyc-c); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.cyc-legkey { font-size: 10px; font-weight: 700; letter-spacing: .6px; color: var(--text-primary);
+  background: var(--status-neutral-bg); border-radius: 4px; padding: 1px 5px; }
+
+.tl2-rail { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 24px;
+  border-radius: 5px; background: rgba(255, 255, 255, .5); border: 1px solid var(--border-subtle); }
+/* expected → cutoff is the leg's on-time-to-breach corridor */
+.tl2-window { position: absolute; top: 50%; transform: translateY(-50%); height: 24px;
+  background: rgba(100, 116, 139, .10); border-radius: 3px; }
+.tl2-late { position: absolute; top: 50%; transform: translateY(-50%); height: 24px;
+  background: rgba(146, 64, 14, .16); border-radius: 3px; }
+.tl2-overrun { position: absolute; top: 50%; transform: translateY(-50%); height: 24px;
+  background-image: repeating-linear-gradient(45deg, rgba(146, 64, 14, .32) 0 4px, transparent 4px 9px); }
+.tl2-overrun.st-failed { background-image: repeating-linear-gradient(45deg, rgba(239, 68, 68, .34) 0 4px, transparent 4px 9px); }
+
+.tl2-now { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px dotted var(--text-primary); opacity: .35; }
+.tl2-exp { position: absolute; top: 6px; bottom: 6px; width: 0; border-left: 2px solid rgba(100, 116, 139, .45); }
+.tl2-cut { position: absolute; top: 4px; bottom: 4px; width: 0; border-left: 2px dashed var(--text-secondary); }
+.tl2-cut.st-delayed, .tl2-cut.st-failed { border-left-color: var(--cyc-c); }
+.tl2-flag { position: absolute; left: 0; font-size: 10px; font-weight: 700; line-height: 13px; height: 13px;
+  white-space: nowrap; background: #fff; padding: 0 4px; border-radius: 4px;
+  font-variant-numeric: tabular-nums; transform: translateX(-50%); }
+.tl2-flag.exp { top: -3px; color: var(--text-tertiary); }
+.tl2-flag.cut { bottom: -3px; color: var(--text-secondary); }
+.tl2-cut.st-delayed .tl2-flag.cut, .tl2-cut.st-failed .tl2-flag.cut { color: var(--cyc-c); }
+.tl2-exp.at-end .tl2-flag, .tl2-cut.at-end .tl2-flag { transform: translateX(-100%); }
+
+.tl2-ev { position: absolute; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 5px;
+  white-space: nowrap; z-index: 2; }
+.tl2-dot { width: 12px; height: 12px; border-radius: 999px; background: var(--cyc-c); border: 2px solid #fff;
   box-shadow: 0 0 0 1.5px var(--cyc-c); margin-left: -6px; flex-shrink: 0; }
-.tl-ev-dot.hollow { background: #fff; }
-.tl-ev-time { font-size: 11.5px; font-weight: 700; color: var(--cyc-c); background: #fff; padding: 0 4px;
+.tl2-dot.hollow { background: #fff; }
+.tl2-ev.running .tl2-dot { animation: cyc-pulse 1.6s ease-in-out infinite; }
+.tl2-evtime { font-size: 11.5px; font-weight: 700; color: var(--cyc-c); background: #fff; padding: 0 4px;
   border-radius: 4px; font-variant-numeric: tabular-nums; }
-.tl-ev.at-end { flex-direction: row-reverse; }
-.tl-ev.at-end .tl-ev-dot { margin-left: 0; margin-right: -6px; }
+.tl2-ev.at-end { flex-direction: row-reverse; }
+.tl2-ev.at-end .tl2-dot { margin-left: 0; margin-right: -6px; }
 
-.tl-key { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin-top: 18px; padding-top: 14px;
+.tl2-key { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin: 18px 14px 0; padding-top: 14px;
   border-top: 1px solid var(--border-subtle); font-size: 12px; color: var(--text-secondary); }
-.tl-key-item { display: inline-flex; align-items: center; gap: 7px; }
-.tl-key-cut { width: 0; height: 14px; border-left: 2px dashed var(--text-secondary); }
-.tl-key-now { width: 0; height: 14px; border-left: 2px dotted var(--text-primary); opacity: .5; }
-.tl-key-dot { width: 10px; height: 10px; border-radius: 999px; background: var(--text-secondary); }
-.tl-key-hatch { width: 22px; height: 12px; background-image: repeating-linear-gradient(45deg, rgba(146, 64, 14, .30) 0 4px, transparent 4px 9px); }
+.tl2-key-item { display: inline-flex; align-items: center; gap: 7px; }
+.tl2-key-exp { width: 0; height: 14px; border-left: 2px solid rgba(100, 116, 139, .55); }
+.tl2-key-cut { width: 0; height: 14px; border-left: 2px dashed var(--text-secondary); }
+.tl2-key-now { width: 0; height: 14px; border-left: 2px dotted var(--text-primary); opacity: .5; }
+.tl2-key-win { width: 22px; height: 12px; background: rgba(100, 116, 139, .18); border-radius: 3px; }
+.tl2-key-dot { width: 10px; height: 10px; border-radius: 999px; background: var(--text-secondary); }
+.tl2-key-hatch { width: 22px; height: 12px; background-image: repeating-linear-gradient(45deg, rgba(146, 64, 14, .32) 0 4px, transparent 4px 9px); }
+
+/* ---- schedule reference panel (Part 6.3) -------------------------------- */
+.cyc-sched { padding: 0; }
+.cyc-sched-toggle { display: flex; align-items: center; gap: 10px; width: 100%; padding: 16px 20px;
+  background: transparent; border: none; text-align: left; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.cyc-sched-toggle:hover { background: var(--bg-subtle); }
+.cyc-sched-toggle svg { width: 15px; height: 15px; color: var(--text-tertiary); flex-shrink: 0; }
+.cyc-sched-tag { font-size: 12px; font-weight: 500; color: var(--text-secondary); background: var(--status-neutral-bg);
+  border-radius: 999px; padding: 2px 10px; }
+.cyc-sched .meta, .cyc-sched table { margin-left: 20px; margin-right: 20px; width: calc(100% - 40px); }
+.cyc-sched table { margin-bottom: 20px; }
+.cyc-daytag { font-size: 11.5px; font-weight: 600; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.cyc-count { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600;
+  color: var(--text-secondary); background: var(--status-neutral-bg); border-radius: 999px; padding: 1px 8px; }
+.cyc-count svg { width: 12px; height: 12px; }
+.cyc-nowline { margin-top: 6px; font-variant-numeric: tabular-nums; }
 
 /* ---- Snapshot detail sections (Part 4.3 / 4.4 / 4.5) --------------------- */
 .cyc-sections { display: flex; flex-direction: column; gap: 16px; }
@@ -1314,7 +1456,15 @@ tr.fee-expand td { background: var(--bg-subtle); padding: 0 !important; }
 .cyc-recon-head { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; margin-bottom: 4px; }
 .cyc-recon .btn { flex-shrink: 0; }
 
-@media (max-width: 1280px) {
-  .tl-row { grid-template-columns: 200px 1fr; gap: 14px; }
+@media (max-width: 1439px) {
+  .tl2-row { grid-template-columns: 224px 1fr; gap: 14px; }
+}
+@media (max-width: 1279px) {
+  .tl2-row { grid-template-columns: 190px 1fr; gap: 12px; padding: 0 10px; }
+  .tl2-key { margin-left: 10px; margin-right: 10px; }
   .cyc-kv { grid-template-columns: 170px 1fr; }
+  .cyc-2col { grid-template-columns: 1fr; gap: 18px; }
+}
+@media (min-width: 1920px) {
+  .tl2-row { grid-template-columns: 300px 1fr; gap: 26px; }
 }
