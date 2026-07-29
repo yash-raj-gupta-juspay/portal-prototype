@@ -28,7 +28,7 @@
     ops: {
       approvalTab: 'pending', approvalsTenant: 'all', approvalsSla: 'all',
       reconTenant: null, reconCycle: null,
-      filesTenant: 'hsbc-in', filesStatus: 'All',
+      filesTenant: 'hsbc-in',
       disputesTenant: 'all', disputesUrgency: '<7 days', disputesStage: 'all',
       onboardStep: 1, onboardFiles: [],
       holidayCountry: 'All', holidayView: 'list', holidayMonthIdx: 0
@@ -239,7 +239,7 @@
     { id: 'ops-approvals', label: 'Fee Config Approvals', icon: 'check-square', route: '#/dashboard/ops/approvals' },
     { id: 'ops-recon', label: 'Reconciliation', icon: 'git-compare', route: '#/dashboard/ops/reconciliation' },
     { id: 'ops-files', label: 'Settlement File Monitoring', icon: 'upload', route: '#/dashboard/ops/files' },
-    { id: 'ops-ird', label: 'IRD Rejects', icon: 'shield-alert', route: '#/dashboard/ops/ird-rejects' },
+    { id: 'ops-rejects', label: 'Rejects', icon: 'file-warning', route: '#/dashboard/ops/rejects' },
     { id: 'ops-onboarding', label: 'Bank Onboarding', icon: 'building', route: '#/dashboard/ops/onboarding' },
     {
       // Sub-items inherit the parent's icon style — no separate icons (Part 2.1),
@@ -1349,8 +1349,6 @@
   /* ======================================================================== *
      OPS PORTAL (Phase 2)
      ======================================================================== */
-  var _opsFiles = [];
-
   function tenantTag(tid) {
     var t = O.tenantById[tid] || O.onboardingById[tid]; if (!t) return tid;
     return '<span class="tenant-tag"><span class="tenant-dot" style="background:' + t.color + '"></span>' + esc(t.name) + '</span>';
@@ -1381,10 +1379,11 @@
     // Cycle Snapshot — the drill-in behind every Cross-Tenant Cycle Status cell.
     // It belongs to Ops Home, so the sidebar keeps Ops Home selected.
     if (head === 'cycle-snapshot') { S.opsActive = 'ops-home'; renderSidebar(); return CYCUI.route(rest.slice(1)); }
-    if (head === 'files') { S.opsActive = 'ops-files'; renderSidebar(); return viewFiles(); }
-    // IRD Reject Resolver (refinement §6) — Ops resolves a wrong / missing IRD
-    // and re-stages the file without escalating to Tech.
-    if (head === 'ird-rejects') { S.opsActive = 'ops-ird'; renderSidebar(); return IRDUI.route(rest.slice(1)); }
+    if (head === 'files') { S.opsActive = 'ops-files'; renderSidebar(); return SFUI.route(); }
+    // Rejects — staging + incoming rejects across Visa and Mastercard. One
+    // branch covers the overview and the :batchId drill-in; the correction
+    // editor is a side panel over the batch, not a route of its own.
+    if (head === 'rejects') { S.opsActive = 'ops-rejects'; renderSidebar(); return REJUI.route(rest.slice(1)); }
     if (head === 'onboarding') {
       S.opsActive = 'ops-onboarding'; renderSidebar();
       if (rest[1] === 'new') return viewOnboardNew();
@@ -1431,10 +1430,13 @@
       return '<div class="queue-item" data-route="#/dashboard/ops/onboarding/' + t.id + '"><div class="qi-body"><div class="qi-title">' + tenantTag(t.id) + '</div><div class="qi-meta">' + t.country + ' · Provisioning</div></div><span class="qi-arrow">' + icon('chevron-right', 16) + '</span></div>';
     }).join('') || '<div class="meta">No tenants provisioning.</div>';
 
-    var issues = [];
-    O.tenants.forEach(function (t) { O.filesFor(t.id, 7).forEach(function (f) { if (f.status === 'Failed' || f.status === 'Delayed') issues.push(f); }); });
-    var fileQueue = issues.slice(0, 5).map(function (f) {
-      return '<div class="queue-item" data-route="#/dashboard/ops/files?filesTenant=' + f.tenantId + '&filesStatus=' + f.status + '"><div class="qi-body"><div class="qi-title">' + tenantTag(f.tenantId) + ' · ' + f.type + ' ' + f.network + '</div><div class="qi-meta">' + U.prettyDate(f.date) + ' · ' + pill(f.status, f.status === 'Failed' ? 'danger' : 'warning') + '</div></div><span class="qi-arrow">' + icon('chevron-right', 16) + '</span></div>';
+    // Settlement files carry two independent statuses now (§C.3): a delivery
+    // failure and a validation mismatch are different problems, and the queue
+    // says which one it is rather than collapsing them into "issue".
+    var fileQueue = window.SFILES.issues(7).slice(0, 5).map(function (f) {
+      var bad = f.delivery === 'Failed';
+      var what = bad ? pill('Delivery failed', 'danger') : (f.validation === 'Mismatch' ? pill('Validation mismatch', 'danger') : pill('Not shared', 'warning'));
+      return '<div class="queue-item" data-route="#/dashboard/ops/files?filesTenant=' + f.tenantId + '"><div class="qi-body"><div class="qi-title">' + tenantTag(f.tenantId) + ' · ' + f.type + '</div><div class="qi-meta">' + U.prettyDate(f.date) + ' · ' + what + '</div></div><span class="qi-arrow">' + icon('chevron-right', 16) + '</span></div>';
     }).join('') || '<div class="meta">No file issues.</div>';
 
     // rejections summary
@@ -1473,6 +1475,43 @@
 
   /* ---- 5.2a Fee Config Approvals queue ------------------------------------ */
   function approvalStatusKind(s) { return { Pending: 'warning', Approved: 'success', Rejected: 'danger' }[s] || 'neutral'; }
+
+  /* §A.2 — tenant summary tiles.
+     The queue table alone made the analyst scan rows to work out where the
+     work is. The tiles put the per-tenant load up front so approvals can be
+     batched by tenant, and carry the SLA signal for that tenant's worst case.
+     A tenant with nothing pending is still shown — its absence would read as a
+     missing tenant rather than an empty queue — but recessive and inert. */
+  function approvalTiles() {
+    var pending = O.feeApprovals.filter(function (a) { return a.status === 'Pending'; });
+    var sel = S.ops.approvalsTenant;
+    function tile(id, name, count, sub, worstLeft) {
+      var zero = count === 0;
+      var active = sel === id;
+      var sla = '';
+      if (!zero && worstLeft != null) {
+        if (worstLeft <= 4) sla = '<span class="appr-sla red" title="' + esc('Closest approval is ' + (worstLeft <= 0 ? Math.abs(worstLeft) + 'h past its 48h SLA' : worstLeft + 'h from its 48h SLA breach')) + '">' + icon('alert-circle', 12) + (worstLeft <= 0 ? 'overdue' : worstLeft + 'h left') + '</span>';
+        else if (worstLeft <= 12) sla = '<span class="appr-sla amber" title="' + esc('Closest approval is ' + worstLeft + 'h from its 48h SLA breach') + '">' + icon('clock', 12) + worstLeft + 'h left</span>';
+      }
+      return '<button type="button" class="appr-tile' + (active ? ' active' : '') + (zero ? ' muted' : '') + '" ' +
+        (zero ? 'disabled' : 'data-action="ops-approval-tile" data-tenant="' + id + '"') +
+        ' title="' + esc(zero ? name + ' has no pending fee approvals' : 'Filter the queue to ' + name) + '">' +
+        '<span class="appr-tile-head">' + (id === 'all'
+          ? '<span class="tenant-tag"><span class="tenant-dot" style="background:var(--text-tertiary)"></span>' + name + '</span>'
+          : tenantTag(id)) + sla + '</span>' +
+        '<span class="appr-tile-count num">' + count + '</span>' +
+        '<span class="appr-tile-sub">' + esc(sub) + '</span></button>';
+    }
+    var allWorst = pending.length ? Math.min.apply(null, pending.map(function (a) { return 48 - a.submittedHoursAgo; })) : null;
+    var tiles = tile('all', 'All tenants', pending.length, 'pending across the platform', allWorst);
+    tiles += O.tenants.map(function (t) {
+      var mine = pending.filter(function (a) { return a.tenantId === t.id; });
+      var worst = mine.length ? Math.min.apply(null, mine.map(function (a) { return 48 - a.submittedHoursAgo; })) : null;
+      return tile(t.id, t.name, mine.length, t.country, worst);
+    }).join('');
+    return '<div class="appr-tiles">' + tiles + '</div>';
+  }
+
   function viewApprovals() {
     var tab = S.ops.approvalTab;
     var counts = { pending: 0, approved: 0, rejected: 0 };
@@ -1504,7 +1543,8 @@
     }
 
     setView(
-      '<div class="page-head"><div><h1 class="page-title">Fee Config Approvals</h1><div class="subtitle">Ops side of the maker-checker flow · all tenants</div></div></div>' + tabBar +
+      '<div class="page-head"><div><h1 class="page-title">Fee Config Approvals</h1><div class="subtitle">Ops side of the maker-checker flow · all tenants</div></div></div>' +
+      approvalTiles() + tabBar +
       '<div class="filter-row"><label class="field" style="flex-direction:row;align-items:center;gap:8px">Tenant ' + tenantSelect('ops-approval-tenant', S.ops.approvalsTenant, true) + '</label>' +
       '<div class="chip search-chip">' + icon('search', 15) + '<input class="input" placeholder="Submitted-by search" data-action="noop" /></div>' +
       '<label class="field" style="flex-direction:row;align-items:center;gap:8px">SLA <select class="input" style="width:auto" data-action="ops-approval-sla"><option value="all"' + (S.ops.approvalsSla === 'all' ? ' selected' : '') + '>All</option><option value="approaching"' + (S.ops.approvalsSla === 'approaching' ? ' selected' : '') + '>Approaching</option><option value="overdue"' + (S.ops.approvalsSla === 'overdue' ? ' selected' : '') + '>Overdue</option></select></label></div>' +
@@ -1574,23 +1614,56 @@
     S.ops.reconCycle = cyc.id;
     var t = O.tenantById[tid], cur = t.currency;
 
-    var statusKind = cyc.status === 'Break' ? 'danger' : (cyc.status === 'Under Investigation' ? 'warning' : 'success');
+    var statusKind = cyc.status === 'Break' ? 'danger' : (cyc.status === 'Under Investigation' ? 'warning' : (cyc.status === 'Provisional' ? 'info' : 'success'));
     var selectors = '<div class="filter-row">' +
       '<label class="field" style="flex-direction:row;align-items:center;gap:8px">Tenant ' + tenantSelect('recon-tenant', tid, false) + '</label>' +
-      '<label class="field" style="flex-direction:row;align-items:center;gap:8px">Cycle <select class="input" style="width:auto" data-action="recon-cycle">' + cycles.slice(0, 30).map(function (c) { return '<option value="' + c.id + '"' + (c.id === cyc.id ? ' selected' : '') + '>' + U.prettyDate(c.date) + (c.hasBreak ? ' · break' : (c.hasRej ? ' · rejections' : '')) + '</option>'; }).join('') + '</select></label>' +
+      '<label class="field" style="flex-direction:row;align-items:center;gap:8px">Cycle <select class="input" style="width:auto" data-action="recon-cycle">' + cycles.slice(0, 30).map(function (c) { return '<option value="' + c.id + '"' + (c.id === cyc.id ? ' selected' : '') + '>' + U.prettyDate(c.date) + (c.hasBreak ? ' · break' : (c.provisional ? ' · provisional' : (c.hasRej ? ' · rejections' : ''))) + '</option>'; }).join('') + '</select></label>' +
       '<div class="chip"><span class="chip-label">Networks</span><span class="chip-value">All</span>' + icon('chevron-down', 15) + '</div></div>';
 
-    // leg tables
+    /* ---- The two legs (§B.3) ----------------------------------------------
+       Each leg says what it is and where the number comes from, in two lines
+       of muted text, because "Submitted position" alone left the analyst to
+       guess whether it meant our records or the network's. */
     function legTable(kind) {
       var rows = O.NETWORKS.map(function (net) {
         var lg = cyc.legs[net.key];
-        return '<tr><td>' + net.name + '</td><td class="num">' + (kind === 'sub' ? lg.subBatches : lg.setBatches) + '</td><td class="num">' + num(kind === 'sub' ? lg.subCount : lg.setCount) + '</td><td class="num">' + fmt(kind === 'sub' ? lg.subGross : lg.settleAmt, 2, cur) + '</td></tr>';
+        return '<tr><td>' + net.name + '</td><td class="num">' + num(kind === 'sub' ? lg.subCount : lg.setCount) + '</td><td class="num">' + fmt(kind === 'sub' ? lg.subGross : lg.settleAmt, 2, cur) + '</td></tr>';
       }).join('');
-      return '<table class="data"><thead><tr><th>Network</th><th class="num">Batches</th><th class="num">Txns</th><th class="num">' + (kind === 'sub' ? 'Gross' : 'Settlement') + '</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      return '<table class="data"><thead><tr><th>Network</th><th class="num">Txns</th><th class="num">' + (kind === 'sub' ? 'Gross' : 'Settled so far') + '</th></tr></thead><tbody>' + rows + '</tbody></table>';
     }
+    /* §B.2 — the six incoming cycles, so the analyst can see which have landed
+       and which are still outstanding. */
+    var incRows = cyc.incomingCycles.map(function (ic) {
+      return '<tr class="' + (ic.received ? '' : 'recon-inc-waiting') + '">' +
+        '<td class="nowrap">Cycle ' + ic.n + ' of 6</td>' +
+        '<td class="nowrap cell-sub">' + (ic.receivedAt ? esc(ic.receivedAt) : '<span class="recon-await">' + icon('clock', 12) + 'not received</span>') + '</td>' +
+        '<td class="num">' + (ic.received ? num(ic.count) : '—') + '</td>' +
+        '<td class="num">' + (ic.received ? fmt(ic.amount, 2, cur) : '—') + '</td></tr>';
+    }).join('');
+    var provisionalBanner = cyc.provisional
+      ? '<div class="callout warn recon-provisional">' + icon('alert-triangle', 20) +
+      '<div class="callout-body"><strong>' + cyc.incomingReceived + ' of 6 incoming cycles received — reconciliation is provisional.</strong> ' +
+      'The residual below is the two outstanding cycles, not a confirmed break. It resolves when cycles ' +
+      (cyc.incomingReceived + 1) + ' and 6 land.</div></div>'
+      : '';
+
     var twoway = '<div class="twoway">' +
-      '<div class="leg-card"><div class="leg-head">Leg 1 — Submitted position</div><div class="leg-src">What we submitted · from CTF/IPM/NPCI batch trailers</div>' + legTable('sub') + '<div class="row" style="justify-content:space-between;margin-top:12px;font-weight:600"><span>Total submitted</span><span class="num">' + fmt(cyc.submitted, 2, cur) + '</span></div></div>' +
-      '<div class="leg-card"><div class="leg-head">Leg 2 — Settled position</div><div class="leg-src">What the network settled · from VSS TC46/TC58, GCMS, NPCI settlement reports</div>' + legTable('set') + '<div class="row" style="justify-content:space-between;margin-top:12px;font-weight:600"><span>Total settled</span><span class="num">' + fmt(cyc.settled, 2, cur) + '</span></div></div>' +
+      '<div class="leg-card"><div class="leg-head">Leg 1 · Submitted to network</div>' +
+      '<div class="leg-src">The amount we cleared and submitted to the network for this cycle.<br>Source: our own clearing batch trailers (CTF / IPM / NPCI).</div>' +
+      '<div class="leg-batch">' + icon('package', 13) + '1 batch submitted this cycle</div>' +
+      legTable('sub') +
+      '<div class="row" style="justify-content:space-between;margin-top:12px;font-weight:600"><span>Total submitted</span><span class="num">' + fmt(cyc.submitted, 2, cur) + '</span></div></div>' +
+
+      '<div class="leg-card"><div class="leg-head">Leg 2 · Settled by network</div>' +
+      '<div class="leg-src">The amount the network actually settled to the acquirer.<br>Source: network settlement reports (VSS TC46/TC58, GCMS, NPCI), aggregated across 6 incoming cycles.</div>' +
+      '<div class="leg-batch' + (cyc.provisional ? ' warn' : '') + '">' + icon('layers', 13) + 'Aggregated across 6 incoming cycles · ' + cyc.incomingReceived + ' of 6 received</div>' +
+      provisionalBanner +
+      legTable('set') +
+      '<div class="recon-inc-title">Incoming cycles</div>' +
+      '<table class="data recon-inc"><thead><tr><th>Cycle</th><th>Received</th><th class="num">Txns</th><th class="num">Amount</th></tr></thead><tbody>' + incRows + '</tbody></table>' +
+      '<div class="row" style="justify-content:space-between;margin-top:12px;font-weight:600"><span>Total settled' + (cyc.provisional ? ' so far' : '') + '</span><span class="num">' + fmt(cyc.settled, 2, cur) + '</span></div>' +
+      (cyc.provisional ? '<div class="meta" style="margin-top:4px">Expected once all six land: <span class="num">' + fmt(cyc.expectedFullSettlement, 2, cur) + '</span></div>' : '') +
+      '</div>' +
       '</div>';
 
     // expected delta
@@ -1600,7 +1673,15 @@
 
     // break math
     function term(lbl, val) { return '<div class="bf-term"><span class="bf-label">' + lbl + '</span><span class="bf-val">' + val + '</span></div>'; }
-    var breakBlock = '<div class="break-formula">' + term('Submitted', fmt(cyc.submitted, 0, cur)) + '<span class="bf-op">−</span>' + term('Settled', fmt(cyc.settled, 0, cur)) + '<span class="bf-op">−</span>' + term('Expected Δ', fmt(cyc.expectedDelta, 0, cur)) + '<span class="bf-op">=</span>' + '<div class="bf-term"><span class="bf-label">Residual</span><span class="bf-val bf-residual ' + (cyc.residual > 0 ? 'break' : 'zero') + '">' + fmt(cyc.residual, 2, cur) + '</span></div></div>' + residualBar(cyc, cur);
+    // A residual computed before all six incoming cycles land is provisional,
+    // not a break (§B.2) — it must never render in break red.
+    var residualCls = cyc.residual > 0 ? (cyc.provisional ? 'provisional' : 'break') : 'zero';
+    var breakBlock = '<div class="break-formula">' + term('Submitted', fmt(cyc.submitted, 0, cur)) + '<span class="bf-op">−</span>' +
+      term('Settled' + (cyc.provisional ? ' (4 of 6)' : ''), fmt(cyc.settled, 0, cur)) + '<span class="bf-op">−</span>' +
+      term('Expected Δ', fmt(cyc.expectedDelta, 0, cur)) + '<span class="bf-op">=</span>' +
+      '<div class="bf-term"><span class="bf-label">' + (cyc.provisional ? 'Provisional gap' : 'Residual') + '</span><span class="bf-val bf-residual ' + residualCls + '">' + fmt(cyc.residual, 2, cur) + '</span></div></div>' +
+      (cyc.provisional ? '<div class="meta mt-16">' + icon('info', 13) + ' Not a break — ' + (6 - cyc.incomingReceived) + ' incoming cycles are still outstanding. The residual is only meaningful once all six have arrived.</div>' : '') +
+      residualBar(cyc, cur);
 
     var investigation = cyc.hasBreak ? '<div class="card mt-16" style="border-color:#FECACA"><div class="card-title" style="color:var(--status-danger-fg)">' + icon('alert-octagon', 18) + ' Break Investigation</div><div class="meta mt-16">Residual of ' + fmt(cyc.residual, 2, cur) + ' beyond the expected delta. Contributing factor: <strong>Mastercard leg</strong> — settled amount is short of submitted less fees. Sample batches: MC-' + cyc.date.replace(/-/g, '') + '-03, MC-' + cyc.date.replace(/-/g, '') + '-07. No matching adjustment found in the scheme settlement report.</div><div class="mt-16"><button class="btn btn-primary btn-sm" data-action="open-investigation">' + icon('flag', 15) + 'Open investigation</button></div></div>' : '';
 
@@ -1621,7 +1702,7 @@
     var corrSection = cyc.corrections.length ? cardBox('Correction history', '<div class="meta mb-16">Immutable — original entry nullified (struck-through), correcting entry directly below.</div>' + cyc.corrections.map(cycleCorrectionPair).join('')) : '';
 
     setView(
-      '<div class="page-head"><div><h1 class="page-title">Two-Way Reconciliation</h1><div class="subtitle">Submitted position vs. network settled position · no acknowledgment leg</div></div></div>' +
+      '<div class="page-head"><div><h1 class="page-title">Two-Way Reconciliation</h1><div class="subtitle">One outgoing clearing batch per cycle vs. what the network settled, aggregated across six incoming cycles · no acknowledgment leg</div></div></div>' +
       selectors +
       '<div class="amounts-panel" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:20px">' +
       amountCell('Cycle', U.prettyDate(cyc.date), '') + amountCell('Cycle ID', cyc.id.split('-').slice(-3).join('-'), '') + amountCell('Currency', cur, '') + '<div class="amount-cell"><span class="ac-label">Status</span><span>' + pill(cyc.status, statusKind) + '</span></div></div>' +
@@ -1638,65 +1719,20 @@
     return '<div class="residual-bar-wrap"><div class="residual-bar">' +
       '<div class="residual-seg" style="width:' + w(c.settled).toFixed(2) + '%;background:#22C55E">Settled ' + fmt(c.settled, 0, cur) + '</div>' +
       '<div class="residual-seg" style="width:' + w(c.expectedDelta).toFixed(2) + '%;background:#EAB308" title="Expected delta ' + fmt(c.expectedDelta, 0, cur) + '"></div>' +
-      (c.residual > 0 ? '<div class="residual-seg" style="width:' + Math.max(w(c.residual), 6).toFixed(2) + '%;background:#EF4444" title="Residual ' + fmt(c.residual, 0, cur) + '"></div>' : '') +
-      '</div><div class="wf-legend" style="margin-top:12px"><span class="lg"><span class="sw" style="background:#22C55E"></span>Settled ' + fmt(c.settled, 0, cur) + '</span><span class="lg"><span class="sw" style="background:#EAB308"></span>Expected Δ ' + fmt(c.expectedDelta, 0, cur) + '</span>' + (c.residual > 0 ? '<span class="lg"><span class="sw" style="background:#EF4444"></span>Residual ' + fmt(c.residual, 0, cur) + ' — the break</span>' : '<span class="lg">Fully reconciled — no residual</span>') + '</div></div>';
+      (c.residual > 0 ? '<div class="residual-seg" style="width:' + Math.max(w(c.residual), 6).toFixed(2) + '%;background:' + (c.provisional ? '#EAB308' : '#EF4444') + '" title="' + (c.provisional ? 'Awaiting ' : 'Residual ') + fmt(c.residual, 0, cur) + '"></div>' : '') +
+      '</div><div class="wf-legend" style="margin-top:12px"><span class="lg"><span class="sw" style="background:#22C55E"></span>Settled ' + fmt(c.settled, 0, cur) + '</span><span class="lg"><span class="sw" style="background:#EAB308"></span>Expected Δ ' + fmt(c.expectedDelta, 0, cur) + '</span>' +
+      (c.residual > 0
+        ? (c.provisional
+          ? '<span class="lg"><span class="sw" style="background:#EAB308"></span>Awaiting ' + fmt(c.residual, 0, cur) + ' — ' + (6 - c.incomingReceived) + ' incoming cycles outstanding</span>'
+          : '<span class="lg"><span class="sw" style="background:#EF4444"></span>Residual ' + fmt(c.residual, 0, cur) + ' — the break</span>')
+        : '<span class="lg">Fully reconciled — no residual</span>') + '</div></div>';
   }
 
-  /* ---- 5.4 Settlement File Monitoring ------------------------------------- */
-  function viewFiles() {
-    var tid = S.ops.filesTenant;
-    _opsFiles = tid === 'all' ? [].concat.apply([], O.tenants.map(function (t) { return O.filesFor(t.id, 7); })) : O.filesFor(tid, 7);
-    var status = S.ops.filesStatus;
-    var shown = _opsFiles.filter(function (f) { return status === 'All' ? true : f.status === status; });
-
-    var summary = {
-      expected: _opsFiles.filter(function (f) { return f.status !== 'Not expected — holiday'; }).length,
-      generated: _opsFiles.filter(function (f) { return f.status === 'Generated'; }).length,
-      delayed: _opsFiles.filter(function (f) { return f.status === 'Delayed'; }).length,
-      failed: _opsFiles.filter(function (f) { return f.status === 'Failed'; }).length,
-      pending: _opsFiles.filter(function (f) { return f.status === 'Pending'; }).length
-    };
-    var strip = '<div class="amounts-panel" style="grid-template-columns:repeat(5,minmax(0,1fr));margin-bottom:20px">' +
-      amountCell('Expected in range', String(summary.expected), '') +
-      amountCell('Generated on time', String(summary.generated), 'good') +
-      amountCell('Delayed', String(summary.delayed), summary.delayed ? 'warn' : '') +
-      amountCell('Failed', String(summary.failed), summary.failed ? 'danger' : '') +
-      amountCell('Pending', String(summary.pending), '') + '</div>';
-
-    var rows = shown.map(function (f, i) {
-      var idx = _opsFiles.indexOf(f);
-      var stKind = { Generated: 'success', Delayed: 'warning', Failed: 'danger', Pending: 'neutral' }[f.status] || 'neutral';
-      var isHoliday = f.status.indexOf('holiday') >= 0;
-      var cls = f.status === 'Failed' ? 'file-failed' : (f.status === 'Delayed' ? 'file-delayed' : (isHoliday ? 'file-holiday' : ''));
-      return '<tr class="clickable ' + cls + '" data-action="file-detail" data-idx="' + idx + '">' +
-        '<td>' + tenantTag(f.tenantId) + '</td><td>' + f.network + '</td><td class="nowrap">' + U.prettyDate(f.date) + (f.holiday ? ' <span class="pill pill-warning" style="padding:1px 6px">🏦 Holiday</span>' : '') + '</td>' +
-        '<td><span class="file-badge badge-' + f.type + '">' + f.type + '</span></td>' +
-        '<td>' + (isHoliday ? '<span class="meta">Not expected — holiday</span>' : pill(f.status, stKind)) + '</td>' +
-        '<td class="nowrap">' + f.cutoff + '</td><td class="nowrap cell-sub">' + (f.generatedAt || '—') + '</td><td class="nowrap cell-sub">' + (f.transmittedAt || '—') + '</td>' +
-        '<td class="num">' + (f.size || '—') + '</td>' +
-        '<td>' + (f.status === 'Failed' ? '<button class="btn btn-sm btn-secondary" data-action="file-retry" data-name="' + f.name + '">Retry</button>' : (isHoliday ? '' : '<button class="btn btn-sm btn-ghost" data-action="file-detail" data-idx="' + idx + '">Logs</button>')) + '</td></tr>';
-    }).join('');
-
-    setView(
-      '<div class="page-head"><div><h1 class="page-title">Settlement File Monitoring</h1><div class="subtitle">MPR / MPF / JV1 / JV2 generation & transmission vs. cutoff SLAs</div></div></div>' +
-      '<div class="filter-row"><label class="field" style="flex-direction:row;align-items:center;gap:8px"><strong style="color:var(--text-primary)">Tenant</strong> ' + tenantSelect('files-tenant', tid, true) + '</label>' +
-      '<div class="chip"><span class="chip-label">Networks</span><span class="chip-value">All</span>' + icon('chevron-down', 15) + '</div>' +
-      '<label class="field" style="flex-direction:row;align-items:center;gap:8px">Status <select class="input" style="width:auto" data-action="files-status">' + ['All', 'Generated', 'Delayed', 'Failed', 'Pending'].map(function (s) { return '<option' + (status === s ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select></label>' +
-      '<div class="chip">' + icon('calendar', 15) + '<span class="chip-value">Last 7 days</span></div></div>' +
-      strip +
-      (shown.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Tenant</th><th>Network</th><th>Cycle</th><th>Type</th><th>Status</th><th>Cutoff</th><th>Generated</th><th>Transmitted</th><th class="num">Size</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<div class="card">' + emptyState('file-check', 'No files match', 'Adjust the tenant or status filter.') + '</div>')
-    );
-  }
-  function openFileDetail(f) {
-    var stKind = { Generated: 'success', Delayed: 'warning', Failed: 'danger', Pending: 'neutral' }[f.status] || 'neutral';
-    el('overlay-mount').innerHTML = '<div class="side-panel"><div class="modal-head"><div class="section-title">' + f.type + ' · ' + f.network + '</div><button class="icon-btn" data-action="close-overlay">' + icon('x', 16) + '</button></div>' +
-      '<div class="stack"><div>' + tenantTag(f.tenantId) + ' &nbsp; ' + pill(f.status, stKind) + '</div>' +
-      cardBox('Generation timeline', '<div class="file-row"><div class="file-name">Cutoff ' + f.cutoff + '<div class="file-meta">SLA target</div></div></div>' + (f.generatedAt ? '<div class="file-row"><div class="file-name">Generated<div class="file-meta">' + f.generatedAt + '</div></div></div>' : '') + (f.transmittedAt ? '<div class="file-row"><div class="file-name">Transmitted<div class="file-meta">' + f.transmittedAt + '</div></div></div>' : '')) +
-      cardBox('Log entries', '<div class="meta" style="font-family:monospace;font-size:12px;line-height:1.8">[' + f.date + ' 02:00] job started for ' + f.tenantId + '/' + f.type + '<br>[' + f.date + ' 02:0' + (f.status === 'Failed' ? '3] ERROR upstream clearing feed timeout (retry pending)' : '4] wrote ' + (f.size || '—')) + '<br>[' + f.date + ' 02:05] ' + (f.status === 'Failed' ? 'job FAILED' : (f.status === 'Delayed' ? 'job completed (delayed)' : 'job completed OK')) + '</div>') +
-      cardBox('File metadata', '<dl class="def-list"><dt>Checksum</dt><dd class="mono">' + f.checksum + '</dd><dt>Destination</dt><dd class="mono">' + f.dest + f.name + '</dd><dt>Size</dt><dd>' + (f.size || '—') + '</dd></dl>') +
-      '</div></div>';
-    if (window.lucide) lucide.createIcons();
-  }
+  /* ---- 5.4 Settlement File Monitoring -------------------------------------
+     Rebuilt as its own module (files-data.js + files-screen.js) in refinement
+     round 2 §C: the network dimension is gone, the row key is
+     tenant × cycle date × file type, and each row carries two independent
+     statuses plus five actions. Routed above via SFUI.route(). */
 
   /* ---- 5.5 Bank Onboarding ------------------------------------------------ */
   function viewOnboardingList() {
@@ -1916,6 +1952,7 @@
     /* ---- Ops Portal handlers ---- */
     'ops-approval-tab': function (t) { S.ops.approvalTab = t.getAttribute('data-tab'); viewApprovals(); },
     'ops-approval-tenant': function (t) { S.ops.approvalsTenant = t.value; viewApprovals(); },
+    'ops-approval-tile': function (t) { S.ops.approvalsTenant = t.getAttribute('data-tenant'); viewApprovals(); },
     'ops-approval-sla': function (t) { S.ops.approvalsSla = t.value; viewApprovals(); },
     'ops-approve': function (t) {
       var id = t.getAttribute('data-id'); var a = O.feeApprovals.find(function (x) { return x.id === id; });
@@ -1932,10 +1969,6 @@
     'recon-tenant': function (t) { S.ops.reconTenant = t.value; S.ops.reconCycle = null; viewOpsRecon(); },
     'recon-cycle': function (t) { S.ops.reconCycle = t.value; viewOpsRecon(); },
     'open-investigation': function () { toast('Investigation note created', 'success'); },
-    'files-tenant': function (t) { S.ops.filesTenant = t.value; viewFiles(); },
-    'files-status': function (t) { S.ops.filesStatus = t.value; viewFiles(); },
-    'file-detail': function (t) { var f = _opsFiles[+t.getAttribute('data-idx')]; if (f) openFileDetail(f); },
-    'file-retry': function (t) { toast('Retrying ' + t.getAttribute('data-name') + '…'); },
     'ops-onboard-next': function () { if (S.ops.onboardStep < 5) { S.ops.onboardStep++; viewOnboardNew(); } },
     'ops-onboard-prev': function () { if (S.ops.onboardStep > 1) { S.ops.onboardStep--; viewOnboardNew(); } },
     'ops-onboard-activate': function () {
@@ -1966,12 +1999,16 @@
   var CFGQ = window.ConfigsQueue(CFGUI);
   Object.keys(CFGUI.actions).forEach(function (k) { ACTIONS[k] = CFGUI.actions[k]; });
   Object.keys(CFGQ.actions).forEach(function (k) { ACTIONS[k] = CFGQ.actions[k]; });
-  // IRD Reject Resolver shares the same design-system kit.
-  var IRDUI = window.IrdUI(CFGKIT);
-  Object.keys(IRDUI.actions).forEach(function (k) { ACTIONS[k] = IRDUI.actions[k]; });
+  // Rejects shares the same design-system kit.
+  var REJUI = window.RejectsUI(CFGKIT);
+  Object.keys(REJUI.actions).forEach(function (k) { ACTIONS[k] = REJUI.actions[k]; });
   // Cross-Tenant Cycle Status grid (Ops Home) + Cycle Snapshot drill-in.
   var CYCUI = window.CycleUI(CFGKIT);
   Object.keys(CYCUI.actions).forEach(function (k) { ACTIONS[k] = CYCUI.actions[k]; });
+  // Settlement File Monitoring (refinement round 2 §C) — its own module now
+  // that the screen carries two status dimensions and five row actions.
+  var SFUI = window.FilesUI(CFGKIT);
+  Object.keys(SFUI.actions).forEach(function (k) { ACTIONS[k] = SFUI.actions[k]; });
 
   function openAddUser() {
     el('overlay-mount').innerHTML = '<div class="overlay" data-action="close-overlay"><div class="modal" onclick="event.stopPropagation()">' +
@@ -2007,8 +2044,9 @@
     var a = t.getAttribute('data-action');
     // Configs: 'cfgi-*' actions are live-typing bindings (model update + targeted re-render).
     if (a.indexOf('cfgi-') === 0) { ACTIONS[a](t); return; }
-    // IRD resolver: the apply reason is a live-typing binding.
-    if (a === 'ird-reason') { ACTIONS[a](t); return; }
+    // Rejects: 'rej-i-*' actions are live-typing bindings — they update the
+    // model and re-render only the affected region, so the input keeps focus.
+    if (a.indexOf('rej-i-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
     if (a === 'filter-merchants') ACTIONS[a](t);
   });
   document.addEventListener('change', function (e) {
@@ -2016,10 +2054,12 @@
     var a = t.getAttribute('data-action');
     // Configs: 'cfgc-*' actions are select / checkbox / radio bindings.
     if (a.indexOf('cfgc-') === 0) { ACTIONS[a](t); return; }
-    // IRD resolver: selects, checkboxes and the candidate radios.
-    if (a.indexOf('ird-') === 0 && a !== 'ird-reason' && ACTIONS[a]) { ACTIONS[a](t); return; }
+    // Rejects: 'rej-c-*' actions are select / checkbox / date bindings.
+    if (a.indexOf('rej-c-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
+    // Settlement File Monitoring: selects, date inputs and the upload file picker.
+    if (a.indexOf('sf-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
     if (['filter-merchant-status', 'filter-merchant-mcc', 'fb-group', 'holiday-country', 'propose-merchant', 'report-delivery',
-      'ops-approval-tenant', 'ops-approval-sla', 'recon-tenant', 'recon-cycle', 'files-tenant', 'files-status', 'ops-disp-tenant', 'ops-disp-urgency', 'holiday-ops-country'].indexOf(a) >= 0) ACTIONS[a](t);
+      'ops-approval-tenant', 'ops-approval-sla', 'recon-tenant', 'recon-cycle', 'ops-disp-tenant', 'ops-disp-urgency', 'holiday-ops-country'].indexOf(a) >= 0) ACTIONS[a](t);
   });
   // Tag inputs commit on Enter (Part 6.2 eligibility flags, Part 7.2 ack filenames).
   document.addEventListener('keydown', function (e) {

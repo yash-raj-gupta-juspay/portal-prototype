@@ -38,27 +38,45 @@ window.CycleUI = function (kit) {
      Four segments. CLR and STL are coupled, INC is its own phase, JV2 is next
      cycle — the separators after STL and after INC carry that grouping.
      ======================================================================= */
+  /* Part D.1 — the cell carries state, not schedule. Completed legs print their
+     completion time; pending and failed legs print nothing at all; delayed legs
+     print only the overrun badge. Cutoffs and expected times moved wholesale
+     into the tooltip, which is where four legs' worth of schedule belongs. */
+  function legPhrase(leg) {
+    if (leg.manual) return 'manually marked as sent by ' + leg.manual.by + ' · ' + leg.manual.at;
+    var notYet = 'not yet ' + leg.verb.toLowerCase();
+    if (leg.state === 'complete') return 'completed ' + C.hhmm(leg.actual) + ' IST';
+    if (leg.state === 'inprogress') return 'running since ' + C.hhmm(leg.started) + ' IST';
+    if (leg.state === 'pending') return notYet;
+    if (leg.state === 'delayed') {
+      return (leg.actual != null
+        ? 'completed ' + C.hhmm(leg.actual) + ' IST, ' + C.dur(leg.overrunMin) + ' past expected'
+        : notYet + ' — ' + C.dur(leg.overrunMin) + ' past expected') +
+        (leg.breached ? ', cutoff breached' : '');
+    }
+    return 'failed — requires intervention';
+  }
+  function segTip(leg) {
+    return leg.label + ' · expected ' + leg.expectedLabel + ' IST · cutoff ' + leg.cutoffLabel + ' IST · ' + legPhrase(leg) +
+      ' · ' + leg.cycleDay + ' in this tenant’s own cycle' +
+      (leg.manual ? ' · reason: ' + leg.manual.note : '');
+  }
   function segment(leg, sepBefore) {
     var m = leg.meta;
-    var phrase = leg.state === 'complete' ? 'completed ' + C.hhmm(leg.actual) + ' (' + leg.cellDay + ')'
-      : leg.state === 'inprogress' ? 'running since ' + C.hhmm(leg.started)
-        : leg.state === 'pending' ? 'not due yet'
-          : leg.state === 'delayed' ? (leg.actual != null
-            ? 'completed ' + C.hhmm(leg.actual) + ', ' + C.dur(leg.overrunMin) + ' past expected'
-            : 'awaiting — ' + C.dur(leg.overrunMin) + ' past expected')
-            : 'failed — requires intervention';
-    var tip = leg.label + ' — ' + m.label + ' · ' + phrase +
-      ' · expected ' + leg.expectedLabel + ' ' + leg.expectedDay +
-      ' · cutoff ' + leg.cutoffLabel + ' ' + leg.cutoffDay + ' (IST)';
-    return '<span class="cyc-seg st-' + leg.state + (sepBefore ? ' cyc-sep' : '') + '" title="' + esc(tip) + '">' +
+    var showBadge = leg.overrunMin > 0 && (leg.state === 'delayed' || leg.state === 'failed');
+    return '<span class="cyc-seg st-' + leg.state + (sepBefore ? ' cyc-sep' : '') + '" title="' + esc(segTip(leg)) + '">' +
       '<span class="cyc-seg-label">' + leg.short + '</span>' +
       '<span class="cyc-seg-icon" aria-hidden="true">' + icon(m.icon, 15) + '</span>' +
-      '<span class="cyc-seg-ts">' + leg.cellTime + '</span>' +
-      '<span class="cyc-seg-day">' + leg.cellDay + '</span>' +
-      (leg.overrunMin > 0 && (leg.state === 'delayed' || leg.state === 'failed')
+      (leg.cellTime
+        ? '<span class="cyc-seg-ts">' + leg.cellTime + '</span>'
+        : '<span class="cyc-seg-ts-blank"></span>') +
+      '<span class="cyc-seg-day">' + leg.cycleDay + '</span>' +
+      (showBadge
         ? '<span class="cyc-overrun' + (leg.breached ? ' breached' : '') + '">+' + C.dur(leg.overrunMin) + '</span>'
-        : '<span class="cyc-overrun-spacer"></span>') +
-      '<span class="sr-only">' + leg.label + ' ' + m.label + '</span>' +
+        : (leg.manual
+          ? '<span class="cyc-manual" title="' + esc('Manually marked as sent by ' + leg.manual.by + ' · ' + leg.manual.at + ' — ' + leg.manual.note) + '">' + icon('hand', 10) + 'M</span>'
+          : '<span class="cyc-overrun-spacer"></span>')) +
+      '<span class="sr-only">' + leg.label + ' ' + m.label + (leg.manual ? ', manually marked' : '') + '</span>' +
       '</span>';
   }
 
@@ -145,26 +163,24 @@ window.CycleUI = function (kit) {
     return '<div class="cyc-grid-wrap"><table class="cyc-grid"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table></div>';
   }
 
-  function legend(date) {
-    var legendStates = ['complete', 'inprogress', 'pending', 'delayed', 'failed'].map(function (k) {
+  /* Part D.3 — four short lines. Everything the old legend spelled out about
+     cutoffs and timezone arithmetic is now either in the tooltip or encoded in
+     the T+n tag, so it no longer needs a paragraph under the grid. */
+  function legend() {
+    var legendStates = ['complete', 'pending', 'delayed', 'failed'].map(function (k) {
       var m = C.STATE_META[k];
-      return '<span class="cyc-lg-item st-' + k + '">' + icon(m.icon, 14) + m.label + '</span>';
+      return '<span class="cyc-lg-item st-' + k + '">' + icon(m.icon, 14) + m.label.toLowerCase() + '</span>';
     }).join('');
-    var demo = C.failedDemos[0];
     return '<div class="cyc-legend">' +
       '<div class="cyc-lg-row">' +
-      '<span class="cyc-lg-key">CLR</span> clearing to network · ' +
-      '<span class="cyc-lg-key">STL</span> settlement files (MPR · MPF · JV1) to acquirer · ' +
-      '<span class="cyc-lg-key">INC</span> incoming from network · ' +
-      '<span class="cyc-lg-key">JV2</span> next-cycle journal to acquirer' +
+      '<span class="cyc-lg-key">CLR</span> clearing · ' +
+      '<span class="cyc-lg-key">STL</span> settlement files · ' +
+      '<span class="cyc-lg-key">INC</span> incoming · ' +
+      '<span class="cyc-lg-key">JV2</span> journal voucher 2' +
       '</div>' +
       '<div class="cyc-lg-row">' + legendStates + '</div>' +
-      '<div class="cyc-lg-row meta">' +
-      '<strong>All times IST.</strong> HSBC SG and HSBC HK cycles process on the transaction date in IST; HSBC IN and YES BANK process the following day. ' +
-      'The <span class="cyc-lg-key">T+n</span> tag under each timestamp is the processing day relative to the cycle date.' +
-      '</div>' +
-      '<div class="cyc-lg-row meta">Timestamps are the actual completion time, or the cutoff as “by HH:MM” while a leg has not landed. Cutoff is the expected time plus two hours. Click any cell for its cycle snapshot.</div>' +
-      '<div class="cyc-lg-row meta">Prior cycles hold the failure states — e.g. <a class="cyc-lg-link" data-route="' + snapRoute(demo.tenantId, demo.networkKey, demo.date) + '">HSBC SG · Visa · ' + U.prettyDate(demo.date) + '</a> failed its settlement leg.</div>' +
+      '<div class="cyc-lg-row meta">Times in IST. <span class="cyc-lg-key">T+n</span> shows the leg’s position in each tenant’s own cycle.</div>' +
+      '<div class="cyc-lg-row meta">Click any cell for the full cycle snapshot.</div>' +
       '</div>';
   }
 
@@ -172,7 +188,7 @@ window.CycleUI = function (kit) {
     var date = S.cycle.gridDate;
     return '<div class="cyc-sec-head">' +
       '<div class="section-title">Cross-tenant cycle status</div>' + dateStepper() + '</div>' +
-      cardBox('', gridTable(date) + legend(date));
+      cardBox('', gridTable(date) + legend());
   }
 
   /* The component Ops Home embeds. Stepping the date repaints this mount only,
@@ -199,6 +215,10 @@ window.CycleUI = function (kit) {
      axis, the cohort bracket and all four lanes share one coordinate system.
      ======================================================================= */
   function deltaText(leg) {
+    if (leg.manual) {
+      return 'Manually marked as sent ' + leg.manual.at + ' — ' +
+        (leg.manual.atAbs > leg.cutoff ? C.dur(leg.manual.atAbs - leg.cutoff) + ' past cutoff' : C.dur(leg.cutoff - leg.manual.atAbs) + ' before cutoff');
+    }
     if (leg.state === 'complete') {
       return leg.verb + ' ' + C.dur(leg.cutoff - leg.actual) + ' before cutoff';
     }
@@ -264,60 +284,42 @@ window.CycleUI = function (kit) {
 
     var nowMark = nowAbs != null ? '<div class="tl2-now" style="left:' + px(nowAbs) + '"></div>' : '';
 
-    /* Lanes, grouped into the three bands. */
+    /* Lanes, grouped into the three bands.
+       Part D.4 — actual event markers only. Cutoff lines, expected lines, the
+       on-time corridor and the per-lane delta annotations are all gone: four
+       data points per lane across four lanes was clutter, and every one of
+       those numbers still exists, in tabular form, in the schedule panel and
+       the four detail cards below. What is left is four dots on a multi-day
+       axis, coloured by state. */
     var bands = C.BANDS.map(function (band) {
       var lanes = band.legs.map(function (key) {
         var leg = snap.byKey[key];
         if (!leg) return '';
         var evAbs = leg.actual != null ? leg.actual : (leg.started != null ? leg.started : null);
-
-        // The overrun hatch runs from the cutoff to the actual event (or to now
-        // while the leg is still missing) — the visual weight of being late.
         // Where a missing leg's marker sits: at the live clock while the cycle
         // is still running, at its cutoff once the cycle is closed.
         var missingAt = nowAbs != null ? nowAbs : leg.cutoff;
 
-        var overrun = '';
-        if ((leg.state === 'delayed' || leg.state === 'failed') && leg.breached) {
-          var overEnd = leg.actual != null ? leg.actual : missingAt;
-          overrun = '<div class="tl2-overrun st-' + leg.state + '" style="left:' + px(leg.cutoff) + ';width:' + w(leg.cutoff, overEnd) + '" ' +
-            'title="' + esc(C.dur(overEnd - leg.cutoff) + ' past the ' + leg.cutoffLabel + ' cutoff') + '"></div>';
-        } else if (leg.state === 'delayed' && leg.actual != null) {
-          overrun = '<div class="tl2-late" style="left:' + px(leg.expected) + ';width:' + w(leg.expected, leg.actual) + '" ' +
-            'title="' + esc(C.dur(leg.actual - leg.expected) + ' past the ' + leg.expectedLabel + ' expected time, inside the cutoff') + '"></div>';
-        } else if (leg.state === 'delayed' && leg.live) {
-          overrun = '<div class="tl2-late" style="left:' + px(leg.expected) + ';width:' + w(leg.expected, missingAt) + '" ' +
-            'title="' + esc(C.dur(missingAt - leg.expected) + ' past the ' + leg.expectedLabel + ' expected time, inside the cutoff') + '"></div>';
-        }
-
         var ev = '';
         if (evAbs != null) {
           ev = '<div class="tl2-ev st-' + leg.state + (p(evAbs) > 86 ? ' at-end' : '') + (leg.started != null && leg.actual == null ? ' running' : '') +
-            '" style="left:' + px(evAbs) + '"><span class="tl2-dot"></span>' +
-            '<span class="tl2-evtime">' + C.hhmm(evAbs) + '</span></div>';
+            '" style="left:' + px(evAbs) + '" title="' + esc(legPhrase(leg)) + '"><span class="tl2-dot"></span>' +
+            '<span class="tl2-evtime">' + C.hhmm(evAbs) + (leg.manual ? ' ·M' : '') + '</span></div>';
         } else if (leg.state === 'delayed' || leg.state === 'failed') {
-          ev = '<div class="tl2-ev st-' + leg.state + (p(missingAt) > 86 ? ' at-end' : '') + '" style="left:' + px(missingAt) + '">' +
+          ev = '<div class="tl2-ev st-' + leg.state + (p(missingAt) > 86 ? ' at-end' : '') + '" style="left:' + px(missingAt) + '" ' +
+            'title="' + esc(legPhrase(leg)) + '">' +
             '<span class="tl2-dot hollow"></span><span class="tl2-evtime">' + (leg.state === 'failed' ? 'failed' : 'awaiting') + '</span></div>';
         }
 
-        var expClass = 'tl2-exp' + (p(leg.expected) > 88 ? ' at-end' : '');
-        var cutClass = 'tl2-cut st-' + leg.state + (p(leg.cutoff) > 88 ? ' at-end' : '');
         return '<div class="tl2-row tl2-lane st-' + leg.state + '">' +
           '<div class="tl2-head">' +
           '<div class="tl2-lane-title"><span class="cyc-legkey">' + leg.short + '</span>' + leg.label +
-          '<span class="cyc-head-chip st-' + leg.state + '">' + icon(leg.meta.icon, 13) + leg.meta.label + '</span></div>' +
-          '<div class="tl2-lane-sub">' + leg.sub + '</div>' +
-          '<div class="tl2-delta st-' + leg.state + '">' + deltaText(leg) + '</div>' +
+          '<span class="cyc-head-chip st-' + leg.state + '">' + icon(leg.meta.icon, 13) + leg.meta.label + '</span>' +
+          (leg.manual ? manualTag(leg) : '') + '</div>' +
+          '<div class="tl2-lane-sub">' + leg.sub + ' · <span class="cyc-daytag">' + leg.cycleDay + '</span></div>' +
           '</div>' +
           '<div class="tl2-track">' + dayLayer +
           '<div class="tl2-rail"></div>' +
-          '<div class="tl2-window" style="left:' + px(leg.expected) + ';width:' + w(leg.expected, leg.cutoff) + '" ' +
-          'title="' + esc('Expected ' + leg.expectedLabel + ' ' + leg.expectedDay + ' → cutoff ' + leg.cutoffLabel + ' ' + leg.cutoffDay) + '"></div>' +
-          overrun +
-          '<div class="' + expClass + '" style="left:' + px(leg.expected) + '" title="' + esc('Expected ' + leg.expectedLabel + ' IST (' + leg.expectedDay + ')') + '">' +
-          '<span class="tl2-flag exp">exp ' + leg.expectedLabel + '</span></div>' +
-          '<div class="' + cutClass + '" style="left:' + px(leg.cutoff) + '" title="' + esc('Cutoff ' + leg.cutoffLabel + ' IST (' + leg.cutoffDay + ') — expected + 2h') + '">' +
-          '<span class="tl2-flag cut">cutoff ' + leg.cutoffLabel + '</span></div>' +
           nowMark + ev +
           '</div></div>';
       }).join('');
@@ -344,15 +346,30 @@ window.CycleUI = function (kit) {
       'title="' + esc(snap.cohort.from + ' → ' + snap.cohort.to) + '"><span>' + esc(snap.cohort.label) + '</span></div>' +
       nowMark + '</div></div>' +
       bands +
+      '<div class="tl2-summary">' + icon(snap.status ? snap.status.icon : 'check-circle', 15) +
+      '<span>' + esc(timelineSummary(snap)) + '</span></div>' +
       '<div class="tl2-key">' +
-      '<span class="tl2-key-item"><span class="tl2-key-exp"></span>expected</span>' +
-      '<span class="tl2-key-item"><span class="tl2-key-cut"></span>cutoff (expected + 2h)</span>' +
-      '<span class="tl2-key-item"><span class="tl2-key-win"></span>on-time window</span>' +
       '<span class="tl2-key-item"><span class="tl2-key-dot"></span>actual event</span>' +
-      '<span class="tl2-key-item"><span class="tl2-key-hatch"></span>past cutoff</span>' +
       (nowAbs != null ? '<span class="tl2-key-item"><span class="tl2-key-now"></span>now</span>' : '') +
-      '<span class="tl2-key-item meta">Vertical dividers are IST midnights — this cycle spans ' + dayCount + ' calendar days.</span>' +
+      '<span class="tl2-key-item meta">Vertical dividers are IST midnights — this cycle spans ' + dayCount + ' calendar days. Expected times, cutoffs and deltas are in the tables below.</span>' +
       '</div></div>';
+  }
+
+  /* Part D.4 — one sentence in place of four per-lane annotations. */
+  function timelineSummary(snap) {
+    var failed = snap.legs.filter(function (l) { return l.state === 'failed'; });
+    var late = snap.legs.filter(function (l) { return l.state === 'delayed'; });
+    var manual = snap.legs.filter(function (l) { return l.manual; });
+    var tail = manual.length
+      ? ' ' + manual.map(function (l) { return l.short; }).join(' and ') + ' manually marked as sent.'
+      : '';
+    if (failed.length) return failed.length + ' leg' + (failed.length > 1 ? 's' : '') + ' failed — see details below.' + tail;
+    if (late.length) return late.length + ' leg' + (late.length > 1 ? 's' : '') + ' delayed — see details below.' + tail;
+    if (snap.legs.every(function (l) { return l.state === 'complete'; })) {
+      return (manual.length ? 'All legs complete.' : 'All legs completed within expected windows.') + tail;
+    }
+    var next = snap.legs.filter(function (l) { return l.state === 'pending' || l.state === 'inprogress'; })[0];
+    return 'On track — ' + (next ? next.label.toLowerCase() + ' not due yet.' : 'cycle in flight.') + tail;
   }
 
   /* =======================================================================
@@ -383,7 +400,28 @@ window.CycleUI = function (kit) {
       '<span class="cyc-neg">expected + 2h</span>';
   }
   function statusChip(leg) {
-    return ' <span class="cyc-head-chip st-' + leg.state + '">' + icon(leg.meta.icon, 13) + leg.meta.label + '</span>';
+    return ' <span class="cyc-head-chip st-' + leg.state + '">' + icon(leg.meta.icon, 13) + leg.meta.label + '</span>' +
+      (leg.manual ? ' ' + manualTag(leg) : '');
+  }
+  /* Part D.6 — a manually marked leg is green like any other completed leg, so
+     the tag is the only thing standing between an assertion and a fact. It
+     goes everywhere the leg is rendered. */
+  function manualTag(leg) {
+    return '<span class="cyc-manual-tag" title="' +
+      esc('Marked as sent by ' + leg.manual.by + ' · ' + leg.manual.at + ' — ' + leg.manual.note) + '">' +
+      icon('hand', 12) + 'manually marked</span>';
+  }
+  function markSentBtn(leg) {
+    if (!C.canMarkSent(leg)) return '';
+    return '<button class="btn btn-secondary btn-sm" data-action="cyc-mark-sent" data-leg="' + leg.key + '">' +
+      icon('hand', 15) + 'Mark as sent</button>';
+  }
+  function manualCallout(leg) {
+    if (!leg.manual) return '';
+    return '<div class="callout warn mt-16">' + icon('hand', 20) +
+      '<div class="callout-body"><strong>Manually marked as sent</strong> by ' + esc(leg.manual.by) + ' · ' + esc(leg.manual.at) +
+      '. This is a recorded human assertion, not a delivery the platform confirmed.' +
+      '<div class="meta" style="margin-top:4px">Reason: ' + esc(leg.manual.note) + '</div></div></div>';
   }
   function againstRow(leg) {
     return ['Against cutoff', '<span class="st-' + leg.state + ' cyc-strong">' + deltaText(leg) + '</span>'];
@@ -435,11 +473,14 @@ window.CycleUI = function (kit) {
       ]) +
       '</div>' +
       (leg.note ? '<div class="callout danger mt-16">' + icon('x-circle', 20) + '<div class="callout-body">' + esc(leg.note) + '</div></div>' : '') +
+      manualCallout(leg) +
       '<div class="cyc-sub-title" id="snap-files">Settlement files delivered to the acquirer</div>' +
-      (leg.state === 'failed'
-        ? '<div class="meta">No settlement files were produced for this cycle.</div>'
-        : files);
-    return cardBox('Settlement files — outgoing to acquirer' + statusChip(leg), body);
+      (leg.manual
+        ? '<div class="meta">Delivery asserted manually — the platform has no transfer record for these files.</div>'
+        : leg.state === 'failed'
+          ? '<div class="meta">No settlement files were produced for this cycle.</div>'
+          : files);
+    return cardBox('Settlement files — outgoing to acquirer' + statusChip(leg), body, markSentBtn(leg));
   }
 
   function incomingCard(snap) {
@@ -508,13 +549,16 @@ window.CycleUI = function (kit) {
       ]) +
       '</div>' +
       (leg.note ? '<div class="callout danger mt-16">' + icon('x-circle', 20) + '<div class="callout-body">' + esc(leg.note) + '</div></div>' : '') +
+      manualCallout(leg) +
       '<div class="cyc-sub-title">JV2 file</div>' +
-      (leg.state === 'failed'
-        ? '<div class="meta">No JV2 file was produced for this cycle.</div>'
-        : leg.actual != null
-          ? fileRow(j.file, j.file.size + ' · ' + j.file.dest)
-          : '<div class="meta">Not generated yet — expected ' + leg.expectedLabel + ' IST on ' + U.prettyDate(C.dateAt(snap.date, leg.expected)) + ' (' + leg.expectedDay + '), cutoff ' + leg.cutoffLabel + '.</div>');
-    return cardBox('JV2 — next-cycle outgoing to acquirer' + statusChip(leg), body);
+      (leg.manual
+        ? '<div class="meta">Delivery asserted manually — the platform has no transfer record for this file.</div>'
+        : leg.state === 'failed'
+          ? '<div class="meta">No JV2 file was produced for this cycle.</div>'
+          : leg.actual != null
+            ? fileRow(j.file, j.file.size + ' · ' + j.file.dest)
+            : '<div class="meta">Not generated yet — expected ' + leg.expectedLabel + ' IST on ' + U.prettyDate(C.dateAt(snap.date, leg.expected)) + ' (' + leg.expectedDay + '), cutoff ' + leg.cutoffLabel + '.</div>');
+    return cardBox('JV2 — next-cycle outgoing to acquirer' + statusChip(leg), body, markSentBtn(leg));
   }
 
   /* ---- Part 6.3 — schedule reference panel -------------------------------- */
@@ -634,6 +678,32 @@ window.CycleUI = function (kit) {
     );
   }
 
+  /* ---- Part D.6 — "Mark as sent" confirmation ----------------------------- */
+  function markSentModal(legKey) {
+    var snap = C.snapshot(S.cycle.tenantId, S.cycle.networkKey, S.cycle.date);
+    var leg = snap && snap.byKey ? snap.byKey[legKey] : null;
+    if (!leg) return;
+    el('overlay-mount').innerHTML =
+      '<div class="overlay" data-action="cyc-mark-cancel"><div class="modal" onclick="event.stopPropagation()">' +
+      '<div class="modal-head"><div class="section-title">Mark ' + leg.label + ' as sent</div>' +
+      '<button class="icon-btn" data-action="cyc-mark-cancel">' + icon('x', 16) + '</button></div>' +
+      '<div class="stack">' +
+      '<div class="callout warn">' + icon('hand', 20) + '<div class="callout-body">This records a <strong>manual assertion</strong> that the acquirer has the file. ' +
+      'The leg turns green on Ops Home but keeps a “manually marked” tag, so nobody reads it as a delivery the platform confirmed.</div></div>' +
+      '<dl class="def-list"><dt>Tenant</dt><dd>' + tenantTag(snap.tenant.id) + '</dd>' +
+      '<dt>Network</dt><dd>' + esc(snap.network.name) + '</dd>' +
+      '<dt>Cycle</dt><dd>' + U.prettyDate(snap.date) + '</dd>' +
+      '<dt>Leg</dt><dd>' + leg.short + ' · ' + esc(leg.label) + '</dd>' +
+      '<dt>Current state</dt><dd>' + pill(leg.meta.label, leg.meta.kind, leg.meta.icon) + '</dd></dl>' +
+      '<label class="field">Reason for manual marking <span class="req">*</span>' +
+      '<textarea class="input" id="cyc-note" placeholder="e.g. Files delivered by secure email after the SFTP endpoint failed; acquirer confirmed receipt at 08:55."></textarea></label>' +
+      '<div class="row" style="justify-content:flex-end;gap:10px;margin-top:8px">' +
+      '<button class="btn btn-secondary" data-action="cyc-mark-cancel">Cancel</button>' +
+      '<button class="btn btn-primary" data-action="cyc-mark-confirm" data-leg="' + legKey + '">' + icon('check', 16) + 'Mark as sent</button>' +
+      '</div></div></div></div>';
+    paintIcons();
+  }
+
   /* =======================================================================
      ROUTING + ACTIONS
      ======================================================================= */
@@ -667,6 +737,21 @@ window.CycleUI = function (kit) {
       viewSnapshot(S.cycle.tenantId, S.cycle.networkKey, S.cycle.date);
     },
     'cyc-download': function (t) { toast('Downloading ' + t.getAttribute('data-name')); },
+
+    /* Part D.6 — the manual assertion. Mandatory note, recorded against the
+       leg, reflected on the Ops Home grid the moment the grid next paints. */
+    'cyc-mark-sent': function (t) { markSentModal(t.getAttribute('data-leg')); },
+    'cyc-mark-confirm': function (t) {
+      var legKey = t.getAttribute('data-leg');
+      var box = el('cyc-note');
+      var note = box ? String(box.value || '').trim() : '';
+      if (note.length < 5) { toast('A reason is required to mark this leg as sent', 'info'); return; }
+      C.markSent(S.cycle.tenantId, S.cycle.networkKey, S.cycle.date, legKey, note);
+      el('overlay-mount').innerHTML = '';
+      toast('Marked as sent — tagged “manually marked” on this cycle and on Ops Home', 'success');
+      viewSnapshot(S.cycle.tenantId, S.cycle.networkKey, S.cycle.date);
+    },
+    'cyc-mark-cancel': function () { el('overlay-mount').innerHTML = ''; },
     'cyc-date-prev': function () { stepGrid(-1); },
     'cyc-date-next': function () { stepGrid(1); },
     'cyc-date-today': function () { S.cycle.gridDate = C.CYCLE_TODAY; repaintGrid(); }

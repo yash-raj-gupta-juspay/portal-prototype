@@ -102,9 +102,24 @@ window.OPS = (function () {
   ];
   // status distribution: pending-heavy + 2 approved + 2 rejected
   var FC_STATUS = ['Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Pending', 'Approved', 'Approved', 'Rejected', 'Rejected'];
+  /* Tenant assignment is authored, not random (refinement round 2 §A.3): the
+     queue's tenant summary tiles are only useful if the pending work is
+     distributed the way the ops team actually sees it —
+     YES BANK 3 · HSBC IN 6 · HSBC SG 4 · HSBC HK 1. */
+  var FC_TENANT = [
+    'yesbank', 'yesbank', 'yesbank',
+    'hsbc-in', 'hsbc-in', 'hsbc-in', 'hsbc-in', 'hsbc-in', 'hsbc-in',
+    'hsbc-sg', 'hsbc-sg', 'hsbc-sg', 'hsbc-sg',
+    'hsbc-hk',
+    'hsbc-in', 'hsbc-sg',      // approved
+    'yesbank', 'hsbc-hk'       // rejected
+  ];
+  /* Hours since submission against the 48h SLA. Index 3 (HSBC IN) sits 3h from
+     breach — the one tile that must show a red SLA signal. */
+  var FC_AGE = [2, 11, 30, 45, 6, 20, 26, 33, 12, 9, 38, 15, 24, 28];
   var feeApprovals = FC_STATUS.map(function (status, i) {
     var r = rng(44000 + i * 13);
-    var tenant = pick(r, tenants);
+    var tenant = tenantById[FC_TENANT[i]] || tenants[0];
     var merchant = pick(r, merchantsByTenant[tenant.id]);
     var current = baseRules(r, merchant);
     // proposed: modify rule 0 (pct), remove one debit rule, add a cross-border credit rule
@@ -121,7 +136,7 @@ window.OPS = (function () {
     var monthlyVol = merchant.mtdVolume;
     var totalDelta = Math.round(monthlyVol * (mainDelta / 100) * 0.55);
     var pctRel = round2((totalDelta / (monthlyVol * 0.019)) * 100);
-    var submittedHoursAgo = status === 'Pending' ? [2, 6, 11, 20, 26, 38, 44, 47, 49, 3, 9, 30, 46, 15][i % 14] : rint(r, 60, 240);
+    var submittedHoursAgo = status === 'Pending' ? FC_AGE[i % 14] : rint(r, 60, 240);
     var perNet = ['visa', 'mc', 'rupay'].map(function (nk) {
       return { network: NET_BY_KEY[nk].name, networkKey: nk, delta: Math.round(totalDelta * (nk === 'visa' ? 0.5 : nk === 'mc' ? 0.35 : 0.15)) };
     });
@@ -206,6 +221,42 @@ window.OPS = (function () {
         var netBreak = hasBreak && net.key === 'mc' ? brk : 0;
         lg.settleAmt = round2(lg.subGross - netExpected - netBreak);
       });
+
+      /* ---- The batch model (§B.2) -----------------------------------------
+         Outgoing is ONE clearing batch per cycle. Incoming is not: the network
+         responds across six cycles over the processing window, and the settled
+         position is the aggregate of all six.
+
+         The most recent settled cycle is deliberately left mid-flight — four of
+         six have landed — because a residual computed before the last two
+         arrive is not a break, it is an incomplete picture, and the screen has
+         to be able to say so. */
+      var provisional = (ci === n - 2);
+      var INC_SHARE = [0.22, 0.19, 0.17, 0.16, 0.14, 0.12];
+      var INC_AT = ['03:15', '05:40', '07:20', '09:05', '11:30', '14:10'];
+      var arrived = provisional ? 4 : 6;
+      var arrivedShare = 0;
+      for (var ai = 0; ai < arrived; ai++) arrivedShare += INC_SHARE[ai];
+      arrivedShare = Math.round(arrivedShare * 10000) / 10000;
+
+      var fullSettle = 0, fullCount = 0;
+      NETWORKS.forEach(function (net) { fullSettle += legs[net.key].settleAmt; fullCount += legs[net.key].setCount; });
+      fullSettle = round2(fullSettle);
+
+      var incomingCycles = INC_SHARE.map(function (share, k) {
+        return {
+          n: k + 1, share: share,
+          received: k < arrived,
+          receivedAt: k < arrived ? U.prettyDate(U.addDays(date, 1)) + ', ' + INC_AT[k] + ' IST' : null,
+          amount: round2(fullSettle * share),
+          count: Math.round(fullCount * share)
+        };
+      });
+
+      // Only what has actually landed counts towards the settled position.
+      if (provisional) {
+        NETWORKS.forEach(function (net) { legs[net.key].settleAmt = round2(legs[net.key].settleAmt * arrivedShare); });
+      }
       NETWORKS.forEach(function (net) { setTotal += legs[net.key].settleAmt; });
       setTotal = round2(setTotal);
       var residual = round2(subTotal - setTotal - expectedDelta);
@@ -233,12 +284,16 @@ window.OPS = (function () {
         }
       });
 
-      var status = isToday ? 'In Progress' : (hasBreak ? 'Break' : (hasRej ? 'Under Investigation' : 'Clean'));
+      var status = isToday ? 'In Progress' : (hasBreak ? 'Break' : (provisional ? 'Provisional' : (hasRej ? 'Under Investigation' : 'Clean')));
 
       return {
         id: 'ops-cyc-' + tenant.id + '-' + date,
         tenantId: tenant.id, date: date, dow: U.DOW[wd], currency: tenant.currency, isToday: isToday,
         status: status, legs: legs, states: states,
+        // one outgoing clearing batch per cycle; incoming aggregated across six
+        outgoingBatches: 1,
+        incomingCycles: incomingCycles, incomingReceived: arrived, incomingTotal: 6,
+        provisional: provisional, expectedFullSettlement: fullSettle,
         submitted: round2(subTotal), settled: setTotal,
         interchange: icTotal, scheme: schemeTotal, adjustments: round2(adjTotal + rejTotal), rejectionHoldback: rejTotal,
         expectedDelta: expectedDelta, residual: residual, hasBreak: hasBreak, brk: brk,
@@ -263,49 +318,11 @@ window.OPS = (function () {
     return { tenantId: 'hsbc-in', cycleId: c.id };
   })();
 
-  /* ---- Settlement files (deterministic generator) ------------------------- */
-  var FILE_TYPES = ['MPR', 'MPF', 'JV1', 'JV2'];
-  var CUTOFF = { MPR: '02:00', MPF: '02:30', JV1: '03:00', JV2: '03:30' };
-  function holidayOn(date, country) { return combinedHolidays.find(function (h) { return h.date === date && h.country === country; }); }
-  function filesFor(tenantId, days) {
-    var t = tenantById[tenantId];
-    var out = [];
-    for (var i = 0; i < days; i++) {
-      var date = U.addDays(TODAY, -i);
-      var hol = holidayOn(date, t.country);
-      var fullHoliday = hol && hol.impact === 'Full holiday';
-      NETWORKS.forEach(function (net) {
-        FILE_TYPES.forEach(function (ft) {
-          var r = rng(tenantId.length * 131 + i * 37 + net.key.length * 17 + ft.charCodeAt(1) * 7 + ft.charCodeAt(2));
-          var status, genAt = null, txAt = null, size = null;
-          if (fullHoliday) { status = 'Not expected — holiday'; }
-          else if (i === 0) { status = r() > 0.5 ? 'Pending' : 'Generated'; }
-          else { status = 'Generated'; }
-          // sprinkle delays/failures deterministically
-          var key = tenantId + date + net.key + ft;
-          if (!fullHoliday) {
-            if ((i === 2 && net.key === 'mc' && ft === 'JV1') || (i === 5 && net.key === 'visa' && ft === 'MPF')) status = 'Delayed';
-            if ((i === 4 && net.key === 'rupay' && ft === 'MPR' && (tenantId === 'hsbc-in' || tenantId === 'yesbank'))) status = 'Failed';
-          }
-          if (status === 'Generated' || status === 'Delayed') {
-            var h = parseInt(CUTOFF[ft].split(':')[0], 10) + (status === 'Delayed' ? rint(r, 2, 4) : 0);
-            genAt = U.prettyDate(U.addDays(date, 1)) + ', ' + String(h).padStart(2, '0') + ':' + String(rint(r, 5, 55)).padStart(2, '0') + ' IST';
-            txAt = U.prettyDate(U.addDays(date, 1)) + ', ' + String(h).padStart(2, '0') + ':' + String(rint(r, 56, 59)).padStart(2, '0') + ' IST';
-            size = (0.3 + r() * 6).toFixed(1) + ' MB';
-          }
-          out.push({
-            tenantId: tenantId, network: net.name, networkKey: net.key, date: date, dow: U.DOW[U.fromYmd(date).getUTCDay()],
-            type: ft, status: status, cutoff: CUTOFF[ft] + ' ' + (t.currency === 'SGD' ? 'SGT' : t.currency === 'HKD' ? 'HKT' : 'IST'),
-            generatedAt: genAt, transmittedAt: txAt, size: size,
-            checksum: 'sha256:' + Array.from({ length: 8 }, function () { return '0123456789abcdef'[rint(r, 0, 15)]; }).join('') + '…',
-            dest: '/out/' + tenantId + '/' + ft.toLowerCase() + '/', holiday: hol || null,
-            name: t.name.replace(/\s/g, '') + '_' + ft + '_' + date.replace(/-/g, '') + '.' + (ft === 'MPR' ? 'csv' : ft === 'MPF' ? 'txt' : 'xml')
-          });
-        });
-      });
-    }
-    return out;
-  }
+  /* ---- Settlement files ---------------------------------------------------
+     Deliberately not modelled here any more. Settlement files are acquirer
+     artifacts with no network dimension (refinement round 2 §C.1), so they
+     live in files-data.js (window.SFILES), keyed tenant × cycle date × file
+     type and driven by a per-acquirer file type registry. */
 
   /* ---- Cross-tenant disputes (~40) --------------------------------------- */
   var STAGES = ['First Chargeback', 'Second Presentment', 'Arbitration', 'Pre-Arb'];
@@ -462,7 +479,6 @@ window.OPS = (function () {
     NETWORKS: NETWORKS, NET_BY_KEY: NET_BY_KEY,
     feeApprovals: feeApprovals,
     cyclesByTenant: cyclesByTenant, currentCycleByTenant: currentCycleByTenant, settledCycles: settledCycles, defaultRecon: defaultRecon,
-    filesFor: filesFor, FILE_TYPES: FILE_TYPES,
     disputes: disputes, disputeById: disputeById,
     holidays: combinedHolidays,
     onboardingTenants: onboardingTenants, onboardingById: onboardingById, configHistory: configHistory,

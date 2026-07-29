@@ -54,13 +54,19 @@
   <script src="configs-core.js"></script>
   <script src="configs-screens.js"></script>
   <script src="configs-queue.js"></script>
-  <!-- IRD Reject Resolver (refinement §6) -->
-  <script src="ird-data.js"></script>
-  <script src="ird-screen.js"></script>
+  <!-- Rejects (Ops Portal) — staging + incoming rejects across Visa and
+       Mastercard, with IRD as a Mastercard subtype. rejects-data.js needs
+       window.OPS for tenants and merchants, so it loads after ops-data.js. -->
+  <script src="rejects-data.js"></script>
+  <script src="rejects-screen.js"></script>
   <!-- Cross-Tenant Cycle Status grid + Cycle Snapshot (Ops Home refinement).
        cycle-data.js needs window.OPS, so it loads after ops-data.js. -->
   <script src="cycle-data.js"></script>
   <script src="cycle-screen.js"></script>
+  <!-- Settlement File Monitoring (refinement round 2 §C) — acquirer-specific
+       files, no network dimension. files-data.js needs window.OPS. -->
+  <script src="files-data.js"></script>
+  <script src="files-screen.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

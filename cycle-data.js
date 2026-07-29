@@ -117,6 +117,14 @@ window.CYCLES = (function () {
     { key: 'jv2', short: 'JV2', label: 'JV2', sub: 'next-cycle file to acquirer', band: 'next', verb: 'Generated' }
   ];
   var LEG_KEYS = LEG_DEFS.map(function (l) { return l.key; });
+  /* PART D.2 — where each leg sits in the tenant's OWN cycle.
+     Every tenant runs the same T+1 / T+1 / T+1 / T+2 rhythm in local terms;
+     only the IST clock differs, because SGT/HKT is 2.5h ahead and those legs
+     land on the transaction date in IST while the Indian ones land the next
+     day. Printing the local cycle offset is what removes the timezone
+     arithmetic from the reader's head — the timestamp says when it happened in
+     IST, this tag says where it sits in the cycle. */
+  var CYCLE_DAY = { clearing: 'T+1', settlement: 'T+1', incoming: 'T+1', jv2: 'T+2' };
   var BANDS = [
     { key: 'outgoing', label: 'Outgoing', sub: 'to network + acquirer', legs: ['clearing', 'settlement'] },
     { key: 'incoming', label: 'Incoming', sub: 'from network', legs: ['incoming'] },
@@ -307,16 +315,48 @@ window.CYCLES = (function () {
   }
   function isLive(date) { return date === CYCLE_TODAY; }
 
+  /* =========================================================================
+     PART D.6 — MANUAL "MARK AS SENT"
+     A settlement or JV2 file that went out of band leaves its leg Pending on
+     the grid forever. Ops can assert it landed — but the assertion is recorded
+     as its own thing, never as a system-confirmed completion: the leg goes
+     green and carries `manual`, which every renderer must surface as a tag.
+     In memory only, keyed tenant|network|date|leg.
+     ========================================================================= */
+  var MANUAL = {};
+  var MANUAL_LEGS = { settlement: true, jv2: true };
+  function manualKey(tenantId, netKey, date, legKey) { return tenantId + '|' + netKey + '|' + date + '|' + legKey; }
+  function manualFor(tenantId, netKey, date, legKey) { return MANUAL[manualKey(tenantId, netKey, date, legKey)] || null; }
+  /* The observer's clock expressed on this cycle's own axis — marking a leg on
+     a cycle from three days ago records the event at T+3 09:00, not at T+1. */
+  function nowAbsFor(date) {
+    return Math.round((U.fromYmd(TODAY) - U.fromYmd(date)) / 86400000) * 1440 + 9 * 60;
+  }
+  function canMarkSent(leg) {
+    if (!leg || !MANUAL_LEGS[leg.key] || leg.manual) return false;
+    return leg.state === 'failed' || leg.state === 'pending' || (leg.state === 'delayed' && leg.actual == null);
+  }
+  function markSent(tenantId, netKey, date, legKey, note, by) {
+    var atAbs = nowAbsFor(date);
+    var rec = {
+      by: by || 'juspay-ops', note: note, atAbs: atAbs,
+      at: stamp(date, atAbs), dayTag: dayTag(atAbs)
+    };
+    MANUAL[manualKey(tenantId, netKey, date, legKey)] = rec;
+    return rec;
+  }
+
   /* ---- leg construction --------------------------------------------------- */
-  function buildLeg(def, p, sched, now, live) {
+  function buildLeg(def, p, sched, now, live, manual) {
     p = p || {};
     var leg = {
       key: def.key, short: def.short, label: def.label, sub: def.sub, band: def.band, verb: def.verb,
       expected: sched.expected, grace: sched.grace, cutoff: sched.cutoff,
       expectedLabel: hhmm(sched.expected), cutoffLabel: hhmm(sched.cutoff),
       expectedDay: dayTag(sched.expected), cutoffDay: dayTag(sched.cutoff),
+      cycleDay: CYCLE_DAY[def.key] || dayTag(sched.expected),
       actual: null, started: null, state: 'pending', overrunMin: 0, breached: false,
-      live: live, note: p.note || null
+      live: live, note: p.note || null, manual: null
     };
     // The moment we measure lateness against: the event itself once there is
     // one, otherwise the live clock. A leg that never produced an event on a
@@ -342,14 +382,29 @@ window.CYCLES = (function () {
       leg.overrunMin = Math.max(0, ref - sched.expected);
       leg.breached = ref > sched.cutoff;
     }
+    /* A human assertion overrides the machine record (Part D.6). The leg reads
+       Complete — but it keeps `manual`, and no renderer is allowed to drop it:
+       a manual override that looked identical to a system-confirmed completion
+       would quietly erode trust in every green cell on the grid. */
+    if (manual) {
+      leg.manual = manual;
+      leg.state = 'complete';
+      leg.actual = manual.atAbs;
+      leg.started = null;
+      leg.overrunMin = 0;
+      leg.breached = false;
+      leg.note = null;
+    }
     leg.toCutoffMin = live ? sched.cutoff - now : null;
     leg.meta = STATE_META[leg.state];
 
-    // What the cell prints under the icon (Part 4.3): the actual completion
-    // time, or the cutoff as "by HH:MM" while the leg has not landed.
+    /* What the cell prints under the icon (Part D.1): the actual completion
+       time and nothing else. A leg that has not landed prints no time at all —
+       its cutoff moved to the hover tooltip, because four legs × "by HH:MM"
+       was more text than a grid cell can carry. */
     if (leg.actual != null) leg.cellTime = hhmm(leg.actual);
     else if (leg.started != null) leg.cellTime = hhmm(leg.started);
-    else leg.cellTime = 'by ' + hhmm(sched.cutoff);
+    else leg.cellTime = null;
     leg.cellDay = dayTag(leg.actual != null ? leg.actual : (leg.started != null ? leg.started : sched.cutoff));
     return leg;
   }
@@ -374,7 +429,7 @@ window.CYCLES = (function () {
 
     var now = nowFor(date), live = out.live;
     LEG_DEFS.forEach(function (def) {
-      var leg = buildLeg(def, plan[def.key], sched[def.key], now, live);
+      var leg = buildLeg(def, plan[def.key], sched[def.key], now, live, manualFor(tenantId, netKey, date, def.key));
       out.legs.push(leg); out.byKey[def.key] = leg;
     });
     var states = out.legs.map(function (l) { return l.state; });
@@ -562,6 +617,16 @@ window.CYCLES = (function () {
 
   /* ---- overall status pill + one-line summary ----------------------------- */
   function overallStatus(snap) {
+    var st = baseStatus(snap);
+    var manual = snap.legs.filter(function (l) { return l.manual; });
+    st.manualCount = manual.length;
+    if (manual.length) {
+      st.line += ' ' + manual.map(function (l) { return l.short; }).join(' and ') +
+        ' manually marked as sent by ' + manual[0].manual.by + ' — asserted, not system-confirmed.';
+    }
+    return st;
+  }
+  function baseStatus(snap) {
     var legs = snap.legs;
     var bad = legs.filter(function (l) { return l.state === 'failed'; });
     var late = legs.filter(function (l) { return l.state === 'delayed'; });
@@ -584,7 +649,12 @@ window.CYCLES = (function () {
       };
     }
     if (legs.every(function (l) { return l.state === 'complete'; })) {
-      return { text: 'Clean', kind: 'success', icon: 'check-circle', line: 'All four legs complete inside their expected windows.' };
+      return {
+        text: 'Clean', kind: 'success', icon: 'check-circle',
+        line: legs.some(function (l) { return l.manual; })
+          ? 'All four legs complete.'
+          : 'All four legs complete inside their expected windows.'
+      };
     }
     var running = legs.filter(function (l) { return l.state === 'inprogress'; });
     if (running.length) {
@@ -607,6 +677,7 @@ window.CYCLES = (function () {
     if (c.overall === 'holiday') return t.name + ' · ' + net.name + ' · bank holiday (' + c.holiday.name + ') — no files expected';
     if (!c.legs.length) return t.name + ' · ' + net.name + ' · cycle has not started';
     return t.name + ' · ' + net.name + ' · ' + c.legs.map(function (l) {
+      if (l.manual) return l.short + ' manually marked sent ' + hhmm(l.actual);
       if (l.state === 'complete') return l.short + ' ' + hhmm(l.actual) + ' ' + l.cellDay;
       if (l.state === 'inprogress') return l.short + ' running since ' + hhmm(l.started);
       if (l.state === 'pending') return l.short + ' due by ' + l.cutoffLabel + ' ' + l.cutoffDay;
@@ -619,7 +690,8 @@ window.CYCLES = (function () {
 
   return {
     TODAY: TODAY, CYCLE_TODAY: CYCLE_TODAY, NOW_ABS: NOW_ABS, cycleDates: cycleDates,
-    LEG_DEFS: LEG_DEFS, LEG_KEYS: LEG_KEYS, BANDS: BANDS, STATE_META: STATE_META,
+    LEG_DEFS: LEG_DEFS, LEG_KEYS: LEG_KEYS, BANDS: BANDS, STATE_META: STATE_META, CYCLE_DAY: CYCLE_DAY,
+    markSent: markSent, manualFor: manualFor, canMarkSent: canMarkSent,
     PROFILES: PROFILES, GRACE_MIN: GRACE_MIN, CUTOFF_LAG: CUTOFF_LAG,
     AVAILABILITY: AVAILABILITY, enabled: enabled, networksFor: networksFor,
     hhmm: hhmm, dur: dur, dayTag: dayTag, dayOf: dayOf, dateAt: dateAt, stamp: stamp, shortStamp: shortStamp,
