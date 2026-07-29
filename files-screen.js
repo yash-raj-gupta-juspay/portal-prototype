@@ -81,7 +81,9 @@ window.FilesUI = function (kit) {
     return '<button type="button" class="sf-mini ' + cls + active + '" data-action="sf-pick-tenant" data-tenant="' + t.id + '" ' +
       'title="' + esc('Filter the table below to ' + t.name) + '">' +
       '<span class="sf-mini-name">' + tenantTag(t.id) + '</span>' +
-      '<span class="sf-mini-state">' + esc(bits.join(' · ')) + '</span>' +
+      // §A.3 — this label truncates with an ellipsis at tight widths, so the
+      // full text has to stay reachable rather than simply disappearing.
+      '<span class="sf-mini-state" title="' + esc(bits.join(' · ')) + '">' + esc(bits.join(' · ')) + '</span>' +
       '<span class="sf-mini-go">' + icon('chevron-right', 14) + '</span></button>';
   }
   function overviewStrip(rg) {
@@ -189,13 +191,13 @@ window.FilesUI = function (kit) {
     return '<div class="sf-report">' +
       '<div class="sf-report-head"><span class="sf-report-title">Validation report · ' + esc(row.name) + '</span>' +
       '<span class="meta">Run ' + esc(rep.ranAt) + ' · file contents vs. base DB source</span></div>' +
-      '<table class="data sf-report-table"><thead><tr><th>Check</th><th class="num">In file</th><th class="num">In source</th><th class="num">Delta</th><th>Result</th></tr></thead><tbody>' +
+      '<div class="table-wrap"><table class="data sf-report-table"><thead><tr><th>Check</th><th class="num">In file</th><th class="num">In source</th><th class="num">Delta</th><th>Result</th></tr></thead><tbody>' +
       cmp('Record count', rep.fileRecords, rep.sourceRecords, countOk, false) +
       cmp('Sum of amounts', rep.fileSum, rep.sourceSum, sumOk, true) +
-      '</tbody></table>' +
+      '</tbody></table></div>' +
       (rep.rows.length
         ? '<div class="cyc-sub-title">Mismatched records</div>' +
-        '<table class="data sf-report-table"><thead><tr><th>Record</th><th>Field</th><th class="num">File value</th><th class="num">Source value</th><th class="num">Delta</th></tr></thead><tbody>' + recRows + '</tbody></table>' +
+        '<div class="table-wrap"><table class="data sf-report-table"><thead><tr><th>Record</th><th>Field</th><th class="num">File value</th><th class="num">Source value</th><th class="num">Delta</th></tr></thead><tbody>' + recRows + '</tbody></table></div>' +
         '<div class="meta mt-16">Correct these records in the source extract, upload the corrected file, then re-run validation.</div>'
         : '<div class="meta mt-16">Every record in the file reconciles against the source. Nothing to correct.</div>') +
       '<div class="cyc-sub-title">File history</div>' +

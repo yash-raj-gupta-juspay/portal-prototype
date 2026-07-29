@@ -328,7 +328,7 @@ window.ConfigsUI = function (kit) {
     }
 
     var table = list.length
-      ? '<table class="data cfg-list-table"><thead><tr><th>' + (fam === 'settlement' ? 'Report' : 'Config') + '</th><th>State · last updated</th></tr></thead><tbody>' + rows + '</tbody></table>'
+      ? '<div class="table-wrap"><table class="data cfg-list-table"><thead><tr><th>' + (fam === 'settlement' ? 'Report' : 'Config') + '</th><th>State · last updated</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
       : emptyState('search-x', 'No configs match', 'Adjust the filters or search to see configs in this family.');
 
     return '<div class="cfg-pane cfg-list" id="cfgListPane">' +

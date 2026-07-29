@@ -258,14 +258,35 @@ window.CycleUI = function (kit) {
     function px(abs) { return p(abs).toFixed(2) + '%'; }
     function w(a, b) { return Math.max(0.3, p(b) - p(a)).toFixed(2) + '%'; }
 
-    /* Day shading + dividers, repeated behind every track so the day columns
-       read as continuous vertical bands down the whole timeline. */
-    var dayLayer = '';
-    for (var d = 0; d < dayCount; d++) {
-      var from = d * 1440, to = Math.min((d + 1) * 1440, end);
-      dayLayer += '<div class="tl2-daycol' + (d % 2 ? ' odd' : '') + '" style="left:' + px(from) + ';width:' + w(from, to) + '"></div>';
-      if (d > 0) dayLayer += '<div class="tl2-daydiv" style="left:' + px(from) + '"></div>';
+    /* Day shading, dividers, the lane rail and the now marker are one SVG per
+       track, drawn in a 1000-unit viewBox at width: 100% (Round 3 §A.3). The
+       timeline therefore scales to whatever width its container has, at any
+       viewport, with no pixel geometry anywhere in it. preserveAspectRatio is
+       "none" so the horizontal axis stretches while the vertical stays 1:1 —
+       every mark in here is a rect or a vertical line, which is exactly the
+       set of shapes that survives that transform intact. Strokes carry
+       vector-effect="non-scaling-stroke" so a divider is one pixel on a 1280px
+       screen and one pixel on a 2560px screen. Text and event dots stay in
+       HTML above it, where they cannot be distorted. */
+    function u(abs) { return (p(abs) * 10).toFixed(2); }          // 0–100% → 0–1000 user units
+    function uw(a, b) { return Math.max(3, (p(b) - p(a)) * 10).toFixed(2); }
+    function svgLayer(h, rail) {
+      var cols = '';
+      for (var d = 0; d < dayCount; d++) {
+        var from = d * 1440, to = Math.min((d + 1) * 1440, end);
+        if (d % 2) cols += '<rect class="tl2-s-daycol" x="' + u(from) + '" y="0" width="' + uw(from, to) + '" height="' + h + '"></rect>';
+        if (d > 0) cols += '<line class="tl2-s-daydiv" x1="' + u(from) + '" y1="0" x2="' + u(from) + '" y2="' + h + '" vector-effect="non-scaling-stroke"></line>';
+      }
+      var railRect = rail
+        ? '<rect class="tl2-s-rail" x="0" y="' + ((h - 24) / 2) + '" width="1000" height="24" rx="5"></rect>' : '';
+      var nowLine = nowAbs != null
+        ? '<line class="tl2-s-now" x1="' + u(nowAbs) + '" y1="0" x2="' + u(nowAbs) + '" y2="' + h + '" vector-effect="non-scaling-stroke"></line>' : '';
+      return '<svg class="tl2-svg" viewBox="0 0 1000 ' + h + '" preserveAspectRatio="none" width="100%" height="' + h + '" ' +
+        'aria-hidden="true" focusable="false">' + cols + railRect + nowLine + '</svg>';
     }
+    // Track heights, matching .tl2-track / .tl2-axisrow .tl2-track /
+    // .tl2-cohortrow .tl2-track in styles.css.
+    var H_AXIS = 52, H_COHORT = 46, H_LANE = 66;
 
     /* Axis — day labels above, 6-hourly ticks below. */
     var dayLabels = '';
@@ -282,7 +303,6 @@ window.CycleUI = function (kit) {
       ticks += '<span class="tl2-tick" style="left:' + px(m) + '">' + C.hhmm(m) + '</span>';
     }
 
-    var nowMark = nowAbs != null ? '<div class="tl2-now" style="left:' + px(nowAbs) + '"></div>' : '';
 
     /* Lanes, grouped into the three bands.
        Part D.4 — actual event markers only. Cutoff lines, expected lines, the
@@ -318,9 +338,7 @@ window.CycleUI = function (kit) {
           (leg.manual ? manualTag(leg) : '') + '</div>' +
           '<div class="tl2-lane-sub">' + leg.sub + ' · <span class="cyc-daytag">' + leg.cycleDay + '</span></div>' +
           '</div>' +
-          '<div class="tl2-track">' + dayLayer +
-          '<div class="tl2-rail"></div>' +
-          nowMark + ev +
+          '<div class="tl2-track">' + svgLayer(H_LANE, true) + ev +
           '</div></div>';
       }).join('');
 
@@ -334,17 +352,17 @@ window.CycleUI = function (kit) {
       '<div class="tl2-row tl2-axisrow">' +
       '<div class="tl2-head"><div class="tl2-axis-title">' + dayCount + '-day cycle span</div>' +
       '<div class="tl2-axis-sub">' + U.prettyDate(snap.date) + ' → ' + U.prettyDate(C.dateAt(snap.date, end - 1)) + ' · all times IST</div></div>' +
-      '<div class="tl2-track tl2-axis">' + dayLayer + dayLabels + ticks +
+      '<div class="tl2-track tl2-axis">' + svgLayer(H_AXIS, false) + dayLabels + ticks +
       (nowAbs != null
         ? '<span class="tl2-nowflag" style="left:' + px(nowAbs) + '">now ' + C.hhmm(nowAbs) + ' ' + C.dayTag(nowAbs) + '</span>'
-        : '<span class="tl2-closedflag">cycle closed</span>') + nowMark + '</div></div>' +
+        : '<span class="tl2-closedflag">cycle closed</span>') + '</div></div>' +
       '<div class="tl2-row tl2-cohortrow">' +
       '<div class="tl2-head"><div class="tl2-lane-title">Transaction cohort</div>' +
       '<div class="tl2-lane-sub">what this cycle covers</div></div>' +
-      '<div class="tl2-track">' + dayLayer +
+      '<div class="tl2-track">' + svgLayer(H_COHORT, false) +
       '<div class="tl2-cohort" style="left:' + px(snap.cohort.fromAbs) + ';width:' + w(snap.cohort.fromAbs, snap.cohort.toAbs) + '" ' +
       'title="' + esc(snap.cohort.from + ' → ' + snap.cohort.to) + '"><span>' + esc(snap.cohort.label) + '</span></div>' +
-      nowMark + '</div></div>' +
+      '</div></div>' +
       bands +
       '<div class="tl2-summary">' + icon(snap.status ? snap.status.icon : 'check-circle', 15) +
       '<span>' + esc(timelineSummary(snap)) + '</span></div>' +

@@ -1405,9 +1405,12 @@
         '<span class="st-dot" style="background:' + t.color + '"></span><span class="st-name">' + t.name + '</span> · <span class="st-status">' + h.text + '</span></div>';
     }).join('');
 
+    /* Round 3 §A.1 / §A.2 — four cards. Active Tenants is gone: a number that
+       changes twice a year carries no operational signal. The Total
+       Transactions sparkline is gone too — the card is a count, and the trend
+       behind it belongs to the cross-tenant grid below. */
     var kpis =
-      '<div class="kpi-card"><div class="kpi-label">Active Tenants</div><div class="kpi-value">' + k.activeTenants + '</div><div class="kpi-foot"><span class="meta">all provisioned</span></div></div>' +
-      '<div class="kpi-card"><div class="kpi-label">Total Transactions Processed</div><div class="kpi-value">' + num(k.totalTxnsMTD) + '</div><div class="kpi-foot"><span class="meta">MTD, all tenants</span>' + spark(k.txnSeries, 90, 30, '#2563EB') + '</div></div>' +
+      '<div class="kpi-card"><div class="kpi-label">Total Transactions Processed</div><div class="kpi-value">' + num(k.totalTxnsMTD) + '</div><div class="kpi-foot"><span class="meta">MTD, all tenants</span></div></div>' +
       '<div class="kpi-card" title="Aggregated across tenants at 1 SGD = ₹61.5, 1 HKD = ₹10.7 (rates as of prototype date)"><div class="kpi-label">Total MTD Volume <span class="meta">(INR-eq)</span></div><div class="kpi-value">' + fmtCr(k.totalMtdINR) + '</div><div class="kpi-foot"><span class="meta">' + icon('info', 12) + ' converted to INR</span></div></div>' +
       '<div class="kpi-card clickable" data-route="#/dashboard/ops/approvals?approvalTab=pending"><div class="kpi-label">Pending Fee Approvals</div><div class="kpi-value">' + k.pendingApprovals + '</div><div class="kpi-foot"><span class="kpi-link">Review queue ' + icon('arrow-right', 12) + '</span></div></div>' +
       '<div class="kpi-card clickable" data-route="#/dashboard/ops/disputes"><div class="kpi-label">Open Disputes</div><div class="kpi-value">' + k.openDisputes + '</div><div class="kpi-foot"><span class="kpi-link">Across portfolio ' + icon('arrow-right', 12) + '</span></div></div>';
@@ -1457,7 +1460,9 @@
     setView(
       '<div class="page-head"><div><h1 class="page-title">Operations Overview</h1><div class="subtitle">' + U.prettyLong(D.TODAY) + ' · cross-tenant platform snapshot</div></div></div>' +
       '<div class="ops-status-strip">' + strip + '</div>' +
-      '<div class="grid grid-5 mb-16">' + kpis + '</div>' +
+      // Round 3 §A.3 — KPI rows wrap on their own rather than overflowing:
+      // repeat(auto-fit, minmax(240px, 1fr)) via .kpi-row.
+      '<div class="kpi-row mb-16">' + kpis + '</div>' +
       '<div class="mt-16">' + matrix + '</div>' +
       '<div class="section-title mb-16 mt-24">Action queues</div>' +
       '<div class="grid grid-3">' +
@@ -1589,7 +1594,7 @@
 
       '<div class="section-title mb-16 mt-24">P&amp;L impact</div>' +
       '<div class="impact-panel" style="margin-bottom:16px"><div class="ip-icon">' + icon('trending-up', 22) + '</div><div><div class="meta">Based on this merchant\'s last 30 days of volume</div><div class="ip-value">' + (a.pl.totalDelta >= 0 ? '+' : '') + fmt(a.pl.totalDelta, 0, a.pl.currency) + ' ' + (a.pl.totalDelta >= 0 ? 'additional revenue' : 'reduced revenue') + ' <span style="font-size:14px">(' + (a.pl.pctRel >= 0 ? '+' : '') + a.pl.pctRel.toFixed(1) + '% relative to current)</span></div></div></div>' +
-      cardBox('Per-network revenue delta', '<table class="data" style="max-width:420px"><thead><tr><th>Network</th><th class="num">Δ Revenue</th></tr></thead><tbody>' + plRows + '</tbody></table>') +
+      cardBox('Per-network revenue delta', '<div class="table-wrap" style="max-width:420px"><table class="data"><thead><tr><th>Network</th><th class="num">Δ Revenue</th></tr></thead><tbody>' + plRows + '</tbody></table></div>') +
 
       '<div class="grid grid-2 mt-24">' +
       cardBox('Bank submitter\'s reason', '<blockquote style="border-left:3px solid var(--border-strong);padding:8px 14px;color:var(--text-secondary);font-style:italic">“' + esc(a.reason) + '”</blockquote>') +
@@ -1629,7 +1634,9 @@
         var lg = cyc.legs[net.key];
         return '<tr><td>' + net.name + '</td><td class="num">' + num(kind === 'sub' ? lg.subCount : lg.setCount) + '</td><td class="num">' + fmt(kind === 'sub' ? lg.subGross : lg.settleAmt, 2, cur) + '</td></tr>';
       }).join('');
-      return '<table class="data"><thead><tr><th>Network</th><th class="num">Txns</th><th class="num">' + (kind === 'sub' ? 'Gross' : 'Settled so far') + '</th></tr></thead><tbody>' + rows + '</tbody></table>';
+      // §A.3 — every ops table scrolls inside its own container rather than
+      // widening the page, with the network column pinned while it does.
+      return '<div class="table-wrap"><table class="data"><thead><tr><th>Network</th><th class="num">Txns</th><th class="num">' + (kind === 'sub' ? 'Gross' : 'Settled so far') + '</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
     }
     /* §B.2 — the six incoming cycles, so the analyst can see which have landed
        and which are still outstanding. */
@@ -1660,7 +1667,7 @@
       provisionalBanner +
       legTable('set') +
       '<div class="recon-inc-title">Incoming cycles</div>' +
-      '<table class="data recon-inc"><thead><tr><th>Cycle</th><th>Received</th><th class="num">Txns</th><th class="num">Amount</th></tr></thead><tbody>' + incRows + '</tbody></table>' +
+      '<div class="table-wrap"><table class="data recon-inc"><thead><tr><th>Cycle</th><th>Received</th><th class="num">Txns</th><th class="num">Amount</th></tr></thead><tbody>' + incRows + '</tbody></table></div>' +
       '<div class="row" style="justify-content:space-between;margin-top:12px;font-weight:600"><span>Total settled' + (cyc.provisional ? ' so far' : '') + '</span><span class="num">' + fmt(cyc.settled, 2, cur) + '</span></div>' +
       (cyc.provisional ? '<div class="meta" style="margin-top:4px">Expected once all six land: <span class="num">' + fmt(cyc.expectedFullSettlement, 2, cur) + '</span></div>' : '') +
       '</div>' +
@@ -1668,8 +1675,18 @@
 
     // expected delta
     var icRows = O.NETWORKS.map(function (net) { return '<tr><td>' + net.name + '</td><td class="num">' + fmt(cyc.legs[net.key].interchange, 2, cur) + '</td><td class="num">' + fmt(cyc.legs[net.key].scheme, 2, cur) + '</td></tr>'; }).join('');
-    var expected = cardBox('Expected delta', '<div class="grid grid-2"><table class="data"><thead><tr><th>Network</th><th class="num">Interchange</th><th class="num">Scheme Fee</th></tr></thead><tbody>' + icRows + '</tbody></table>' +
-      '<div><dl class="def-list"><dt>Total interchange</dt><dd class="num">' + fmt(cyc.interchange, 2, cur) + '</dd><dt>Total scheme fees</dt><dd class="num">' + fmt(cyc.scheme, 2, cur) + '</dd><dt>Known adjustments</dt><dd class="num">' + fmt(cyc.adjustments, 2, cur) + '</dd><dt>Rejection holdback</dt><dd class="num">' + fmt(cyc.rejectionHoldback, 2, cur) + '</dd></dl><div class="row" style="justify-content:space-between;font-weight:700;border-top:1px solid var(--border-subtle);padding-top:10px"><span>Total expected delta</span><span class="num">' + fmt(cyc.expectedDelta, 2, cur) + '</span></div></div></div>');
+    /* §B.1 — the rejection holdback is an aggregate line in settlement math;
+       the Rejects section is where those transactions can actually be worked.
+       The link carries this tenant, this cycle date and the incoming family, so
+       the analyst lands on the same events rather than reconstructing the
+       filter by hand. */
+    var rejLink = '<a class="kpi-link recon-rej-link" data-route="#/dashboard/ops/rejects?rejTenant=' + tid +
+      '&rejDate=' + cyc.date + '&rejFamily=incoming" ' +
+      'title="Open Rejects filtered to ' + esc(t.name) + ', cycle ' + U.prettyDate(cyc.date) + ', incoming rejects">' +
+      'View rejections ' + icon('arrow-right', 12) + '</a>';
+
+    var expected = cardBox('Expected delta', '<div class="grid grid-2"><div class="table-wrap"><table class="data"><thead><tr><th>Network</th><th class="num">Interchange</th><th class="num">Scheme Fee</th></tr></thead><tbody>' + icRows + '</tbody></table></div>' +
+      '<div><dl class="def-list"><dt>Total interchange</dt><dd class="num">' + fmt(cyc.interchange, 2, cur) + '</dd><dt>Total scheme fees</dt><dd class="num">' + fmt(cyc.scheme, 2, cur) + '</dd><dt>Known adjustments</dt><dd class="num">' + fmt(cyc.adjustments, 2, cur) + '</dd><dt>Rejection holdback</dt><dd class="num recon-holdback">' + fmt(cyc.rejectionHoldback, 2, cur) + rejLink + '</dd></dl><div class="row" style="justify-content:space-between;font-weight:700;border-top:1px solid var(--border-subtle);padding-top:10px"><span>Total expected delta</span><span class="num">' + fmt(cyc.expectedDelta, 2, cur) + '</span></div></div></div>');
 
     // break math
     function term(lbl, val) { return '<div class="bf-term"><span class="bf-label">' + lbl + '</span><span class="bf-val">' + val + '</span></div>'; }
@@ -1691,7 +1708,7 @@
       var allAwaiting = cyc.rejections.every(function (r) { return r.status === 'Awaiting re-clearing'; });
       var rtot = cyc.rejections.reduce(function (s, r) { return s + r.amount; }, 0);
       var rrows = cyc.rejections.map(function (rj) {
-        return '<tr><td>' + tenantTag(cyc.tenantId) + '</td><td>' + rj.network + '</td><td class="mono">' + rj.arn + '</td><td class="num">' + fmt(rj.amount, 2, cur) + '</td><td><div class="cell-main">' + rj.reasonCode + '</div><div class="cell-sub" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + rj.reasonDesc + '</div></td><td class="nowrap">' + U.prettyDate(rj.receivedOn) + '</td><td>' + rejLifecycle(rj) + '</td><td class="nowrap">' + U.prettyDate(rj.expectedSettlement) + '</td></tr>';
+        return '<tr><td>' + tenantTag(cyc.tenantId) + '</td><td>' + rj.network + '</td><td class="mono">' + rj.arn + '</td><td class="num">' + fmt(rj.amount, 2, cur) + '</td><td><div class="cell-main">' + rj.reasonCode + '</div><div class="cell-sub" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(rj.reasonDesc) + '">' + rj.reasonDesc + '</div></td><td class="nowrap">' + U.prettyDate(rj.receivedOn) + '</td><td>' + rejLifecycle(rj) + '</td><td class="nowrap">' + U.prettyDate(rj.expectedSettlement) + '</td></tr>';
       }).join('');
       rejSection = '<div class="card mt-24" style="border-color:#FDE68A"><div class="card-title" style="color:var(--status-warning-fg)">' + icon('alert-triangle', 18) + ' Incoming Rejections — this cycle</div>' +
         '<div class="callout warn" style="margin:12px 0"><span class="strong">' + cyc.rejections.length + ' rejections, ' + fmt(rtot, 2, cur) + ' total' + (allAwaiting ? ', all awaiting re-clearing' : '') + '</span></div>' +

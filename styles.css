@@ -86,7 +86,11 @@ svg { display: block; }
 
 /* ---- App shell layout ----------------------------------------------------
    Top bar spans the full width (brand pinned top-left); sidebar sits below it. */
-.app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: var(--topbar-h) 1fr; grid-template-areas: "topbar topbar" "sidebar main"; height: 100vh; transition: grid-template-columns .18s ease; }
+/* Round 3 §A.3 — the shell is 100vh and clips: nothing inside it may ever
+   scroll the page itself. The sidebar is a fixed track, the main area takes the
+   rest and scrolls internally. The sidebar column is fixed-width and therefore
+   cannot shrink; `main` must be allowed to (see .main's min-width below). */
+.app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: var(--topbar-h) 1fr; grid-template-areas: "topbar topbar" "sidebar main"; height: 100vh; overflow: hidden; transition: grid-template-columns .18s ease; }
 .app.collapsed { grid-template-columns: var(--sidebar-w-collapsed) 1fr; }
 
 /* ---- Top bar ------------------------------------------------------------- */
@@ -133,9 +137,15 @@ svg { display: block; }
 .app.collapsed .collapse-btn .nav-label { display: none; }
 .app.collapsed .collapse-btn { justify-content: center; }
 
-/* ---- Main content -------------------------------------------------------- */
-.main { grid-area: main; overflow-y: auto; background: var(--bg-page); }
-.content { padding: 30px 32px; max-width: 1560px; }
+/* ---- Main content --------------------------------------------------------
+   `min-width: 0` is the whole responsiveness fix and is not optional: a grid
+   (or flex) item defaults to `min-width: auto`, which means it refuses to
+   shrink below the widest thing inside it. One wide table then pushes the
+   entire column — and the layout — past the viewport, which is exactly what a
+   14-inch screen was showing. With min-width: 0, wide content is contained and
+   scrolls inside its own wrapper instead. */
+.main { grid-area: main; min-width: 0; overflow-y: auto; background: var(--bg-page); }
+.content { padding: 30px 32px; max-width: 1560px; min-width: 0; width: 100%; }
 
 /* ---- Typography helpers (Part 2.3) -------------------------------------- */
 .page-title { font-size: 26px; font-weight: 700; line-height: 1.2; color: var(--text-primary); }
@@ -416,7 +426,9 @@ textarea.input { resize: vertical; min-height: 80px; }
 /* ---- Modal / side panel -------------------------------------------------- */
 .overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.45); z-index: 900; display: flex; align-items: center; justify-content: center; }
 .modal { background: #fff; border-radius: 12px; padding: 26px; width: 460px; max-width: 92vw; max-height: 88vh; overflow-y: auto; }
-.side-panel { position: fixed; top: 0; right: 0; height: 100%; width: 460px; max-width: 94vw; background: #fff; z-index: 901; box-shadow: -8px 0 32px rgba(0,0,0,0.12); overflow-y: auto; padding: 24px; animation: slidein .2s ease; }
+/* Round 3 §A.3 — side panels are a share of the viewport, not a fixed slab.
+   clamp() keeps them usable at 1280 and stops them swallowing a 2560px screen. */
+.side-panel { position: fixed; top: 0; right: 0; height: 100%; width: clamp(420px, 38vw, 640px); max-width: 94vw; background: #fff; z-index: 901; box-shadow: -8px 0 32px rgba(0,0,0,0.12); overflow-y: auto; padding: 24px; animation: slidein .2s ease; }
 @keyframes slidein { from { transform: translateX(100%); } to { transform: none; } }
 .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 
@@ -497,38 +509,83 @@ textarea.input { resize: vertical; min-height: 80px; }
 }
 
 /* =============================================================================
-   PART 1 — OPS PORTAL RESPONSIVE LAYOUT
-   The shell is already 100vh with .main scrolling internally, so the only thing
-   standing between the Ops Portal and the full viewport is the reading-width
-   cap on .content. That cap is right for the Bank Portal's document-style
-   screens and wrong for a cross-tenant console, so it is dropped for ops only —
-   scoped by the .portal-ops class the router stamps on the shell. Nothing here
-   can reach a Bank Portal screen.
+   OPS PORTAL RESPONSIVE LAYOUT (Round 3 §A.3)
+   The Ops Portal fills whatever viewport it is given, from 1024px up. Three
+   things make that work, and all three are here:
+
+     1. No reading-width cap. .content's max-width is right for the Bank
+        Portal's document-style screens and wrong for a cross-tenant console,
+        where it leaves a dead gutter on anything above 1560px. Dropped for ops
+        only, scoped by the .portal-ops class the router stamps on the shell —
+        nothing in this file can reach a Bank Portal screen.
+     2. min-width: 0 on the scrolling column (see .main above), so a wide table
+        can never widen the layout.
+     3. Every wide surface owns its own horizontal scroll, with its first
+        column pinned so a row stays identifiable while it scrolls.
+
+   Below 1024px the desktop placeholder takes over; these dense financial
+   tables have no honest small-screen form.
    ============================================================================= */
 .portal-ops .content { max-width: none; width: 100%; }
+
+/* KPI rows wrap by themselves rather than overflowing or being pinned to a
+   fixed column count — one rule that holds at every width. */
+.kpi-row { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.portal-ops .stat-row { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+
+/* Every ops data table scrolls inside its wrapper, with the first column
+   pinned against a solid background so it stays readable over the scroll.
+   Tables that already pin a different column (the rejects table pins its
+   checkbox and ARN) opt out by declaring their own sticky cells. */
+.portal-ops .table-wrap { overflow-x: auto; max-width: 100%; }
+.portal-ops .table-wrap > table.data > thead > tr > th:first-child,
+.portal-ops .table-wrap > table.data > tbody > tr > td:first-child {
+  position: sticky; left: 0; z-index: 2; background: #fff;
+}
+.portal-ops .table-wrap > table.data > thead > tr > th:first-child { z-index: 3; background: var(--bg-subtle); }
+.portal-ops .table-wrap > table.data > tbody > tr:hover > td:first-child { background: var(--bg-subtle); }
+/* The rejects transaction table pins two columns of its own; the generic rule
+   above must not fight it. */
+.portal-ops .table-wrap > table.rej-txns > thead > tr > th:first-child,
+.portal-ops .table-wrap > table.rej-txns > tbody > tr > td:first-child { z-index: 2; }
+
+/* Long labels truncate rather than forcing the layout wide. */
+.portal-ops .kpi-label, .portal-ops .sc-label, .portal-ops .ctx-label {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ≥1920 — a real monitor. Spend the extra width on padding and cell size,
    not on empty gutters. */
 @media (min-width: 1920px) {
   .portal-ops .content { padding: 36px 48px; }
   .portal-ops .grid { gap: 22px; }
+  .portal-ops .kpi-row { gap: 22px; }
   .portal-ops .cyc-cell { height: 128px; padding: 14px 14px 10px; }
   .portal-ops .cyc-legs { max-width: 340px; }
   .portal-ops .kpi-card { padding: 22px 26px; }
 }
 
-/* 1280–1439 — five KPI cards still fit, tighter. */
-@media (max-width: 1439px) {
+/* 1440–1599 — four KPI cards across, tighter. */
+@media (max-width: 1599px) {
+  .portal-ops .kpi-row { gap: 14px; }
   .portal-ops .grid-5 { gap: 14px; }
-  .portal-ops .cyc-cell { height: 108px; padding: 9px 8px 7px; }
 }
 
-/* 1024–1279 — KPI cards wrap to 3+2, action queues to 2+1, and the grid
-   scrolls horizontally with the tenant column pinned. */
+/* 1280–1439 — includes a 14" MacBook at default scaling. Cells tighten; the
+   cross-tenant grid and every table are already scroll-contained. */
+@media (max-width: 1439px) {
+  .portal-ops .cyc-cell { height: 108px; padding: 9px 8px 7px; }
+  .portal-ops .kpi-value { font-size: 28px; }
+}
+
+/* 1024–1279 — KPI cards fall to 2×2 on their own (auto-fit), action queues
+   stack, and the grid scrolls horizontally with the tenant column pinned. */
 @media (max-width: 1279px) {
   .portal-ops .grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .portal-ops .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .portal-ops .grid-3 { grid-template-columns: 1fr; }
+  .portal-ops .grid-2 { grid-template-columns: 1fr; }
   .portal-ops .cyc-sec-head { flex-wrap: wrap; }
+  .portal-ops .kpi-value { font-size: 26px; }
 }
 
 /* =============================================================================
@@ -924,7 +981,9 @@ tr.fee-expand td { background: var(--bg-subtle); padding: 0 !important; }
 .dv-maps .byte-map { margin-top: 10px; }
 
 /* ---- Version history ----------------------------------------------------- */
-.side-panel.wide { width: 780px; }
+/* The wide panels (config editor, correction editor) carry dense two-column
+   content, so they take a larger share — still a share, never a fixed slab. */
+.side-panel.wide { width: clamp(520px, 46vw, 820px); }
 .ver-entry { border: 1px solid var(--border-default); border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
 .ver-entry .immutable-entry { margin-bottom: 0; }
 .ver-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 14px; background: var(--bg-subtle); border-top: 1px solid var(--border-subtle); flex-wrap: wrap; }
@@ -936,7 +995,6 @@ tr.fee-expand td { background: var(--bg-subtle); padding: 0 !important; }
   .cfg-split { grid-template-columns: minmax(260px, 32%) minmax(0, 1fr); }
   .cfg-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sp-resolved { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .side-panel.wide { width: 640px; }
 }
 
 /* Nested Ops sub-items carry no icon (Part 2.1) — the label starts where the
@@ -1104,7 +1162,7 @@ tr.fee-expand td { background: var(--bg-subtle); padding: 0 !important; }
   padding: 12px 16px; border-radius: 8px; background: var(--primary-subtle-bg); border: 1px solid #BFDBFE; }
 .batch-bar > svg { flex-shrink: 0; color: var(--primary-subtle-fg); }
 
-.ctx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1px;
+.ctx-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px;
   background: var(--border-subtle); border: 1px solid var(--border-default); border-radius: 8px; overflow: hidden; }
 .ctx-cell { background: #fff; padding: 10px 13px; display: flex; flex-direction: column; gap: 3px; }
 .ctx-label { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-tertiary); }
@@ -1168,25 +1226,10 @@ table.data th.sortable.sorted svg { color: var(--primary); }
   color: var(--status-neutral-fg); border: 1px dashed var(--border-strong); white-space: nowrap; }
 .rej-manual-tag svg { width: 11px; height: 11px; }
 
-/* ---- Lifecycle distribution bar ------------------------------------------ */
-.rej-progress { display: flex; flex-direction: column; gap: 10px; }
-.rej-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--border-subtle); }
-.rej-seg { display: block; height: 100%; }
-.rej-seg.k-danger  { background: var(--status-danger-fg); }
-.rej-seg.k-warning { background: var(--status-warning-fg); }
-.rej-seg.k-info    { background: var(--primary); }
-.rej-seg.k-success { background: var(--status-success-fg); }
-.rej-seg.k-neutral { background: var(--text-tertiary); }
-.rej-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--text-secondary);
-  font-variant-numeric: tabular-nums; }
-.rej-leg { display: inline-flex; align-items: center; gap: 6px; }
-.rej-leg i { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
-.rej-leg.k-danger i  { background: var(--status-danger-fg); }
-.rej-leg.k-warning i { background: var(--status-warning-fg); }
-.rej-leg.k-info i    { background: var(--primary); }
-.rej-leg.k-success i { background: var(--status-success-fg); }
-.rej-leg.k-neutral i { background: var(--text-tertiary); }
-.rej-leg .num { font-weight: 600; color: var(--text-primary); }
+/* The lifecycle distribution bar is gone with the batch progress section
+   (Round 3 §C.3). .rej-run-bar below is a different thing — file generation
+   progress — and stays.
+   ------------------------------------------------------------------------- */
 
 /* ---- Batch detail header ------------------------------------------------- */
 .rej-batch-head { align-items: flex-start; }
@@ -1249,7 +1292,7 @@ table.data th.sortable.sorted svg { color: var(--primary); }
 .rej-attempt-line { font-size: 12.5px; line-height: 1.5; font-variant-numeric: tabular-nums; }
 .rej-attempt-line code { background: rgba(153, 27, 27, 0.10); border-radius: 3px; padding: 0 4px; }
 
-.rej-ctx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1px;
+.rej-ctx-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px;
   background: var(--border-subtle); border: 1px solid var(--border-default); border-radius: 8px;
   overflow: hidden; margin-bottom: 14px; }
 .rej-reason-box { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px;
@@ -1385,6 +1428,168 @@ table.data th.sortable.sorted svg { color: var(--primary); }
   border-color: #BBF7D0; color: var(--status-success-fg); }
 .rej-s3 .mono { font-size: 12px; word-break: break-all; }
 
+/* =============================================================================
+   IRD RESOLUTION LADDER — Mastercard staging IRD rejects only.
+
+   Vertical stack, because it lives inside the correction editor's side panel
+   and has no width to spend. Strategy 4 is the only element allowed the warning
+   amber token: it is the one choice on the ladder that costs the bank money,
+   and nothing else in the panel may compete with that signal. Every IRD, rate,
+   fee and delta inherits the global tabular-nums rule; ARNs stay monospace.
+   ============================================================================= */
+.rej-res-panel { margin: 18px 0 4px; padding: 16px; border-radius: 8px;
+  background: var(--bg-subtle); border: 1px solid var(--border-default); }
+
+.rej-res-head { display: flex; flex-direction: column; gap: 3px; margin-bottom: 12px; }
+.rej-res-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; }
+.rej-res-title svg { flex-shrink: 0; color: var(--primary); }
+.rej-res-attempt { font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 2px 9px;
+  background: var(--status-neutral-bg); color: var(--status-neutral-fg); font-variant-numeric: tabular-nums; }
+.rej-res-k { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-tertiary); }
+
+/* ---- Reject context strip --------------------------------------------------- */
+.rej-res-strip { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding: 11px 14px;
+  border-radius: 6px; background: #fff; border: 1px solid var(--border-default); }
+.rej-res-strip-cell { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rej-res-strip-cell.wide { flex: 1; min-width: 200px; }
+.rej-res-excl { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.5;
+  color: var(--text-secondary); margin-top: 8px; }
+.rej-res-excl svg { flex-shrink: 0; margin-top: 2px; color: var(--text-tertiary); }
+
+/* ---- Collapsibles (attributes, attempt history) ----------------------------- */
+.rej-res-fold { margin-top: 10px; border-radius: 6px; border: 1px solid var(--border-default); background: #fff; }
+.rej-res-fold-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 9px 13px;
+  cursor: pointer; font-size: 13px; user-select: none; }
+.rej-res-fold-head:hover { background: var(--bg-subtle); }
+.rej-res-fold-head svg { flex-shrink: 0; color: var(--text-tertiary); }
+.rej-res-fold.open .rej-res-fold-head { border-bottom: 1px solid var(--border-subtle); }
+.rej-res-fold-body { padding: 12px 13px 13px; }
+.rej-attr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 16px; }
+.rej-attr { display: flex; flex-direction: column; gap: 2px; }
+.rej-attr-v { font-size: 13px; word-break: break-word; }
+
+/* ---- Ladder position indicator ---------------------------------------------- */
+.rej-lad { display: flex; flex-direction: column; gap: 4px; align-items: center; margin: 16px 0 12px; }
+.rej-lad-rail { display: flex; align-items: flex-start; }
+.rej-lad-step { display: flex; flex-direction: column; align-items: center; }
+.rej-lad-node { display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 999px; font-size: 19px; line-height: 1;
+  border: 1.5px solid var(--border-strong); background: #fff; color: var(--text-tertiary); }
+.rej-lad-node.exhausted { background: var(--status-neutral-fg); border-color: var(--status-neutral-fg); color: #fff; }
+.rej-lad-node.na { border-style: dashed; color: var(--text-tertiary); background: var(--bg-subtle); opacity: 0.7; }
+.rej-lad-node.current { border-color: var(--primary); background: var(--primary-subtle-bg);
+  color: var(--primary-subtle-fg); font-weight: 700; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14); }
+.rej-lad-node.current.fallback { border-color: var(--status-warning-fg); background: var(--status-warning-bg);
+  color: var(--status-warning-fg); box-shadow: 0 0 0 3px rgba(146, 64, 14, 0.14); }
+.rej-lad-caret { height: 14px; font-size: 11px; line-height: 14px; color: var(--primary); }
+.rej-lad-link { width: 26px; height: 2px; margin-top: 14px; background: var(--border-strong); }
+.rej-lad-link.spent { background: var(--status-neutral-fg); }
+.rej-lad-caption { font-size: 12px; color: var(--text-secondary); text-align: center; }
+
+/* ---- Strategy cards ---------------------------------------------------------- */
+.rej-scards { display: flex; flex-direction: column; gap: 10px; }
+.rej-scard { border-radius: 6px; border: 1px solid var(--border-default); background: #fff; overflow: hidden; }
+.rej-scard.s-exhausted, .rej-scard.s-na { background: var(--bg-subtle); }
+.rej-scard.s-exhausted .rej-scard-name, .rej-scard.s-na .rej-scard-name { color: var(--text-secondary); }
+.rej-scard.recommended { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.rej-scard.fallback { border-color: #FDE68A; }
+.rej-scard.fallback.recommended { border-color: var(--status-warning-fg); box-shadow: 0 0 0 1px var(--status-warning-fg); }
+.rej-scard-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; cursor: pointer;
+  user-select: none; flex-wrap: wrap; }
+.rej-scard-head:hover { background: var(--bg-subtle); }
+.rej-scard.fallback .rej-scard-head { background: rgba(254, 243, 199, 0.4); }
+.rej-scard.fallback .rej-scard-head:hover { background: rgba(254, 243, 199, 0.7); }
+.rej-scard-head > svg:last-child { color: var(--text-tertiary); flex-shrink: 0; }
+.rej-scard-n { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+  border-radius: 999px; font-size: 12px; font-weight: 700; flex-shrink: 0;
+  background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
+.rej-scard.recommended .rej-scard-n { background: var(--primary); color: var(--text-on-primary); }
+.rej-scard.fallback.recommended .rej-scard-n { background: var(--status-warning-fg); color: #fff; }
+.rej-scard-name { font-size: 13.5px; font-weight: 600; }
+.rej-scard-spacer { flex: 1; min-width: 0; }
+.rej-scard-peek { font-size: 15px; font-weight: 700; }
+.rej-scard-peek.muted { color: var(--text-tertiary); font-weight: 500; }
+.rej-scard-rate { font-size: 12px; color: var(--text-secondary); }
+.rej-scard-body { padding: 0 13px 13px; border-top: 1px solid var(--border-subtle); }
+
+.rej-res-lede { font-size: 13px; line-height: 1.55; margin-top: 11px; }
+.rej-res-why { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.5;
+  color: var(--text-secondary); margin-top: 5px; }
+.rej-res-why svg { flex-shrink: 0; margin-top: 2px; color: var(--text-tertiary); }
+.rej-res-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 11px; font-size: 13px; }
+.rej-res-chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 11px; }
+.rej-ird-chip.dropped { background: var(--status-warning-bg); color: var(--status-warning-fg);
+  text-decoration: line-through; }
+.rej-res-none { display: flex; align-items: flex-start; gap: 7px; font-size: 12.5px; line-height: 1.5;
+  margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: var(--status-neutral-bg);
+  color: var(--status-neutral-fg); }
+.rej-res-none svg { flex-shrink: 0; margin-top: 1px; }
+
+/* Strategy 1 — submitted vs corrected product ID, the corrected one emphasised */
+.rej-gcms-pair { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.rej-gcms { display: flex; flex-direction: column; gap: 2px; padding: 8px 13px; border-radius: 6px;
+  background: var(--bg-subtle); border: 1px solid var(--border-default); }
+.rej-gcms .mono { font-size: 15px; }
+.rej-gcms.corrected { background: var(--primary-subtle-bg); border-color: #BFDBFE; }
+.rej-gcms.corrected .mono { font-size: 19px; font-weight: 700; color: var(--primary-subtle-fg); }
+.rej-gcms-arrow { color: var(--text-tertiary); display: inline-flex; }
+
+/* ---- Option tables (strategies 2 and 3) + fee comparison -------------------- */
+.rej-opt-table, .rej-fee-table, .rej-attempt-table { width: 100%; margin-top: 11px; font-size: 12.5px; }
+.rej-opt-table th, .rej-fee-table th, .rej-attempt-table th { font-size: 11px; }
+.rej-opt-table td, .rej-fee-table td, .rej-attempt-table td { padding: 7px 10px; }
+.rej-opt-ird { font-size: 14px; font-weight: 700; }
+.rej-opt-table tr.tried td { color: var(--text-tertiary); background: var(--bg-subtle); }
+.rej-opt-table tr.tried .rej-opt-ird, .rej-opt-ird.struck { text-decoration: line-through; color: var(--text-tertiary); }
+.rej-opt-table tr.next td { background: var(--primary-subtle-bg); }
+.rej-opt-state { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; color: var(--text-tertiary); }
+.rej-opt-state.tried { color: var(--status-danger-fg); }
+.rej-opt-state.next { color: var(--primary-subtle-fg); font-weight: 600; }
+.rej-opt-state.applied { color: var(--status-success-fg); font-weight: 600; }
+
+.rej-res-sec { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+.rej-fee-table tr.rec td { background: var(--primary-subtle-bg); }
+.rej-fee-table tr.fallback td { background: rgba(254, 243, 199, 0.45); }
+.rej-fee-table tr.rec.fallback td { background: var(--status-warning-bg); }
+.rej-fee-table tr.out td { color: var(--text-tertiary); }
+.rej-fee-rec { margin-left: 7px; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--primary-subtle-fg); }
+
+/* ---- Candidate readout at the foot of a card -------------------------------- */
+.rej-cand { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px;
+  padding: 11px 13px; border-radius: 6px; background: var(--bg-subtle); border: 1px solid var(--border-default); }
+.rej-cand.warn { background: var(--status-warning-bg); border-color: #FDE68A; }
+.rej-cand-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.rej-cand-nums { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; flex: 1; }
+.rej-cand-nums > span { display: flex; flex-direction: column; gap: 1px; font-size: 13px; font-weight: 600; }
+.rej-cand > .btn { margin-left: auto; }
+.rej-res-applied { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 600;
+  color: var(--status-success-fg); }
+.rej-res-delta.up { color: var(--status-danger-fg); }
+.rej-res-delta.down { color: var(--status-success-fg); }
+.rej-res-delta.flat { color: var(--text-tertiary); }
+
+/* ---- Strategy 4's cost callout — the one place amber is spent --------------- */
+.rej-cost { display: flex; align-items: flex-start; gap: 10px; margin-top: 13px; padding: 13px 14px;
+  border-radius: 6px; background: var(--status-warning-bg); border: 1px solid #FDE68A;
+  color: var(--status-warning-fg); }
+.rej-cost svg { flex-shrink: 0; margin-top: 2px; }
+.rej-cost-amt { font-size: 17px; font-weight: 700; line-height: 1.2; }
+.rej-cost-sub { font-size: 12.5px; line-height: 1.55; margin-top: 4px; }
+.rej-cost-sub code { background: rgba(146, 64, 14, 0.12); border-radius: 3px; padding: 0 4px; }
+.rej-res-warnline { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  color: var(--status-warning-fg); margin-top: 8px; }
+.rej-res-warnline svg { flex-shrink: 0; }
+.btn.rej-btn-warn { border-color: var(--status-warning-fg); color: var(--status-warning-fg); }
+.btn.btn-primary.rej-btn-warn { background: var(--status-warning-fg); border-color: var(--status-warning-fg); color: #fff; }
+.rej-fallback-warn { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border-radius: 8px;
+  background: var(--status-warning-bg); border: 1px solid #FDE68A; color: var(--status-warning-fg); font-size: 14px; }
+.rej-fallback-warn svg { flex-shrink: 0; margin-top: 1px; }
+
+/* ---- Attempt history --------------------------------------------------------- */
+.rej-attempt-table tr.staged td { background: var(--bg-subtle); }
+
 /* ---- Narrow viewports ------------------------------------------------------ */
 @media (max-width: 1200px) {
   .rej-context-grid { grid-template-columns: 1fr; }
@@ -1393,6 +1598,8 @@ table.data th.sortable.sorted svg { color: var(--primary); }
 @media (max-width: 1100px) {
   .rej-head-actions { width: 100%; }
   .rej-filter-key { min-width: 0; }
+  .rej-cand > .btn { margin-left: 0; }
+  .rej-cand-nums { gap: 12px; }
 }
 
 /* =============================================================================
@@ -1537,9 +1744,14 @@ table.data th.sortable.sorted svg { color: var(--primary); }
 .tl2-axisrow .tl2-track { height: 52px; border-bottom: 1px solid var(--border-default); }
 .tl2-axis-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary); }
 .tl2-axis-sub { font-size: 12px; color: var(--text-tertiary); margin-top: 3px; font-variant-numeric: tabular-nums; }
-.tl2-daycol { position: absolute; top: 0; bottom: 0; background: transparent; }
-.tl2-daycol.odd { background: rgba(15, 23, 42, .022); }
-.tl2-daydiv { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid var(--border-default); }
+/* Round 3 §A.3 — the timeline's geometry is one viewBox SVG per track at
+   width: 100%, so it scales with its container at every viewport instead of
+   carrying pixel widths. Labels and event dots stay in HTML on top of it. */
+.tl2-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+.tl2-s-daycol { fill: rgba(15, 23, 42, .022); }
+.tl2-s-daydiv { stroke: var(--border-default); stroke-width: 1; }
+.tl2-s-rail { fill: rgba(255, 255, 255, .5); stroke: var(--border-subtle); stroke-width: 1; }
+.tl2-s-now { stroke: var(--text-primary); stroke-width: 2; stroke-dasharray: 2 3; opacity: .35; }
 .tl2-daylabel { position: absolute; top: 4px; display: flex; align-items: baseline; gap: 6px; padding-left: 8px;
   font-variant-numeric: tabular-nums; overflow: hidden; }
 .tl2-daylabel-date { font-size: 13px; font-weight: 700; color: var(--text-primary); white-space: nowrap; }
@@ -1577,8 +1789,6 @@ table.data th.sortable.sorted svg { color: var(--primary); }
 .cyc-legkey { font-size: 10px; font-weight: 700; letter-spacing: .6px; color: var(--text-primary);
   background: var(--status-neutral-bg); border-radius: 4px; padding: 1px 5px; }
 
-.tl2-rail { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 24px;
-  border-radius: 5px; background: rgba(255, 255, 255, .5); border: 1px solid var(--border-subtle); }
 /* expected → cutoff is the leg's on-time-to-breach corridor */
 .tl2-window { position: absolute; top: 50%; transform: translateY(-50%); height: 24px;
   background: rgba(100, 116, 139, .10); border-radius: 3px; }
@@ -1588,7 +1798,6 @@ table.data th.sortable.sorted svg { color: var(--primary); }
   background-image: repeating-linear-gradient(45deg, rgba(146, 64, 14, .32) 0 4px, transparent 4px 9px); }
 .tl2-overrun.st-failed { background-image: repeating-linear-gradient(45deg, rgba(239, 68, 68, .34) 0 4px, transparent 4px 9px); }
 
-.tl2-now { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px dotted var(--text-primary); opacity: .35; }
 .tl2-exp { position: absolute; top: 6px; bottom: 6px; width: 0; border-left: 2px solid rgba(100, 116, 139, .45); }
 .tl2-cut { position: absolute; top: 4px; bottom: 4px; width: 0; border-left: 2px dashed var(--text-secondary); }
 .tl2-cut.st-delayed, .tl2-cut.st-failed { border-left-color: var(--cyc-c); }
@@ -1838,3 +2047,158 @@ table.data.sf-report-table tbody td { padding: 9px 12px; }
 .sf-progress { height: 8px; background: var(--border-subtle); border-radius: 999px; overflow: hidden; }
 .sf-progress-bar { height: 100%; width: 0; background: var(--primary); transition: width .2s; }
 input.sf-file { padding: 8px 12px; font-size: 13px; }
+
+/* =============================================================================
+   REFINEMENT ROUND 3 — REJECTS
+   Two regeneration models (§C.5), two correction paths (§C.6) and the
+   Awaiting-config-fix lifecycle state. Every colour here is an existing token;
+   the new state reuses the warning amber the design system already carries.
+   ============================================================================= */
+
+/* ---- RuPay badge (the third network) ------------------------------------ */
+.rej-net.rupay { background: rgba(34, 197, 94, .12); color: #15803D; border-color: rgba(34, 197, 94, .35); }
+
+/* ---- Which regeneration model applies (§C.5) ---------------------------- */
+.rej-model { display: flex; align-items: flex-start; gap: 14px; margin-top: 20px; padding: 14px 18px;
+  border-radius: 8px; border: 1px solid var(--border-default); background: var(--bg-subtle); font-size: 13.5px; }
+.rej-model > svg { flex-shrink: 0; margin-top: 1px; }
+.rej-model-body { flex: 1; min-width: 0; }
+.rej-model-body strong { display: block; font-size: 14px; line-height: 1.45; }
+.rej-model-detail { margin-top: 5px; color: var(--text-secondary); font-size: 13px; line-height: 1.55; }
+.rej-model-detail code { font-size: 12.5px; color: var(--text-primary); font-weight: 600; }
+.rej-model-tag { flex-shrink: 0; align-self: flex-start; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; border-radius: 999px; padding: 3px 11px; white-space: nowrap; }
+/* A replacement supersedes a whole file — it reads in danger red, because
+   sending it alongside the original double-presents the cycle. */
+.rej-model-replacement { border-color: #FECACA; background: #FEF2F2; }
+.rej-model-replacement > svg { color: var(--status-danger-fg); }
+.rej-model-replacement .rej-model-tag { background: var(--status-danger-bg); color: var(--status-danger-fg); }
+.rej-model-supplementary { border-color: #BFDBFE; background: var(--primary-subtle-bg); }
+.rej-model-supplementary > svg { color: var(--primary-subtle-fg); }
+.rej-model-supplementary .rej-model-tag { background: #DBEAFE; color: var(--status-info-fg); }
+
+/* ---- Batch tabs (staging only) ------------------------------------------ */
+.rej-tabs { margin-top: -4px; }
+.rej-file-note { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 12px; padding: 10px 14px;
+  border-radius: 8px; background: var(--bg-subtle); border: 1px solid var(--border-default);
+  font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
+.rej-file-note svg { flex-shrink: 0; color: var(--text-tertiary); margin-top: 1px; }
+.rej-file-note .num { color: var(--text-primary); font-weight: 600; }
+.rej-file-unchanged { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--text-tertiary); }
+.rej-txns tr.rej-file-row-rejected td { background: #FFFBEB; }
+.rej-txns tr.rej-file-row-rejected td.sticky-arn { background: #FFFBEB; }
+
+/* ---- Awaiting config fix (§C.6) ----------------------------------------- */
+.rej-txns tr.rej-row-awaiting td { background: #FFFBEB; }
+.rej-txns tr.rej-row-awaiting td.sticky-pick, .rej-txns tr.rej-row-awaiting td.sticky-arn { background: #FFFBEB; }
+.rej-cfg-line { display: inline-flex; align-items: center; gap: 4px; color: var(--status-warning-fg); }
+.rej-cfg-line svg { width: 12px; height: 12px; }
+.rej-awaiting-banner { margin-top: 16px; }
+.rej-awaiting-box { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 16px;
+  padding: 14px 16px; border-radius: 8px; background: var(--status-warning-bg); border: 1px solid #FDE68A;
+  color: var(--status-warning-fg); font-size: 13px; }
+.rej-awaiting-box > svg { flex-shrink: 0; margin-top: 2px; }
+.rej-awaiting-body { flex: 1; min-width: 220px; }
+.rej-awaiting-note { margin: 6px 0; padding: 8px 11px; border-radius: 6px; background: rgba(255,255,255,.6);
+  color: var(--text-primary); font-size: 13px; line-height: 1.55; }
+.rej-awaiting-body .meta { color: var(--status-warning-fg); opacity: .85; }
+.rej-awaiting-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* ---- Step 1: choose correction path (§C.6) ------------------------------ */
+.rej-path-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.rej-path-card { display: flex; flex-direction: column; gap: 7px; text-align: left; padding: 15px 16px;
+  border-radius: 8px; border: 1px solid var(--border-default); background: #fff; transition: all .14s; }
+.rej-path-card:hover { border-color: var(--border-strong); background: var(--bg-subtle); }
+.rej-path-card.on { border-color: var(--primary); background: var(--primary-subtle-bg);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .12); }
+.rej-path-top { display: flex; align-items: center; gap: 8px; }
+.rej-path-top svg { flex-shrink: 0; color: var(--text-secondary); }
+.rej-path-card.on .rej-path-top svg { color: var(--primary); }
+.rej-path-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.rej-path-check { margin-left: auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 999px; background: var(--primary); color: #fff; }
+.rej-path-check svg { color: #fff; }
+.rej-path-blurb { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
+.rej-path-prompt, .rej-path-long { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px;
+  font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
+.rej-path-prompt svg, .rej-path-long svg { flex-shrink: 0; color: var(--text-tertiary); margin-top: 2px; }
+.rej-path-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600;
+  border-radius: 999px; padding: 1px 8px; background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
+.rej-path-tag svg { width: 11px; height: 11px; }
+
+/* ---- Step 2a: the grouped record, with reason-code hints ---------------- */
+.rej-field-groups { display: flex; flex-direction: column; gap: 18px; }
+.rej-fgroup { border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px 12px 4px; background: var(--bg-subtle); }
+.rej-fgroup-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.rej-fgroup-name { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--text-secondary); }
+.rej-fgroup-note { font-size: 11.5px; color: var(--text-tertiary); }
+.rej-fgroup-flag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600;
+  border-radius: 999px; padding: 1px 8px; background: var(--status-warning-bg); color: var(--status-warning-fg); }
+.rej-fgroup-flag svg { width: 11px; height: 11px; }
+/* A hint, not a restriction: the field is marked, never locked. */
+.rej-field.hinted { border-color: #FDE68A; box-shadow: inset 3px 0 0 var(--status-warning-fg); }
+.rej-field.hinted.changed { border-color: var(--primary); }
+.rej-field-hint-dot { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600;
+  border-radius: 999px; padding: 1px 7px; background: var(--status-warning-bg); color: var(--status-warning-fg); }
+.rej-field-hint-dot svg { width: 11px; height: 11px; }
+.rej-field-hint { display: flex; align-items: flex-start; gap: 5px; font-size: 11.5px; line-height: 1.5;
+  color: var(--status-warning-fg); }
+.rej-field-hint svg { flex-shrink: 0; margin-top: 2px; }
+
+/* ---- Step 2b: the config-or-code path ---------------------------------- */
+.rej-cfg-panel { border: 1px solid #FDE68A; border-radius: 10px; padding: 16px 18px; background: #FFFBEB;
+  display: flex; flex-direction: column; gap: 14px; margin-top: 4px; }
+.rej-cfg-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.rej-cfg-head svg { color: var(--status-warning-fg); flex-shrink: 0; }
+.rej-cfg-head strong { font-size: 14px; }
+.rej-cfg-head .meta { flex-basis: 100%; line-height: 1.55; }
+.rej-cfg-existing { display: flex; gap: 10px; align-items: flex-start; padding: 11px 13px; border-radius: 8px;
+  background: rgba(255,255,255,.72); border: 1px solid #FDE68A; font-size: 13px; }
+.rej-cfg-existing svg { flex-shrink: 0; color: var(--status-warning-fg); margin-top: 2px; }
+.rej-cfg-existing-note { margin-top: 5px; color: var(--text-secondary); line-height: 1.55; }
+.rej-cfg-note textarea { background: #fff; }
+.rej-cfg-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.rej-cfg-link { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600;
+  color: var(--primary); cursor: pointer; white-space: nowrap; }
+.rej-cfg-link:hover { color: var(--primary-hover); text-decoration: underline; }
+.rej-cfg-code { display: inline-flex; align-items: center; gap: 5px; }
+.rej-cfg-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  border-top: 1px solid #FDE68A; padding-top: 13px; }
+.rej-cfg-foot .meta { display: flex; align-items: flex-start; gap: 6px; max-width: 460px; line-height: 1.55; }
+.rej-cfg-foot .meta svg { flex-shrink: 0; margin-top: 2px; }
+
+/* ---- Generation confirmation, stated in the model's own terms (§C.5) ---- */
+.rej-gen-model { display: flex; align-items: center; gap: 11px; padding: 12px 14px; border-radius: 8px;
+  margin: 16px 0 14px; font-size: 13.5px; border: 1px solid var(--border-default); }
+.rej-gen-model > svg { flex-shrink: 0; }
+.rej-gen-model > div { flex: 1; min-width: 0; }
+.rej-gen-ledger { border: 1px solid var(--border-default); border-radius: 8px; overflow: hidden; }
+.rej-gen-line { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 11px 15px; font-size: 13.5px; border-bottom: 1px solid var(--border-subtle); }
+.rej-gen-line:last-child { border-bottom: none; }
+.rej-gen-line .num { font-weight: 700; font-size: 15px; }
+.rej-gen-line.total { background: var(--bg-subtle); font-weight: 600; }
+.rej-gen-consequence { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; padding: 11px 14px;
+  border-radius: 8px; background: var(--bg-subtle); border: 1px solid var(--border-default);
+  font-size: 12.5px; color: var(--text-secondary); line-height: 1.6; }
+.rej-gen-consequence svg { flex-shrink: 0; margin-top: 1px; color: var(--text-tertiary); }
+.rej-gen-consequence code { font-size: 12px; color: var(--text-primary); font-weight: 600; }
+.rej-gen-excluded { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.rej-gen-exc { font-size: 12px; border-radius: 999px; padding: 2px 10px; background: var(--status-neutral-bg);
+  color: var(--status-neutral-fg); }
+.rej-gen-exc .num { font-weight: 700; }
+.rej-history-fam { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 11.5px;
+  color: var(--status-warning-fg); }
+.rej-history-fam svg { width: 11px; height: 11px; }
+
+/* .cfg-section-title sets margin: 0 0 12px, which silently beat the .mt-24
+   utility next to it — visible now that the editor has more sections. Two
+   classes to win, scoped to the panel so nothing else moves. */
+.rej-panel .cfg-section-title.mt-24 { margin-top: 26px; }
+
+/* ---- Reconciliation → Rejects (§B.1) ------------------------------------ */
+.recon-holdback { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+.recon-rej-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 600;
+  color: var(--primary); cursor: pointer; white-space: nowrap; }
+.recon-rej-link:hover { color: var(--primary-hover); text-decoration: underline; }
