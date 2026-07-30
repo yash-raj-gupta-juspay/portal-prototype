@@ -24,9 +24,10 @@
     // ---- Ops Portal (Phase 2) ----
     opsActive: 'ops-home',
     opsChild: null,          // active nested sub-item (Phase 3: Platform Configs)
-    // Ops shell (design overhaul Part 2.1) — rail overflow menu, nav context
-    // popover and the account popover. All transient, all in memory.
-    railMenu: false, opsContext: false, opsUserMenu: false,
+    // Shell (design overhaul Part 2.1) — rail overflow menu, nav context
+    // popover and the account popover. Both portals run this shell now.
+    // All transient, all in memory.
+    railMenu: false, navContext: false, navUserMenu: false,
     query: {},
     ops: {
       approvalTab: 'pending', approvalsTenant: 'all', approvalsSla: 'all',
@@ -364,11 +365,11 @@
     { id: 'ops-disputes', label: 'Dispute Ops Support', icon: 'life-buoy', route: '#/dashboard/ops/disputes' }
   ];
 
-  /* ---- Ops shell (Part 2.1) — icon rail + light nav panel ------------------
+  /* ---- Shell (Part 2.1) — icon rail + light nav panel ----------------------
      Three panels, all light: a 72px icon rail, a 230px nav panel and the
-     content area. The dark top bar is gone on Ops routes — the portal switcher
-     moved into the rail and search moved to the top of the content area. Bank
-     routes keep the original topbar + single dark sidebar untouched. */
+     content area. The dark top bar is gone — the portal switcher moved into
+     the rail and search moved to the top of the content area. Both portals
+     render this shell; only its contents differ (see navConfig). */
   var OPS_USER = 'ops.analyst@juspay.in';
 
   function renderRail() {
@@ -395,41 +396,73 @@
         '<button data-route="#/dashboard/bank/home">' + icon('building-2', 16) + 'Bank Portal</button>' +
         '<button data-route="#/dashboard/ops">' + icon('server', 16) + 'Ops Portal</button>' +
         '<div class="rail-menu-sep"></div>' +
-        '<button data-route="#/dashboard/ops/holidays">' + icon('calendar-days', 16) + 'Holiday calendar</button>' +
+        '<button data-route="' + (isOps ? '#/dashboard/ops/holidays' : '#/dashboard/bank/reports/holidays') + '">' +
+        icon('calendar-days', 16) + 'Holiday calendar</button>' +
         '</div>'
         : '');
     if (window.lucide) lucide.createIcons();
   }
 
   // Search sits at the top of the content area, not in a top bar (Part 2.1).
-  function renderOpsSearch() {
+  function renderSearchRow() {
     el('opsSearch').innerHTML =
       '<span class="ops-search-icon">' + icon('search', 18) + '</span>' +
       '<input id="globalSearch" type="text" placeholder="Search (⌘+K)" aria-label="Search" />';
     if (window.lucide) lucide.createIcons();
   }
 
-  /* The Ops nav panel. Section rows carry a hexagon outline that fills when
-     active (Part 2.1); the section's own icon is kept for the icons-only
-     collapsed state, where identical hexagons would be unreadable. */
-  function renderOpsNav() {
+  /* The two portals differ only in what fills the nav panel: which sections,
+     which scope sits in the context popover, and who is signed in. Everything
+     structural is shared, which is what keeps the two design languages one. */
+  function navConfig() {
+    if (S.portal === 'ops') {
+      return {
+        items: OPS_NAV,
+        context: 'juspay_ops',
+        contextMenu: '<div class="ncm-label">Tenants in scope</div>' +
+          O.tenants.map(function (t) {
+            return '<div class="ncm-row"><span class="tenant-dot" style="background:' + t.color + '"></span>' +
+              esc(t.name) + '<span class="ncm-meta">' + esc(t.country) + '</span></div>';
+          }).join(''),
+        activeId: S.opsActive,
+        activeChild: S.opsChild,
+        user: OPS_USER,
+        userNote: 'Role is set per config screen — Maker or Checker.',
+        holidayRoute: '#/dashboard/ops/holidays'
+      };
+    }
+    var t = D.tenant;
+    return {
+      items: NAV,
+      context: t.name,
+      contextMenu: '<div class="ncm-label">Tenant in scope</div>' +
+        '<div class="ncm-row strong"><span class="tenant-dot" style="background:var(--tenant-hsbc-in)"></span>' +
+        esc(t.name) + '<span class="ncm-meta">' + esc(t.region) + '</span></div>' +
+        '<div class="ncm-row"><span class="ncm-meta">' + esc(t.country) + ' · settles in ' + esc(t.currency) + '</span></div>',
+      activeId: S.active.section,
+      activeChild: S.active.child,
+      user: D.user.email,
+      userNote: D.user.fullName + ' — ' + D.user.role,
+      holidayRoute: '#/dashboard/bank/reports/holidays'
+    };
+  }
+
+  /* The nav panel. Section rows carry a hexagon outline that fills when active
+     (Part 2.1); the section's own icon is kept for the icons-only collapsed
+     state, where identical hexagons would be unreadable. */
+  function renderSidebar() {
+    var cfg = navConfig();
     var html = '<div class="nav-context">' +
-      '<button class="nav-context-btn" data-action="ops-context" aria-expanded="' + (S.opsContext ? 'true' : 'false') + '">' +
-      '<span>juspay_ops</span>' + icon('chevron-down', 16) + '</button>' +
+      '<button class="nav-context-btn" data-action="nav-context" aria-expanded="' + (S.navContext ? 'true' : 'false') + '">' +
+      '<span>' + esc(cfg.context) + '</span>' + icon('chevron-down', 16) + '</button>' +
       '<button class="nav-collapse" data-action="toggle-sidebar" title="Collapse panel" aria-label="Collapse navigation panel">' +
       icon('panel-left', 18) + '</button>' +
-      (S.opsContext
-        ? '<div class="nav-context-menu"><div class="ncm-label">Tenants in scope</div>' +
-        O.tenants.map(function (t) {
-          return '<div class="ncm-row"><span class="tenant-dot" style="background:' + t.color + '"></span>' +
-            esc(t.name) + '<span class="ncm-meta">' + esc(t.country) + '</span></div>';
-        }).join('') + '</div>'
-        : '') +
+      (S.navContext ? '<div class="nav-context-menu">' + cfg.contextMenu + '</div>' : '') +
       '</div>';
 
     html += '<div class="nav-scroll">';
-    OPS_NAV.forEach(function (item) {
-      var isActiveSection = S.opsActive === item.id;
+    cfg.items.forEach(function (item) {
+      var isActiveSection = cfg.activeId === item.id;
       function row(it, active, nested) {
         return '<div class="nav-item' + (active ? ' active' : '') + (nested ? ' nested' : '') + '" ' +
           'data-route="' + it.route + '" data-label="' + esc(it.full || it.label) + '" ' +
@@ -441,7 +474,7 @@
       if (!item.children) { html += row(item, isActiveSection, false); return; }
       var expanded = S.expanded[item.id];
       html += '<div class="nav-group ' + (expanded ? 'expanded' : '') + '">' +
-        '<div class="nav-item' + (isActiveSection && !S.opsChild ? ' active' : '') + '" data-route="' + item.route + '" ' +
+        '<div class="nav-item' + (isActiveSection && !cfg.activeChild ? ' active' : '') + '" data-route="' + item.route + '" ' +
         'data-label="' + esc(item.label) + '" title="' + esc(item.label) + '" role="button" tabindex="0">' +
         '<span class="nav-icon">' + icon('hexagon', 18) + '</span>' +
         '<span class="nav-icon-solo">' + icon(item.icon, 20) + '</span>' +
@@ -450,78 +483,28 @@
         icon('chevron-right', 15) + '</span></div>' +
         '<div class="nav-children">' +
         item.children.map(function (ch) {
-          return row(ch, isActiveSection && S.opsChild === ch.id, true);
+          return row(ch, isActiveSection && cfg.activeChild === ch.id, true);
         }).join('') +
         '</div></div>';
     });
     html += '</div>';
 
     html += '<div class="nav-user">' +
-      (S.opsUserMenu
+      (S.navUserMenu
         ? '<div class="nav-user-menu">' +
         '<div class="ncm-label">Signed in as</div>' +
-        '<div class="ncm-row strong">' + esc(OPS_USER) + '</div>' +
-        '<div class="ncm-row"><span class="ncm-meta">Role is set per config screen — Maker or Checker.</span></div>' +
+        '<div class="ncm-row strong">' + esc(cfg.user) + '</div>' +
+        '<div class="ncm-row"><span class="ncm-meta">' + esc(cfg.userNote) + '</span></div>' +
         '<div class="rail-menu-sep"></div>' +
-        '<button data-route="#/dashboard/ops/holidays">' + icon('calendar-days', 16) + 'Holiday calendar</button>' +
+        '<button data-route="' + cfg.holidayRoute + '">' + icon('calendar-days', 16) + 'Holiday calendar</button>' +
         '</div>'
         : '') +
-      '<button class="nav-user-row" data-action="ops-user" aria-label="Account" aria-expanded="' + (S.opsUserMenu ? 'true' : 'false') + '">' +
-      '<span class="nav-avatar">' + esc(OPS_USER.charAt(0).toUpperCase()) + '</span>' +
-      '<span class="nav-user-mail">' + esc(OPS_USER) + '</span>' +
+      '<button class="nav-user-row" data-action="nav-user" aria-label="Account" aria-expanded="' + (S.navUserMenu ? 'true' : 'false') + '">' +
+      '<span class="nav-avatar">' + esc(cfg.user.charAt(0).toUpperCase()) + '</span>' +
+      '<span class="nav-user-mail">' + esc(cfg.user) + '</span>' +
       icon('chevron-down', 15) + '</button></div>';
 
     el('sidebar').innerHTML = html;
-    if (window.lucide) lucide.createIcons();
-  }
-
-  function renderSidebar() {
-    var isOps = S.portal === 'ops';
-    if (isOps) return renderOpsNav();
-    var a = S.active;
-    var navList = NAV;
-    var html = '<div class="nav-scroll">';
-    navList.forEach(function (item) {
-      var isActiveSection = isOps ? (S.opsActive === item.id) : (a.section === item.id);
-      if (!item.children) {
-        html += '<div class="nav-item ' + (isActiveSection ? 'active' : '') + '" data-route="' + item.route + '" data-label="' + item.label + '" role="button" tabindex="0" aria-label="' + item.label + '">' +
-          '<span class="nav-icon">' + icon(item.icon, 22) + '</span><span class="nav-label">' + item.label + '</span></div>';
-      } else {
-        var expanded = S.expanded[item.id];
-        var activeChild = isOps ? S.opsChild : a.child;
-        html += '<div class="nav-group ' + (expanded ? 'expanded' : '') + '">' +
-          '<div class="nav-item ' + (isActiveSection && !activeChild ? 'active' : '') + '" data-route="' + item.route + '" data-label="' + item.label + '" role="button" tabindex="0">' +
-          '<span class="nav-icon">' + icon(item.icon, 22) + '</span><span class="nav-label">' + item.label + '</span>' +
-          '<span class="nav-chevron" data-action="toggle-section" data-section="' + item.id + '" aria-label="Toggle ' + item.label + '">' + icon('chevron-right', 16) + '</span></div>' +
-          '<div class="nav-children">';
-        item.children.forEach(function (ch) {
-          var chActive = isActiveSection && activeChild === ch.id;
-          html += '<div class="nav-item ' + (chActive ? 'active' : '') + (ch.noIcon ? ' no-icon' : '') + '" data-route="' + ch.route + '" data-label="' + (ch.full || ch.label) + '" title="' + (ch.full || ch.label) + '" role="button" tabindex="0">' +
-            (ch.noIcon ? '' : '<span class="nav-icon">' + icon(ch.icon, 18) + '</span>') + '<span class="nav-label">' + ch.label + '</span></div>';
-        });
-        html += '</div></div>';
-      }
-    });
-    html += '</div>';
-    html += '<div class="sidebar-footer"><button class="collapse-btn" data-action="toggle-sidebar" aria-label="Collapse sidebar">' +
-      icon(S.sidebarCollapsed ? 'panel-left-open' : 'panel-left-close', 20) + '<span class="nav-label">Collapse</span></button></div>';
-    el('sidebar').innerHTML = html;
-  }
-
-  function renderTopbar() {
-    var isBank = S.portal === 'bank';
-    var tenantPill = isBank
-      ? '<span class="tenant-pill">' + D.tenant.flag + ' <strong>HSBC IN</strong> <span class="tenant-region">:: ap-south-1</span></span>'
-      : '<span class="tenant-pill">🌐 <strong>Juspay Ops</strong> <span class="tenant-region">:: All Tenants</span></span>';
-    el('topbar').innerHTML =
-      '<div class="logo"><span class="logo-mark">J</span> Juspay</div>' +
-      '<div class="portal-toggle" role="tablist" aria-label="Portal switch">' +
-      '<button class="' + (isBank ? 'active' : '') + '" data-route="#/dashboard/bank/home" role="tab">' + icon('building-2', 15) + 'Bank Portal</button>' +
-      '<button class="' + (!isBank ? 'active' : '') + '" data-route="#/dashboard/ops" role="tab">' + icon('server', 15) + 'Ops Portal</button>' +
-      '</div>' +
-      '<div class="search"><span class="search-icon">' + icon('search', 16) + '</span>' +
-      '<input id="globalSearch" type="text" placeholder="Search across dashboard (⌘+K)" aria-label="Search" /></div>' +
-      '<div class="spacer"></div>' + tenantPill;
     if (window.lucide) lucide.createIcons();
   }
 
@@ -539,26 +522,23 @@
     var seg = raw.split('/').filter(Boolean);
     if (seg[0] !== 'dashboard') { location.hash = '#/dashboard/bank/home'; return; }
     S.portal = (seg[1] === 'ops') ? 'ops' : 'bank';
-    // The Ops Portal is fully fluid (Part 1); the Bank Portal keeps its fixed
-    // reading width. One class on the shell scopes every responsive rule — and,
-    // since the overhaul, the entire Ops design language: the Part 2.2 tokens
-    // are redeclared under .portal-ops so no Bank Portal screen can see them.
+    // Both portals are fully fluid and both render design language v2: the
+    // Part 2.2 tokens, the three-panel shell and every component treatment are
+    // declared under `.dl2`, which the router stamps on the shell whatever the
+    // route. `.dl2-scope` does the same for the two mounts that live outside
+    // .app — without it a toast or a side panel would fall back to the v1
+    // palette at the top of styles.css.
     var isOps = S.portal === 'ops';
-    var appEl = el('app'); if (appEl) appEl.classList.toggle('portal-ops', isOps);
-    // Toasts and the overlay mount live outside .app, so they carry the scope
-    // class themselves or they would render with Bank Portal tokens.
-    var om = el('overlay-mount'); if (om) om.className = isOps ? 'ops-scope' : '';
-    var tw = el('toasts'); if (tw) tw.className = 'toast-wrap' + (isOps ? ' ops-scope' : '');
+    var appEl = el('app'); if (appEl) appEl.classList.add('dl2');
+    var om = el('overlay-mount'); if (om) om.className = 'dl2-scope';
+    var tw = el('toasts'); if (tw) tw.className = 'toast-wrap dl2-scope';
 
-    if (isOps) {
-      // No dark top bar in the new design (Part 2.1): the portal switcher moved
-      // into the rail and search moved to the top of the content area.
-      el('topbar').innerHTML = '';
-      renderRail(); renderOpsSearch();
-      return routeOps(seg.slice(2));
-    }
-    el('rail').innerHTML = ''; el('opsSearch').innerHTML = '';
-    renderTopbar();
+    // No dark top bar (Part 2.1): the portal switcher lives in the rail and
+    // search sits at the top of the content area. Same shell on both portals.
+    el('topbar').innerHTML = '';
+    renderRail(); renderSearchRow();
+
+    if (isOps) return routeOps(seg.slice(2));
 
     var rest = seg.slice(2); // after dashboard/bank
     var head = rest[0] || 'home';
@@ -645,7 +625,10 @@
       '<span data-route="#/dashboard/bank/disputes" class="clickable">' + pill('Disputes · ' + need + ' need action', 'warning', 'alert-circle') + '</span>' +
       '</div>' +
 
-      '<div class="grid grid-4 mb-16">' + kpiHtml + '</div>' +
+      // .kpi-row, not .grid-4: the shell is 82px wider than the old one, and a
+      // hard four-up row leaves a KPI value too narrow to print at 1280. The
+      // auto-fit row drops to three across on its own instead of clipping.
+      '<div class="kpi-row mb-16">' + kpiHtml + '</div>' +
 
       '<div class="grid" style="grid-template-columns:2fr 1fr;margin-top:6px">' +
       cardBox('Needs attention', na) +
@@ -1237,7 +1220,10 @@
     var rows = D.cyclesDesc.map(function (c) {
       var t = c.totals;
       var deltaVal = Math.round(t.delta);
-      var deltaHtml = c.isToday ? pill('In progress', 'warning') : (deltaVal === 0 ? '<span style="color:var(--chart-positive)">' + fmt(0) + '</span>' : '<span style="color:var(--chart-negative);font-weight:600">' + fmt(deltaVal) + '</span>');
+      // The zero delta is status text, not a chart series: --chart-positive is
+      // tuned to sit as a filled mark and reads at 2.2:1 as text on the cream
+      // holiday-row background. --status-success-fg is the token for this.
+      var deltaHtml = c.isToday ? pill('In progress', 'warning') : (deltaVal === 0 ? '<span style="color:var(--status-success-fg)">' + fmt(0) + '</span>' : '<span style="color:var(--chart-negative);font-weight:600">' + fmt(deltaVal) + '</span>');
       var fileBadges = c.files.length ? c.files.map(function (f) { return '<span class="file-badge badge-' + f.type + '" style="margin-right:3px">' + f.type + '</span>'; }).join('') : '<span class="meta">pending</span>';
       var rejCell = t.rejCount > 0 ? '<span style="color:var(--status-warning-fg);font-weight:600">' + num(t.rejCount) + ' · ' + fmtCr(t.rejAmount) + '</span>' : '—';
       return '<tr class="clickable ' + (c.holiday ? 'holiday-tint' : '') + '" data-route="#/dashboard/bank/reconciliation/cycles/' + c.id + '">' +
@@ -2184,10 +2170,10 @@
   var ACTIONS = {
     'toggle-sidebar': function () { S.sidebarCollapsed = !S.sidebarCollapsed; el('app').classList.toggle('collapsed', S.sidebarCollapsed); renderSidebar(); },
     'toggle-section': function (t, e) { e.stopPropagation(); var sec = t.getAttribute('data-section'); S.expanded[sec] = !S.expanded[sec]; renderSidebar(); },
-    // Ops shell popovers (Part 2.1). Each closes the others — only one at a time.
-    'rail-more': function () { S.railMenu = !S.railMenu; S.opsContext = false; S.opsUserMenu = false; renderRail(); renderSidebar(); },
-    'ops-context': function () { S.opsContext = !S.opsContext; S.railMenu = false; S.opsUserMenu = false; renderRail(); renderSidebar(); },
-    'ops-user': function () { S.opsUserMenu = !S.opsUserMenu; S.railMenu = false; S.opsContext = false; renderRail(); renderSidebar(); },
+    // Shell popovers (Part 2.1). Each closes the others — only one at a time.
+    'rail-more': function () { S.railMenu = !S.railMenu; S.navContext = false; S.navUserMenu = false; renderRail(); renderSidebar(); },
+    'nav-context': function () { S.navContext = !S.navContext; S.railMenu = false; S.navUserMenu = false; renderRail(); renderSidebar(); },
+    'nav-user': function () { S.navUserMenu = !S.navUserMenu; S.railMenu = false; S.navContext = false; renderRail(); renderSidebar(); },
     'tab': function (t) { var g = t.getAttribute('data-tab-group'), tb = t.getAttribute('data-tab'); S.tabs[g] = tb; route(); },
     'toast': function (t) { toast(t.getAttribute('data-msg')); },
     'noop': function () { },

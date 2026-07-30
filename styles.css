@@ -1,6 +1,13 @@
 /* =============================================================================
    Juspay Bank Portal — Design System (Part 2)
    Every token in Part 2.2 is a CSS custom property below. Nothing invented.
+
+   NOTE — this `:root` block is the v1 palette (dark nav, blue-accented tabs,
+   pill-shaped status chips). It is no longer what either portal renders with:
+   the router stamps `.dl2` on the shell for every route, and the DESIGN
+   LANGUAGE v2 block near the end of this file redeclares these same names on
+   that class. v1 is kept as the default layer so any element that somehow
+   renders outside the shell still resolves every token — not as a live theme.
    ============================================================================= */
 :root {
   /* Navigation */
@@ -93,7 +100,12 @@ svg { display: block; }
 .app { display: grid; grid-template-columns: var(--sidebar-w) 1fr; grid-template-rows: var(--topbar-h) 1fr; grid-template-areas: "topbar topbar" "sidebar main"; height: 100vh; overflow: hidden; transition: grid-template-columns .18s ease; }
 .app.collapsed { grid-template-columns: var(--sidebar-w-collapsed) 1fr; }
 
-/* ---- Top bar ------------------------------------------------------------- */
+/* ---- Top bar -------------------------------------------------------------
+   DEAD as of the design unification: `route()` empties #topbar on every route
+   and `.app.dl2 > .topbar` hides it, so nothing below paints. The element and
+   these rules are kept only so the v1 layer stays internally complete — the
+   portal switcher now lives in the rail, search in the row above the view, and
+   the tenant in the nav panel's context header. */
 .topbar { grid-area: topbar; background: var(--bg-nav); border-bottom: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 20px; padding: 0 22px; color: var(--nav-fg); }
 .topbar .logo { display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 17px; letter-spacing: -0.3px; }
 .topbar .logo .logo-mark { width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(135deg, #2563EB, #8B5CF6); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 800; font-size: 14px; }
@@ -300,7 +312,10 @@ textarea.input { resize: vertical; min-height: 80px; }
 .holiday-date .hd-mon { font-size: 10px; text-transform: uppercase; color: var(--text-secondary); letter-spacing: .5px; }
 
 /* ---- Reconciliation grid ------------------------------------------------- */
-.recon-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+/* auto-fit, not a hard four-up: each column carries the three-state strip, and
+   below ~240px that strip cannot print "Authorized" at all. Wrapping to three
+   across is the honest answer at 1280 with the 302px shell. */
+.recon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
 .recon-net-col { border: 1px solid var(--border-default); border-radius: 8px; padding: 16px; min-width: 0; }
 .recon-net-col .rnc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-weight: 600; font-size: 15px; }
 .net-accent { width: 10px; height: 10px; border-radius: 3px; }
@@ -509,15 +524,13 @@ textarea.input { resize: vertical; min-height: 80px; }
 }
 
 /* =============================================================================
-   OPS PORTAL RESPONSIVE LAYOUT (Round 3 §A.3)
-   The Ops Portal fills whatever viewport it is given, from 1024px up. Three
+   RESPONSIVE LAYOUT (Round 3 §A.3)
+   Both portals fill whatever viewport they are given, from 1024px up. Three
    things make that work, and all three are here:
 
-     1. No reading-width cap. .content's max-width is right for the Bank
-        Portal's document-style screens and wrong for a cross-tenant console,
-        where it leaves a dead gutter on anything above 1560px. Dropped for ops
-        only, scoped by the .portal-ops class the router stamps on the shell —
-        nothing in this file can reach a Bank Portal screen.
+     1. No reading-width cap. .content's max-width left a dead gutter on
+        anything above 1560px. Dropped, scoped by the .dl2 class the router
+        stamps on the shell — which is now every route, Bank and Ops alike.
      2. min-width: 0 on the scrolling column (see .main above), so a wide table
         can never widen the layout.
      3. Every wide surface owns its own horizontal scroll, with its first
@@ -526,66 +539,66 @@ textarea.input { resize: vertical; min-height: 80px; }
    Below 1024px the desktop placeholder takes over; these dense financial
    tables have no honest small-screen form.
    ============================================================================= */
-.portal-ops .content { max-width: none; width: 100%; }
+.dl2 .content { max-width: none; width: 100%; }
 
 /* KPI rows wrap by themselves rather than overflowing or being pinned to a
    fixed column count — one rule that holds at every width. */
 .kpi-row { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.portal-ops .stat-row { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.dl2 .stat-row { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 
-/* Every ops data table scrolls inside its wrapper, with the first column
+/* Every data table scrolls inside its wrapper, with the first column
    pinned against a solid background so it stays readable over the scroll.
    Tables that already pin a different column (the rejects table pins its
    checkbox and ARN) opt out by declaring their own sticky cells. */
-.portal-ops .table-wrap { overflow-x: auto; max-width: 100%; }
-.portal-ops .table-wrap > table.data > thead > tr > th:first-child,
-.portal-ops .table-wrap > table.data > tbody > tr > td:first-child {
+.dl2 .table-wrap { overflow-x: auto; max-width: 100%; }
+.dl2 .table-wrap > table.data > thead > tr > th:first-child,
+.dl2 .table-wrap > table.data > tbody > tr > td:first-child {
   position: sticky; left: 0; z-index: 2; background: #fff;
 }
-.portal-ops .table-wrap > table.data > thead > tr > th:first-child { z-index: 3; background: var(--bg-subtle); }
-.portal-ops .table-wrap > table.data > tbody > tr:hover > td:first-child { background: var(--bg-subtle); }
+.dl2 .table-wrap > table.data > thead > tr > th:first-child { z-index: 3; background: var(--bg-subtle); }
+.dl2 .table-wrap > table.data > tbody > tr:hover > td:first-child { background: var(--bg-subtle); }
 /* The rejects transaction table pins two columns of its own; the generic rule
    above must not fight it. */
-.portal-ops .table-wrap > table.rej-txns > thead > tr > th:first-child,
-.portal-ops .table-wrap > table.rej-txns > tbody > tr > td:first-child { z-index: 2; }
+.dl2 .table-wrap > table.rej-txns > thead > tr > th:first-child,
+.dl2 .table-wrap > table.rej-txns > tbody > tr > td:first-child { z-index: 2; }
 
 /* Long labels truncate rather than forcing the layout wide. */
-.portal-ops .kpi-label, .portal-ops .sc-label, .portal-ops .ctx-label {
+.dl2 .kpi-label, .dl2 .sc-label, .dl2 .ctx-label {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* ≥1920 — a real monitor. Spend the extra width on padding and cell size,
    not on empty gutters. */
 @media (min-width: 1920px) {
-  .portal-ops .content { padding: 36px 48px; }
-  .portal-ops .grid { gap: 22px; }
-  .portal-ops .kpi-row { gap: 22px; }
-  .portal-ops .cyc-cell { height: 128px; padding: 14px 14px 10px; }
-  .portal-ops .cyc-legs { max-width: 340px; }
-  .portal-ops .kpi-card { padding: 22px 26px; }
+  .dl2 .content { padding: 36px 48px; }
+  .dl2 .grid { gap: 22px; }
+  .dl2 .kpi-row { gap: 22px; }
+  .dl2 .cyc-cell { height: 128px; padding: 14px 14px 10px; }
+  .dl2 .cyc-legs { max-width: 340px; }
+  .dl2 .kpi-card { padding: 22px 26px; }
 }
 
 /* 1440–1599 — four KPI cards across, tighter. */
 @media (max-width: 1599px) {
-  .portal-ops .kpi-row { gap: 14px; }
-  .portal-ops .grid-5 { gap: 14px; }
+  .dl2 .kpi-row { gap: 14px; }
+  .dl2 .grid-5 { gap: 14px; }
 }
 
 /* 1280–1439 — includes a 14" MacBook at default scaling. Cells tighten; the
    cross-tenant grid and every table are already scroll-contained. */
 @media (max-width: 1439px) {
-  .portal-ops .cyc-cell { height: 108px; padding: 9px 8px 7px; }
-  .portal-ops .kpi-value { font-size: 28px; }
+  .dl2 .cyc-cell { height: 108px; padding: 9px 8px 7px; }
+  .dl2 .kpi-value { font-size: 28px; }
 }
 
 /* 1024–1279 — KPI cards fall to 2×2 on their own (auto-fit), action queues
    stack, and the grid scrolls horizontally with the tenant column pinned. */
 @media (max-width: 1279px) {
-  .portal-ops .grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .portal-ops .grid-3 { grid-template-columns: 1fr; }
-  .portal-ops .grid-2 { grid-template-columns: 1fr; }
-  .portal-ops .cyc-sec-head { flex-wrap: wrap; }
-  .portal-ops .kpi-value { font-size: 26px; }
+  .dl2 .grid-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dl2 .grid-3 { grid-template-columns: 1fr; }
+  .dl2 .grid-2 { grid-template-columns: 1fr; }
+  .dl2 .cyc-sec-head { flex-wrap: wrap; }
+  .dl2 .kpi-value { font-size: 26px; }
 }
 
 /* =============================================================================
@@ -2204,17 +2217,19 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .recon-rej-link:hover { color: var(--primary-hover); text-decoration: underline; }
 
 /* =============================================================================
-   OPS PORTAL — DESIGN LANGUAGE v2 (overhaul Part 2)
+   DESIGN LANGUAGE v2 (overhaul Part 2) — BOTH PORTALS
    -----------------------------------------------------------------------------
-   Everything below is scoped to `.portal-ops` (the class the router stamps on
-   the shell) or `.ops-scope` (the toast + overlay mounts, which live outside
-   the shell). Nothing here can reach a Bank Portal screen: the Part 2.2 palette
-   is a FORK of the shared token names, not a replacement of them, because the
-   Bank Portal renders from the same names and must not change.
+   Everything below is scoped to `.dl2` (the class the router stamps on the
+   shell on every route) or `.dl2-scope` (the toast + overlay mounts, which live
+   outside the shell). It began life as an Ops-only fork of the shared token
+   names; the Bank Portal now carries the same class, so one language covers
+   both. The Part 2.2 palette below therefore SHADOWS the v1 `:root` tokens at
+   the top of this file rather than living beside them — v1 only still resolves
+   for anything rendered outside `.dl2` / `.dl2-scope`, which is nothing.
    ============================================================================= */
 
 /* ---- 2.2 Colour tokens --------------------------------------------------- */
-.portal-ops, .ops-scope {
+.dl2, .dl2-scope {
   /* Surfaces */
   --bg-app:            #FFFFFF;
   --bg-rail:           #FFFFFF;
@@ -2258,8 +2273,8 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
   --tile-green-bg:     #E7F7EE;  --tile-green-fg:   #197A45;
 
   /* --- Shared names the existing components read, re-pointed at the above ---
-     This is what lets every Phase 1/2/3 component inherit the new language
-     without being rewritten, while the Bank Portal keeps the originals. */
+     This is what lets every Phase 1/2/3 component on either portal inherit the
+     new language without being rewritten. */
   --bg-page:           #FFFFFF;
   --text-tertiary:     #8A93A5;
   --border-subtle:     #EDEFF3;
@@ -2279,8 +2294,8 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 
   /* Layout metrics for the three-panel shell */
   --rail-w:            72px;
-  --opsnav-w:          230px;
-  --opsnav-w-collapsed: 68px;
+  --navpanel-w:          230px;
+  --navpanel-w-collapsed: 68px;
 }
 
 /* =============================================================================
@@ -2289,16 +2304,16 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .rail { display: none; }
 .ops-searchrow { display: none; }
 
-.app.portal-ops {
-  grid-template-columns: var(--rail-w) var(--opsnav-w) 1fr;
+.app.dl2 {
+  grid-template-columns: var(--rail-w) var(--navpanel-w) 1fr;
   grid-template-rows: 1fr;
   grid-template-areas: "rail sidebar main";
 }
-.app.portal-ops.collapsed { grid-template-columns: var(--rail-w) var(--opsnav-w-collapsed) 1fr; }
-.app.portal-ops > .topbar { display: none; }
+.app.dl2.collapsed { grid-template-columns: var(--rail-w) var(--navpanel-w-collapsed) 1fr; }
+.app.dl2 > .topbar { display: none; }
 
 /* ---- Panel 1 · icon rail ------------------------------------------------- */
-.app.portal-ops > .rail {
+.app.dl2 > .rail {
   grid-area: rail; display: flex; flex-direction: column; align-items: center;
   gap: 10px; padding: 14px 0 16px; background: var(--bg-rail);
   border-right: 1px solid var(--border-light); position: relative;
@@ -2344,11 +2359,11 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .rail-menu-sep { height: 1px; background: var(--border-light); margin: 5px 0; }
 
 /* ---- Panel 2 · navigation panel ------------------------------------------ */
-.app.portal-ops > .sidebar {
+.app.dl2 > .sidebar {
   grid-area: sidebar; background: #fff; color: var(--text-primary);
   border-right: 1px solid var(--border-light); position: relative;
 }
-.portal-ops .nav-context {
+.dl2 .nav-context {
   display: flex; align-items: center; gap: 6px; padding: 16px 12px 12px 16px; position: relative;
 }
 .nav-context-btn {
@@ -2372,24 +2387,24 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .ncm-row.strong { font-weight: 600; color: var(--text-strong); }
 .ncm-meta { margin-left: auto; font-size: 13px; color: var(--text-muted); }
 
-.portal-ops .sidebar .nav-scroll { padding: 4px 0 12px; }
-.portal-ops .nav-item {
+.dl2 .sidebar .nav-scroll { padding: 4px 0 12px; }
+.dl2 .nav-item {
   gap: 10px; padding: 9px 14px; margin: 0 10px 2px; border-radius: 8px; border-left: none;
   font-size: 15px; font-weight: 500; color: var(--text-primary);
 }
-.portal-ops .nav-item:hover { background: var(--bg-subtle); color: var(--text-primary); }
-.portal-ops .nav-item.active { background: var(--bg-active-nav); color: var(--text-strong); border-left: none; }
-.portal-ops .nav-item .nav-icon { width: 18px; height: 18px; color: var(--text-muted); }
-.portal-ops .nav-item .nav-icon svg { width: 18px; height: 18px; }
-.portal-ops .nav-item.active .nav-icon { color: var(--text-strong); }
+.dl2 .nav-item:hover { background: var(--bg-subtle); color: var(--text-primary); }
+.dl2 .nav-item.active { background: var(--bg-active-nav); color: var(--text-strong); border-left: none; }
+.dl2 .nav-item .nav-icon { width: 18px; height: 18px; color: var(--text-muted); }
+.dl2 .nav-item .nav-icon svg { width: 18px; height: 18px; }
+.dl2 .nav-item.active .nav-icon { color: var(--text-strong); }
 /* Active rows carry a filled hexagon rather than an outline (Part 2.1). */
-.portal-ops .nav-item.active .nav-icon svg { fill: currentColor; }
-.portal-ops .nav-item .nav-icon-solo { display: none; }
-.portal-ops .nav-item .nav-chevron { color: var(--text-muted); }
-.portal-ops .nav-children .nav-item { padding-left: 32px; font-size: 14px; }
-.portal-ops .nav-group.expanded .nav-children { max-height: 300px; }
+.dl2 .nav-item.active .nav-icon svg { fill: currentColor; }
+.dl2 .nav-item .nav-icon-solo { display: none; }
+.dl2 .nav-item .nav-chevron { color: var(--text-muted); }
+.dl2 .nav-children .nav-item { padding-left: 32px; font-size: 14px; }
+.dl2 .nav-group.expanded .nav-children { max-height: 300px; }
 
-.portal-ops .nav-user { padding: 10px; border-top: 1px solid var(--border-light); position: relative; }
+.dl2 .nav-user { padding: 10px; border-top: 1px solid var(--border-light); position: relative; }
 .nav-user-row {
   display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px;
   border-radius: 8px; border: none; background: transparent;
@@ -2408,24 +2423,24 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 
 /* Collapsed / icons-only: the hexagon is dropped for the section's own icon,
    because eight identical hexagons with no labels identify nothing. */
-.app.portal-ops.collapsed .nav-context { justify-content: center; padding: 16px 8px 12px; }
-.app.portal-ops.collapsed .nav-context-btn { display: none; }
-.app.portal-ops.collapsed .nav-context-menu { display: none; }
-.app.portal-ops.collapsed .nav-item { justify-content: center; margin: 0 8px 2px; padding: 10px 0; }
-.app.portal-ops.collapsed .nav-item .nav-icon { display: none; }
-.app.portal-ops.collapsed .nav-item .nav-icon-solo {
+.app.dl2.collapsed .nav-context { justify-content: center; padding: 16px 8px 12px; }
+.app.dl2.collapsed .nav-context-btn { display: none; }
+.app.dl2.collapsed .nav-context-menu { display: none; }
+.app.dl2.collapsed .nav-item { justify-content: center; margin: 0 8px 2px; padding: 10px 0; }
+.app.dl2.collapsed .nav-item .nav-icon { display: none; }
+.app.dl2.collapsed .nav-item .nav-icon-solo {
   display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--text-muted);
 }
-.app.portal-ops.collapsed .nav-item.active .nav-icon-solo { color: var(--text-strong); }
-.app.portal-ops.collapsed .nav-user-mail, .app.portal-ops.collapsed .nav-user-row svg { display: none; }
-.app.portal-ops.collapsed .nav-user-row { justify-content: center; }
-.app.portal-ops.collapsed .nav-item:hover::after {
+.app.dl2.collapsed .nav-item.active .nav-icon-solo { color: var(--text-strong); }
+.app.dl2.collapsed .nav-user-mail, .app.dl2.collapsed .nav-user-row svg { display: none; }
+.app.dl2.collapsed .nav-user-row { justify-content: center; }
+.app.dl2.collapsed .nav-item:hover::after {
   background: var(--text-strong); border: none; box-shadow: 0 4px 14px rgba(16,24,40,0.18);
 }
 
 /* ---- Panel 3 · content area + search row --------------------------------- */
-.portal-ops .main { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-.app.portal-ops .ops-searchrow {
+.dl2 .main { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.app.dl2 .ops-searchrow {
   display: flex; align-items: center; gap: 10px; flex-shrink: 0;
   height: 44px; padding: 0 32px; border-bottom: 1px solid var(--border-light); background: #fff;
 }
@@ -2435,7 +2450,7 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
   font-family: inherit; font-size: 15px; color: var(--text-primary);
 }
 .ops-searchrow input::placeholder { color: var(--text-faint); }
-.portal-ops .content {
+.dl2 .content {
   flex: 1; min-width: 0; max-width: none; width: 100%;
   overflow-y: auto; padding: 28px 32px 40px;
 }
@@ -2443,63 +2458,74 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 /* =============================================================================
    2.3 TYPOGRAPHY — one scale, applied on every Ops screen
    ============================================================================= */
-.portal-ops .page-title { font-size: 32px; font-weight: 700; line-height: 1.2; color: var(--text-strong); letter-spacing: -0.6px; }
-.portal-ops .page-head .subtitle { font-size: 15px; font-weight: 400; line-height: 1.5; color: var(--text-secondary); margin-top: 6px; }
-.portal-ops .section-title { font-size: 20px; font-weight: 600; line-height: 1.35; color: var(--text-strong); }
-.portal-ops .cfg-section-title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
-.portal-ops .card-title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
-.portal-ops .meta { font-size: 13px; font-weight: 400; color: var(--text-muted); }
-.portal-ops .kpi-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
-.portal-ops .kpi-value { font-size: 34px; font-weight: 700; line-height: 1.2; color: var(--text-strong); }
-.portal-ops .sc-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
-.portal-ops .sc-value { font-size: 28px; font-weight: 700; line-height: 1.2; color: var(--text-strong); }
-.portal-ops .sc-sub, .portal-ops .kpi-foot { font-size: 13px; color: var(--text-muted); }
+.dl2 .page-title { font-size: 32px; font-weight: 700; line-height: 1.2; color: var(--text-strong); letter-spacing: -0.6px; }
+.dl2 .page-head .subtitle { font-size: 15px; font-weight: 400; line-height: 1.5; color: var(--text-secondary); margin-top: 6px; }
+.dl2 .section-title { font-size: 20px; font-weight: 600; line-height: 1.35; color: var(--text-strong); }
+.dl2 .cfg-section-title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+.dl2 .card-title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+.dl2 .meta { font-size: 13px; font-weight: 400; color: var(--text-muted); }
+.dl2 .kpi-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+.dl2 .kpi-value { font-size: 34px; font-weight: 700; line-height: 1.2; color: var(--text-strong); }
+.dl2 .sc-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+.dl2 .sc-value { font-size: 28px; font-weight: 700; line-height: 1.2; color: var(--text-strong); }
+.dl2 .sc-sub, .dl2 .kpi-foot { font-size: 13px; color: var(--text-muted); }
 /* Identifiers scanned character by character (Part 2.3). */
-.portal-ops .mono, .ops-scope .mono, .portal-ops code, .portal-ops .cfg-raw, .portal-ops textarea.mono {
+.dl2 .mono, .dl2-scope .mono, .dl2 code, .dl2 .cfg-raw, .dl2 textarea.mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px;
 }
-.portal-ops, .ops-scope { font-variant-numeric: tabular-nums; }
+.dl2, .dl2-scope { font-variant-numeric: tabular-nums; }
 
 /* =============================================================================
    2.4 COMPONENT LIBRARY
    ============================================================================= */
 /* ---- Buttons ------------------------------------------------------------- */
-.portal-ops .btn, .ops-scope .btn {
+.dl2 .btn, .dl2-scope .btn {
   border-radius: 8px; padding: 11px 18px; font-size: 15px; font-weight: 500; gap: 8px;
 }
-.portal-ops .btn svg, .ops-scope .btn svg { width: 18px; height: 18px; }
-.portal-ops .btn-sm, .ops-scope .btn-sm { padding: 8px 13px; font-size: 14px; }
-.portal-ops .btn-sm svg, .ops-scope .btn-sm svg { width: 16px; height: 16px; }
-.portal-ops .btn-secondary, .ops-scope .btn-secondary { background: #fff; border: 1px solid var(--border-default); color: var(--text-primary); }
-.portal-ops .btn-secondary:hover, .ops-scope .btn-secondary:hover { background: var(--bg-subtle); border-color: var(--border-strong); }
-.portal-ops .btn-ghost, .ops-scope .btn-ghost { font-size: 15px; font-weight: 500; }
-.portal-ops .head-actions, .ops-scope .head-actions { gap: 10px; }
-.portal-ops .icon-btn, .ops-scope .icon-btn {
+.dl2 .btn svg, .dl2-scope .btn svg { width: 18px; height: 18px; }
+.dl2 .btn-sm, .dl2-scope .btn-sm { padding: 8px 13px; font-size: 14px; }
+.dl2 .btn-sm svg, .dl2-scope .btn-sm svg { width: 16px; height: 16px; }
+.dl2 .btn-secondary, .dl2-scope .btn-secondary { background: #fff; border: 1px solid var(--border-default); color: var(--text-primary); }
+.dl2 .btn-secondary:hover, .dl2-scope .btn-secondary:hover { background: var(--bg-subtle); border-color: var(--border-strong); }
+.dl2 .btn-ghost, .dl2-scope .btn-ghost { font-size: 15px; font-weight: 500; }
+.dl2 .head-actions, .dl2-scope .head-actions { gap: 10px; }
+.dl2 .icon-btn, .dl2-scope .icon-btn {
   width: 40px; height: 40px; border-radius: 8px; background: #fff;
   border: 1px solid var(--border-default); color: var(--text-secondary);
 }
-.portal-ops .icon-btn svg, .ops-scope .icon-btn svg { width: 18px; height: 18px; }
-.portal-ops .icon-btn.xs, .ops-scope .icon-btn.xs { width: 30px; height: 30px; }
-.portal-ops .icon-btn.xs svg, .ops-scope .icon-btn.xs svg { width: 14px; height: 14px; }
+.dl2 .icon-btn svg, .dl2-scope .icon-btn svg { width: 18px; height: 18px; }
+.dl2 .icon-btn.xs, .dl2-scope .icon-btn.xs { width: 30px; height: 30px; }
+.dl2 .icon-btn.xs svg, .dl2-scope .icon-btn.xs svg { width: 14px; height: 14px; }
 
 /* ---- Status pills — rounded-rectangular, always icon-bearing ------------- */
-.portal-ops .pill, .ops-scope .pill {
+.dl2 .pill, .dl2-scope .pill {
   border-radius: 8px; padding: 5px 11px; font-size: 13px; font-weight: 500; gap: 6px;
 }
-.portal-ops .pill svg, .ops-scope .pill svg { width: 14px; height: 14px; flex-shrink: 0; }
+.dl2 .pill svg, .dl2-scope .pill svg { width: 14px; height: 14px; flex-shrink: 0; }
+/* The three-state status strip (Bank Portal reconciliation) packs a pill into
+   a quarter-width column — about 65px once the shell takes its 302px. Two
+   things break it there. `.tri-pill .pill` has the same specificity as the
+   generic rule above and loses on source order, so its tuned font and padding
+   have to be restated; and the v2 pill icon is `flex-shrink: 0`, so it can no
+   longer collapse to nothing the way it used to when the label needed the
+   room. Stacking icon over label is what actually fits: the pill's min-content
+   width becomes its longest word rather than icon + word. */
+.dl2 .tri-pill .pill {
+  flex-direction: column; gap: 3px; padding: 6px; font-size: 11.5px;
+}
 
 /* ---- Cards --------------------------------------------------------------- */
-.portal-ops .card, .ops-scope .card {
+.dl2 .card, .dl2-scope .card {
   background: #fff; border: 1px solid var(--border-light); border-radius: 12px; padding: 22px; box-shadow: none;
 }
-.portal-ops .card.pad-sm { padding: 16px; }
-.portal-ops .card.clickable:hover, .portal-ops .kpi-card.clickable:hover {
+.dl2 .card.pad-sm { padding: 16px; }
+.dl2 .card.clickable:hover, .dl2 .kpi-card.clickable:hover {
   box-shadow: 0 1px 3px rgba(16,24,40,0.06); background: #fff; border-color: var(--border-default);
 }
-.portal-ops .card-head { margin-bottom: 16px; }
+.dl2 .card-head { margin-bottom: 16px; }
 
 /* ---- KPI cards, with the optional accent icon tile ----------------------- */
-.portal-ops .kpi-card {
+.dl2 .kpi-card {
   border: 1px solid var(--border-light); border-radius: 12px; padding: 22px; gap: 6px;
   box-shadow: none;
 }
@@ -2515,48 +2541,48 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .kpi-card.tiled { align-items: center; text-align: center; }
 
 /* ---- Tables — in a card shell, no zebra, 56px rows ----------------------- */
-.portal-ops table.data thead th {
+.dl2 table.data thead th {
   text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500;
   color: var(--text-muted); border-bottom: 1px solid var(--border-default); padding: 13px 18px;
 }
-.portal-ops table.data tbody td {
+.dl2 table.data tbody td {
   border-bottom: 1px solid var(--border-light); padding: 16px 18px; font-size: 15px;
   color: var(--text-primary);
 }
-.portal-ops table.data tbody tr { min-height: 56px; }
-.portal-ops table.data tbody tr:hover { background: var(--bg-subtle); }
-.portal-ops table.data tbody tr:nth-child(even) { background: inherit; }
-.portal-ops .table-card {
+.dl2 table.data tbody tr { min-height: 56px; }
+.dl2 table.data tbody tr:hover { background: var(--bg-subtle); }
+.dl2 table.data tbody tr:nth-child(even) { background: inherit; }
+.dl2 .table-card {
   border: 1px solid var(--border-light); border-radius: 12px; overflow: hidden; background: #fff;
 }
-.portal-ops .table-card > .table-wrap { border-radius: 12px; }
-.portal-ops .table-card table.data tbody tr:last-child td { border-bottom: none; }
-.portal-ops .cell-sub { font-size: 13px; color: var(--text-muted); }
+.dl2 .table-card > .table-wrap { border-radius: 12px; }
+.dl2 .table-card table.data tbody tr:last-child td { border-bottom: none; }
+.dl2 .cell-sub { font-size: 13px; color: var(--text-muted); }
 
 /* ---- Tabs — dark underline, dark active text (not blue) ------------------ */
-.portal-ops .tabs { gap: 28px; border-bottom: 1px solid var(--border-default); }
-.portal-ops .tab {
+.dl2 .tabs { gap: 28px; border-bottom: 1px solid var(--border-default); }
+.dl2 .tab {
   font-size: 16px; font-weight: 500; color: var(--text-secondary);
   padding: 0 0 14px; border-bottom: 2px solid transparent;
 }
-.portal-ops .tab.active { color: var(--text-strong); border-bottom-color: var(--text-strong); font-weight: 600; }
-.portal-ops .tab:hover { color: var(--text-strong); }
-.portal-ops .tab .count {
+.dl2 .tab.active { color: var(--text-strong); border-bottom-color: var(--text-strong); font-weight: 600; }
+.dl2 .tab:hover { color: var(--text-strong); }
+.dl2 .tab .count {
   font-size: 13px; background: var(--neutral-bg); color: var(--neutral-fg); border-radius: 6px; padding: 1px 7px;
 }
 
 /* ---- Inputs, selects, filters ------------------------------------------- */
-.portal-ops .input, .portal-ops select.input, .portal-ops textarea.input,
-.ops-scope .input, .ops-scope select.input, .ops-scope textarea.input {
+.dl2 .input, .dl2 select.input, .dl2 textarea.input,
+.dl2-scope .input, .dl2-scope select.input, .dl2-scope textarea.input {
   border: 1px solid var(--border-default); border-radius: 8px; padding: 11px 14px; font-size: 15px;
   color: var(--text-primary);
 }
-.portal-ops .input:focus, .portal-ops select.input:focus, .portal-ops textarea.input:focus,
-.ops-scope .input:focus, .ops-scope select.input:focus, .ops-scope textarea.input:focus {
+.dl2 .input:focus, .dl2 select.input:focus, .dl2 textarea.input:focus,
+.dl2-scope .input:focus, .dl2-scope select.input:focus, .dl2-scope textarea.input:focus {
   outline: 3px solid var(--primary-ring); border-color: var(--primary);
 }
-.portal-ops .input::placeholder, .ops-scope .input::placeholder { color: var(--text-faint); }
-.portal-ops .field { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+.dl2 .input::placeholder, .dl2-scope .input::placeholder { color: var(--text-faint); }
+.dl2 .field { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
 
 /* The standard filter row: search → filters → preset → date range → refresh */
 .ops-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -2580,6 +2606,23 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .ops-daterange > svg:first-child { color: var(--text-muted); width: 18px; height: 18px; }
 .ops-daterange input[type=date] { border: none; outline: none; font-family: inherit; font-size: 15px; padding: 0; background: transparent; color: var(--text-primary); }
 .ops-refresh { flex-shrink: 0; }
+
+/* The Bank Portal builds the same filter row out of `.chip` controls sitting
+   beside plain `.input` selects. v2 raises the input to a 44px control, so the
+   chips have to come with it or the row staggers by 7px. Same metrics as
+   .ops-select / .ops-daterange above — one filter row, one language. */
+.dl2 .filter-row .chip { height: 44px; padding: 0 12px; border-radius: 8px; font-size: 15px; gap: 8px; }
+.dl2 .filter-row .chip svg { width: 16px; height: 16px; }
+.dl2 .filter-row .chip .chip-label, .dl2 .filter-row .chip .chip-value { font-size: 15px; }
+/* The search chip is a bordered box wrapping a borderless input; the input
+   fills it rather than adding a second frame inside the first. */
+.dl2 .filter-row .search-chip { padding: 0; }
+.dl2 .filter-row .search-chip .input {
+  height: 42px; border: none; background: transparent; padding: 0 12px 0 38px;
+}
+.dl2 .filter-row .search-chip .input:focus { outline: none; }
+.dl2 .filter-row .search-chip > svg { left: 13px; }
+
 .ops-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .ops-chip {
   display: inline-flex; align-items: center; gap: 6px; background: var(--bg-subtle);
@@ -2591,11 +2634,11 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .ops-chip svg { width: 14px; height: 14px; }
 
 /* ---- Side panels --------------------------------------------------------- */
-.ops-scope .side-panel, .portal-ops .side-panel {
+.dl2-scope .side-panel, .dl2 .side-panel {
   width: clamp(460px, 40vw, 680px); border-left: 1px solid var(--border-light);
   box-shadow: -8px 0 32px rgba(16,24,40,0.10); padding: 0; display: flex; flex-direction: column;
 }
-.ops-scope .side-panel.wide, .portal-ops .side-panel.wide { width: clamp(560px, 52vw, 860px); }
+.dl2-scope .side-panel.wide, .dl2 .side-panel.wide { width: clamp(560px, 52vw, 860px); }
 .sp-head {
   flex-shrink: 0; padding: 20px 24px 16px; border-bottom: 1px solid var(--border-light);
   display: flex; align-items: flex-start; gap: 12px;
@@ -2650,47 +2693,47 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .ops-step.pending .ops-step-status { color: var(--text-muted); }
 
 /* ---- Note / callout boxes ------------------------------------------------ */
-.portal-ops .callout, .ops-scope .callout {
+.dl2 .callout, .dl2-scope .callout {
   background: var(--bg-subtle); border: 1px solid var(--border-light); border-radius: 8px;
   padding: 14px; font-size: 14px; color: var(--text-secondary); gap: 10px;
 }
-.portal-ops .callout.info, .ops-scope .callout.info { background: var(--info-bg); border-color: var(--info-bg); color: var(--info-fg); }
-.portal-ops .callout.warn, .ops-scope .callout.warn { background: var(--warn-bg); border-color: var(--warn-bg); color: var(--warn-fg); }
-.portal-ops .callout.danger, .ops-scope .callout.danger { background: var(--danger-bg); border-color: var(--danger-bg); color: var(--danger-fg); }
+.dl2 .callout.info, .dl2-scope .callout.info { background: var(--info-bg); border-color: var(--info-bg); color: var(--info-fg); }
+.dl2 .callout.warn, .dl2-scope .callout.warn { background: var(--warn-bg); border-color: var(--warn-bg); color: var(--warn-fg); }
+.dl2 .callout.danger, .dl2-scope .callout.danger { background: var(--danger-bg); border-color: var(--danger-bg); color: var(--danger-fg); }
 
 /* ---- Standard page header (Part 3.1) ------------------------------------- */
-.portal-ops .page-head { margin-bottom: 24px; align-items: flex-start; }
+.dl2 .page-head { margin-bottom: 24px; align-items: flex-start; }
 
 /* ---- Empty / loading / error states (Part 3.4) --------------------------- */
-.portal-ops .empty-state, .portal-ops .error-state { padding: 44px 24px; text-align: center; }
-.portal-ops .empty-state .es-icon, .portal-ops .error-state .es-icon { color: var(--text-faint); }
-.portal-ops .empty-state .es-icon svg, .portal-ops .error-state .es-icon svg { width: 40px; height: 40px; }
-.portal-ops .empty-state h3, .portal-ops .error-state h3 { font-size: 16px; font-weight: 600; color: var(--text-strong); }
-.portal-ops .empty-state p, .portal-ops .error-state p { font-size: 14px; color: var(--text-secondary); }
-.portal-ops .skel-row { background: var(--bg-subtle); border-radius: 8px; }
+.dl2 .empty-state, .dl2 .error-state { padding: 44px 24px; text-align: center; }
+.dl2 .empty-state .es-icon, .dl2 .error-state .es-icon { color: var(--text-faint); }
+.dl2 .empty-state .es-icon svg, .dl2 .error-state .es-icon svg { width: 40px; height: 40px; }
+.dl2 .empty-state h3, .dl2 .error-state h3 { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+.dl2 .empty-state p, .dl2 .error-state p { font-size: 14px; color: var(--text-secondary); }
+.dl2 .skel-row { background: var(--bg-subtle); border-radius: 8px; }
 
 /* =============================================================================
    2.5 RESPONSIVENESS — re-verified after the redesign
    ============================================================================= */
 /* Below 1280 the nav panel is icons-only whether or not it was collapsed. */
 @media (max-width: 1279px) {
-  .app.portal-ops { grid-template-columns: var(--rail-w) var(--opsnav-w-collapsed) 1fr; }
-  .app.portal-ops .nav-label, .app.portal-ops .nav-chevron { display: none; }
-  .app.portal-ops .nav-children { display: none; }
-  .app.portal-ops .nav-context { justify-content: center; padding: 16px 8px 12px; }
-  .app.portal-ops .nav-context-btn, .app.portal-ops .nav-context-menu { display: none; }
-  .app.portal-ops .nav-item { justify-content: center; margin: 0 8px 2px; padding: 10px 0; }
-  .app.portal-ops .nav-item .nav-icon { display: none; }
-  .app.portal-ops .nav-item .nav-icon-solo {
+  .app.dl2 { grid-template-columns: var(--rail-w) var(--navpanel-w-collapsed) 1fr; }
+  .app.dl2 .nav-label, .app.dl2 .nav-chevron { display: none; }
+  .app.dl2 .nav-children { display: none; }
+  .app.dl2 .nav-context { justify-content: center; padding: 16px 8px 12px; }
+  .app.dl2 .nav-context-btn, .app.dl2 .nav-context-menu { display: none; }
+  .app.dl2 .nav-item { justify-content: center; margin: 0 8px 2px; padding: 10px 0; }
+  .app.dl2 .nav-item .nav-icon { display: none; }
+  .app.dl2 .nav-item .nav-icon-solo {
     display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--text-muted);
   }
-  .app.portal-ops .nav-item.active .nav-icon-solo { color: var(--text-strong); }
-  .app.portal-ops .nav-user-mail, .app.portal-ops .nav-user-row svg { display: none; }
-  .app.portal-ops .nav-user-row { justify-content: center; }
+  .app.dl2 .nav-item.active .nav-icon-solo { color: var(--text-strong); }
+  .app.dl2 .nav-user-mail, .app.dl2 .nav-user-row svg { display: none; }
+  .app.dl2 .nav-user-row { justify-content: center; }
 }
 @media (min-width: 1920px) {
-  .portal-ops .content { padding: 32px 48px 48px; }
-  .app.portal-ops .ops-searchrow { padding: 0 48px; }
+  .dl2 .content { padding: 32px 48px 48px; }
+  .app.dl2 .ops-searchrow { padding: 0 48px; }
 }
 
 /* =============================================================================
@@ -2699,7 +2742,7 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
    ============================================================================= */
 
 /* A fifth accent tile pair, for the Staging KPI card (Part 4.2). */
-.portal-ops, .ops-scope { --tile-red-bg: #FDECEC; --tile-red-fg: #B42318; }
+.dl2, .dl2-scope { --tile-red-bg: #FDECEC; --tile-red-fg: #B42318; }
 .kpi-tile.red { background: var(--tile-red-bg); color: var(--tile-red-fg); }
 
 /* ---- 4.1 One status line, not a banner ---------------------------------- */
@@ -2729,13 +2772,13 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .rej-stat:last-child { border-right: none; }
 .rej-stat-label { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .rej-stat-value { font-size: 22px; font-weight: 700; color: var(--text-strong); line-height: 1.2; }
-.portal-ops .rej-title-sep { color: var(--text-faint); font-weight: 400; }
-.portal-ops .rej-head-id { font-size: 14px; color: var(--text-muted); margin: 0 8px; }
-.portal-ops .page-head .subtitle .rej-back {
+.dl2 .rej-title-sep { color: var(--text-faint); font-weight: 400; }
+.dl2 .rej-head-id { font-size: 14px; color: var(--text-muted); margin: 0 8px; }
+.dl2 .page-head .subtitle .rej-back {
   display: inline-flex; align-items: center; gap: 5px; cursor: pointer; margin-right: 10px;
   color: var(--text-secondary);
 }
-.portal-ops .page-head .subtitle .rej-back:hover { color: var(--primary); }
+.dl2 .page-head .subtitle .rej-back:hover { color: var(--primary); }
 
 .rej-details { margin-top: 16px; }
 .rej-details-head {
@@ -2748,12 +2791,12 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 }
 
 /* ---- 4.3 Reason column: plain language leads, code beneath -------------- */
-.portal-ops .reason-cell { display: flex; flex-direction: column; gap: 2px; max-width: 300px; }
-.portal-ops .reason-cell .reason-text {
+.dl2 .reason-cell { display: flex; flex-direction: column; gap: 2px; max-width: 300px; }
+.dl2 .reason-cell .reason-text {
   font-size: 15px; color: var(--text-primary); line-height: 1.35;
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 }
-.portal-ops .reason-cell .reason-code {
+.dl2 .reason-cell .reason-code {
   font-size: 13px; color: var(--text-muted); background: none; padding: 0; border: none;
 }
 .rej-row-actions { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
@@ -2889,7 +2932,7 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .cfg-task-hint svg { flex-shrink: 0; }
 .cfg-task-hint > span { flex: 1; }
 .cfg-task-hint .icon-btn { border: none; background: transparent; color: inherit; }
-.portal-ops .cfg-mode-note { margin-top: 8px; }
+.dl2 .cfg-mode-note { margin-top: 8px; }
 
 /* ---- 5.3 The layout ruler as the primary interface ---------------------- */
 .byte-map.live { margin: 0 0 20px; padding: 18px 0 4px; }
@@ -2915,7 +2958,7 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 }
 .byte-map .bm-warn { position: absolute; top: 2px; right: 3px; color: var(--danger-fg); }
 .byte-map .bm-seg.fk-lit { outline: 2px solid var(--primary); outline-offset: -2px; z-index: 3; }
-.portal-ops tr.fk-lit > td { background: var(--info-bg) !important; }
+.dl2 tr.fk-lit > td { background: var(--info-bg) !important; }
 
 /* A single live status line beneath the ruler. */
 .bm-status {
@@ -3018,7 +3061,7 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .parse-seen { flex: 1; }
 .sample-out, .sample-result { border: 1px solid var(--border-light); border-radius: 12px; padding: 18px; background: #fff; }
 .sample-out-table th { white-space: nowrap; }
-.portal-ops tr.sample-empty td { background: var(--warn-bg); }
+.dl2 tr.sample-empty td { background: var(--warn-bg); }
 
 /* ---- 5.5 Schedule, plain controls --------------------------------------- */
 .sched-plain { display: flex; flex-direction: column; gap: 10px; }
@@ -3030,7 +3073,7 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .sched-toggles { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light); }
 .sched-preview { border: 1px solid var(--border-light); border-radius: 12px; padding: 18px; background: #fff; }
 .sched-preview .sp-head { display: flex; align-items: center; gap: 10px; padding: 0 0 14px; border: none; flex-wrap: wrap; }
-.portal-ops tr.skipped td { color: var(--text-muted); background: var(--bg-subtle); }
+.dl2 tr.skipped td { color: var(--text-muted); background: var(--bg-subtle); }
 
 /* ---- 5.5 Fee rule cards + calculator ------------------------------------ */
 .fee-cards { display: flex; flex-direction: column; gap: 14px; }
@@ -3054,7 +3097,7 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .fee-cond.all { color: var(--text-muted); }
 .fee-charge { font-size: 17px; font-weight: 600; color: var(--text-strong); }
 .fee-editor { padding: 0 20px 20px; border-top: 1px solid var(--border-light); padding-top: 18px; }
-.portal-ops tr.bad-row td { background: var(--danger-bg); }
+.dl2 tr.bad-row td { background: var(--danger-bg); }
 
 .fee-calc { border: 1px solid var(--border-light); border-radius: 12px; padding: 18px 20px; background: var(--bg-subtle); }
 .fee-calc-head { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; color: var(--text-strong); font-size: 16px; }
@@ -3102,22 +3145,22 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 /* `position: relative` matters as much as the overflow: without it the wrapper
    is not a containing block, so absolutely positioned descendants (the cell
    tooltips) escape the clip and widen the document itself. */
-.portal-ops .cyc-grid-wrap { max-width: 100%; min-width: 0; position: relative; }
+.dl2 .cyc-grid-wrap { max-width: 100%; min-width: 0; position: relative; }
 
 /* A page header whose actions cannot fit on the title line wraps rather than
    overflowing its own box. */
-.portal-ops .page-head { flex-wrap: wrap; }
-.portal-ops .page-head > div:first-child { min-width: 0; flex: 1 1 320px; }
-.portal-ops .head-actions { flex-wrap: wrap; justify-content: flex-end; }
+.dl2 .page-head { flex-wrap: wrap; }
+.dl2 .page-head > div:first-child { min-width: 0; flex: 1 1 320px; }
+.dl2 .head-actions { flex-wrap: wrap; justify-content: flex-end; }
 
 /* The network's literal reject message is a transcript, so it keeps a dark
    surface. It used to read `var(--bg-nav)` — which the Ops token fork
    redefines to white, leaving white text on white. It gets its own colour. */
-.portal-ops .rej-raw code, .ops-scope .rej-raw code {
+.dl2 .rej-raw code, .dl2-scope .rej-raw code {
   background: #1C1C22; color: rgba(255, 255, 255, 0.88);
 }
 .ird-delta.cheaper { color: var(--ok-fg); }
 
 /* Filler segments are recessive, but the ruler is the primary interface now —
    the label still has to be readable against the filler fill (was 2.09:1). */
-.portal-ops .bm-seg.bm-filler .bm-label { color: var(--neutral-fg); }
+.dl2 .bm-seg.bm-filler .bm-label { color: var(--neutral-fg); }
