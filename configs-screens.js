@@ -41,7 +41,7 @@ window.ConfigsUI = function (kit) {
     queue: { tab: 'pending', family: 'all', submitter: 'all', sla: 'all' },
     // Task-based landing (Part 5.1) — which task the user came in on, and the
     // Browse all configurations disclosure beneath the task cards.
-    task: null, browseOpen: false, browseFam: 'network-file', unusedOpen: false, parseForm: null,
+    task: null, rejFrom: null, browseOpen: false, browseFam: 'network-file', unusedOpen: false, parseForm: null,
     // Layout ruler: hovered field index and the pre-filled add-field form.
     hoverField: null, gapForm: null,
     // Incoming parsing issues that have been resolved this session.
@@ -2318,8 +2318,26 @@ window.ConfigsUI = function (kit) {
   /* A one-line reminder of what the user came here to do, carried from the
      task card into the editor. It never blocks anything. */
   function taskHint() {
+    // Context carried in from a reject's "Open Platform Configs →" (Rejects
+    // Part 5). The panel state is preserved over there — the back link returns
+    // to the batch with the fix panel still open.
+    var rejHint = '';
+    var rj = S.cfg.rejFrom;
+    if (rj) {
+      var rtxn = window.REJDATA && window.REJDATA.txnById[rj.id];
+      var rtext = window.REJDATA ? window.REJDATA.reasonText(rj.reason) : '';
+      rejHint = '<div class="cfg-task-hint">' + kit.icon('corner-up-left', 16) +
+        '<span><strong>From a reject</strong> — ' +
+        (rtxn ? '<span class="mono">' + kit.esc(rtxn.arn) + '</span> · ' : '') +
+        kit.esc(rtext) + ' <span class="mono">' + kit.esc(rj.reason || '') + '</span>. ' +
+        'The fix panel stays open in Rejects — go back to finish it.' +
+        (rj.batch ? ' <a data-route="#/dashboard/ops/rejects/' + kit.esc(rj.batch) + '">Back to the reject</a>' : '') +
+        '</span>' +
+        '<button class="icon-btn xs" data-action="cfg-rej-clear" title="Dismiss" aria-label="Dismiss">' + kit.icon('x', 14) + '</button>' +
+        '</div>';
+    }
     var t = TASK_BY_ID[S.cfg.task];
-    if (!t) return '';
+    if (!t) return rejHint;
     var extra = {
       'add-field': 'Click an unexplained gap in the ruler to add a field there, or use Add field below.',
       'move-field': 'Edit “Starts at” and “Length” in the table, or use Fix positions automatically.',
@@ -2328,7 +2346,7 @@ window.ConfigsUI = function (kit) {
       'report-when': 'Change a control and read Next 5 runs — no offset arithmetic needed.',
       'fee-rules': 'Each rule states its conditions and charge in plain language. Test one with the calculator.'
     }[t.id] || '';
-    return '<div class="cfg-task-hint">' + icon('target', 16) +
+    return rejHint + '<div class="cfg-task-hint">' + icon('target', 16) +
       '<span><strong>' + t.label + '</strong>' + (extra ? ' — ' + extra : '') + '</span>' +
       '<button class="icon-btn xs" data-action="cfg-task-clear" title="Dismiss" aria-label="Dismiss">' + icon('x', 14) + '</button>' +
       '</div>';
@@ -2658,6 +2676,7 @@ window.ConfigsUI = function (kit) {
       go(famRoute(task.fam) + '?task=' + task.id);
     },
     'cfg-task-clear': function () { S.cfg.task = null; renderFamily(S.cfg.family); },
+    'cfg-rej-clear': function () { S.cfg.rejFrom = null; renderFamily(S.cfg.family); },
     'cfg-browse': function () {
       S.cfg.browseOpen = !S.cfg.browseOpen;
       if (S.opsChild) renderFamily(S.cfg.family); else renderLanding();
@@ -3081,6 +3100,11 @@ window.ConfigsUI = function (kit) {
     if (S.query && S.query.task && TASK_BY_ID[S.query.task]) {
       S.cfg.task = S.query.task;
       S.cfg.tab[fam] = TASK_BY_ID[S.query.task].tab;
+    }
+    // A reject's "Open Platform Configs →" carries the transaction context
+    // (Rejects Part 5), shown as a hint with a way back to the open panel.
+    if (S.query && S.query.rejFrom) {
+      S.cfg.rejFrom = { id: S.query.rejFrom, reason: S.query.rejReason || '', batch: S.query.rejBatch || '' };
     }
     kit.renderSidebar();
     return renderFamily(fam, rest[1]);

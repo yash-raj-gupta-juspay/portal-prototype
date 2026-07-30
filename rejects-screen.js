@@ -52,6 +52,9 @@ window.RejectsUI = function (kit) {
     tab: 'rejects', detailsOpen: false, fgroups: {},
     // --- correction editor ---
     editing: null, editFrom: null, draft: null, navOrder: null,
+    // Part 3.5 — which fields have been blurred (validation paints on blur),
+    // Part 7.2 — read-back mode, Part 2.2 — one-shot reveal transition.
+    touched: {}, readback: false, pathAnim: false,
     // §C.6 — the declared correction path. Null until the analyst chooses.
     path: null, cfgNote: '', cfgFamily: '',
     irdManual: '', irdNote: '',
@@ -396,7 +399,11 @@ window.RejectsUI = function (kit) {
           ? '<button class="btn btn-sm btn-secondary" data-action="rej-rederive" data-id="' + t.id + '" ' +
           'title="Recompute this transaction from the corrected config">' + icon('refresh-cw', 16) + 'Re-derive</button>'
           : '') +
-        '<button class="rej-fix-link" data-action="rej-edit" data-id="' + t.id + '">Fix' + icon('arrow-right', 15) + '</button>' +
+        // Part 6.3 — a fixed transaction's action reads View, reopening the
+        // panel in its read-back state.
+        '<button class="rej-fix-link" data-action="rej-edit" data-id="' + t.id + '">' +
+        (['corrected', 'regenerated', 'resubmitted', 'cleared', 'wont_fix'].indexOf(t.status) >= 0 ? 'View' : 'Fix') +
+        icon('arrow-right', 15) + '</button>' +
         '<button class="btn btn-sm btn-ghost" data-action="rej-history" data-id="' + t.id + '" title="Correction history">' + icon('history', 16) + '</button>' +
         '</td></tr>';
     }).join('');
@@ -421,7 +428,7 @@ window.RejectsUI = function (kit) {
       var corrected = row.rejected && ['corrected', 'regenerated', 'resubmitted', 'cleared'].indexOf(row.status) >= 0;
       var d = lc(row.status);
       var stateCell = row.rejected
-        ? (corrected ? pill('Corrected in place', 'success', 'check') : pill(d.label, d.kind, d.icon))
+        ? (corrected ? pill('Fixed in place', 'success', 'check') : pill(d.label, d.kind, d.icon))
         : '<span class="rej-file-unchanged">' + icon('minus', 12) + 'Unchanged</span>';
       return '<tr class="' + (row.rejected ? 'rej-file-row-rejected' : '') + '">' +
         '<td class="sticky-arn">' + arnCell(row.arn) + '</td>' +
@@ -514,7 +521,7 @@ window.RejectsUI = function (kit) {
         '<td class="nowrap cell-sub num">' + esc(g.at) + '</td>' +
         '<td class="cell-sub">' + esc(g.by) + '</td>' +
         '<td class="num">' + num(g.count) +
-        (kind === 'replacement' ? '<div class="cell-sub num">' + (g.corrected || 0) + ' corrected</div>' : '') + '</td>' +
+        (kind === 'replacement' ? '<div class="cell-sub num">' + (g.corrected || 0) + ' fixed</div>' : '') + '</td>' +
         '<td class="num nowrap">' + fmt(g.value, 2, g.currency) + '</td>' +
         '<td>' + pill(g.delivery, delKind) + (g.manual ? manualTag({ label: 'manually marked', by: g.markedBy || g.by, at: g.markedAt || g.at }) : '') +
         (g.s3Path ? '<div class="cell-sub mono">' + esc(g.s3Path) + '</div>' : '') +
@@ -573,13 +580,17 @@ window.RejectsUI = function (kit) {
       '<span class="rej-head-id mono">' + esc(b.id) + '</span>' + familyPill(b.family),
       // One primary action: the file this batch exists to produce.
       '<button class="btn btn-secondary" data-action="rej-export">' + icon('table', 18) + 'Export rejects</button>' +
+      /* Part 6.4 — the generate action carries a live count chip and is
+         disabled while zero transactions are fixed. Awaiting config fix and
+         won't fix never count. */
       '<button class="btn btn-primary" data-action="rej-gen-open"' + (corrected.length ? '' : ' disabled') +
       ' title="' + (corrected.length
         ? (model.key === 'replacement'
-          ? 'Generate a complete replacement file — all ' + num(b.fileTxns) + ' transactions, with ' + corrected.length + ' correction(s) applied in place'
-          : 'Generate a supplementary file containing the ' + corrected.length + ' corrected reject(s)')
+          ? 'Generate a complete replacement file — all ' + num(b.fileTxns) + ' transactions, with ' + corrected.length + ' fix(es) applied in place'
+          : 'Generate a supplementary file containing the ' + corrected.length + ' fixed reject(s)')
         : 'Fix at least one transaction first') + '">' +
-      icon('file-plus', 18) + esc(model.action) + (corrected.length ? ' <span class="num">(' + corrected.length + ')</span>' : '') + '</button>');
+      icon('file-plus', 18) + esc(model.action) +
+      (corrected.length ? ' <span class="rej-count-chip num">' + corrected.length + ' fixed</span>' : '') + '</button>');
 
     var awaitingLine = awaiting.length
       ? '<div class="rej-statusline warn">' + icon('settings', 18) +
@@ -641,120 +652,183 @@ window.RejectsUI = function (kit) {
     for (var i = 0; i < list.length; i++) if (list[i].id === F.editing) return i;
     return -1;
   }
+  function draftVal(t, key) {
+    return F.draft && F.draft[key] != null ? String(F.draft[key]) : (t.fields[key] == null ? '' : String(t.fields[key]));
+  }
   function draftChanges(t) {
     if (!F.draft) return [];
     return Object.keys(F.draft).filter(function (k) {
+      if ((R.FIELDS[k] || {}).readOnly) return false;
       return String(F.draft[k]) !== String(t.fields[k] == null ? '' : t.fields[k]);
     }).map(function (k) {
       return { field: k, from: t.fields[k] == null ? '' : String(t.fields[k]), to: String(F.draft[k]) };
     });
   }
 
-  /* Part 4.4 — the flagged field is pulled to the top of the list and marked;
-     every other field follows, grouped under collapsible headings. The reason
-     code is still a hint, not a gate: everything stays editable. */
-  function fieldRow(t, key, hinted) {
+  /* Part 3.5 — validation. Runs on blur and on save attempt; errors gate the
+     save whether or not they are painted yet. */
+  function fieldError(t, key) {
+    var def = R.FIELDS[key] || {};
+    if (def.readOnly) return null;
+    return R.validateField(key, draftVal(t, key));
+  }
+  function editorErrors(t) {
+    var out = {};
+    R.fieldsForTxn(t).forEach(function (k) {
+      var e = fieldError(t, k);
+      if (e) out[k] = e;
+    });
+    return out;
+  }
+
+  /* Part 3 — one field row. The Changed chip and primary left border are
+     driven by the .changed class so live typing can toggle them without a
+     re-render; the error line fills on blur or on a save attempt. */
+  function fieldInput(t, key) {
+    var def = R.FIELDS[key] || { label: key };
+    var val = draftVal(t, key);
+    var cls = 'input' + (def.mono ? ' mono' : '') + (def.num ? ' num' : '');
+    if (def.readOnly) {
+      return '<input class="' + cls + '" type="text" value="' + esc(val) + '" disabled aria-label="' + esc(def.label) + '" />';
+    }
+    if (def.type === 'select') {
+      return '<select class="' + cls + '" data-action="rej-c-field" data-field="' + key + '" aria-label="' + esc(def.label) + '">' +
+        def.options.map(function (o) {
+          var v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : o;
+          return '<option value="' + esc(v) + '"' + (val === v ? ' selected' : '') + '>' + esc(l) + '</option>';
+        }).join('') + '</select>';
+    }
+    return '<input class="' + cls + '" type="text" value="' + esc(val) + '" ' +
+      'data-action="rej-i-field" data-field="' + key + '" aria-label="' + esc(def.label) + '" />';
+  }
+  function fieldRow(t, key, inFlag) {
     var def = R.FIELDS[key] || { label: key };
     var cur = t.fields[key] == null ? '' : String(t.fields[key]);
-    var val = F.draft && F.draft[key] != null ? String(F.draft[key]) : cur;
-    var changed = val !== cur;
-    var input;
-    if (def.type === 'select') {
-      input = '<select class="input' + (def.mono ? ' mono' : '') + '" data-action="rej-c-field" data-field="' + key + '">' +
-        def.options.map(function (o) { return '<option value="' + esc(o) + '"' + (val === o ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') +
-        '</select>';
-    } else {
-      input = '<input class="input' + (def.mono ? ' mono' : '') + '" type="text" value="' + esc(val) + '" ' +
-        'data-action="rej-i-field" data-field="' + key + '" aria-label="' + esc(def.label) + '" />';
-    }
-    return '<div class="rej-field' + (changed ? ' changed' : '') + (hinted ? ' hinted' : '') + '">' +
-      '<div class="rej-field-label">' +
-      (hinted ? '<span class="rej-flag-dot" aria-hidden="true"></span>' : '') + esc(def.label) +
-      (hinted ? '<span class="rej-flag-suffix">(flagged by the reject reason)</span>' : '') +
-      (changed ? '<span class="rej-changed-dot" title="Edited">' + icon('circle', 10) + 'edited</span>' : '') + '</div>' +
-      '<div class="rej-field-current"><span class="rej-field-key">current</span>' +
-      '<span class="' + (def.mono ? 'mono ' : '') + 'num">' + (cur === '' ? '<em class="rej-empty">empty</em>' : esc(cur)) + '</span></div>' +
-      '<div class="rej-field-input">' + input + '</div>' +
-      (def.help ? '<div class="rej-field-help">' + esc(def.help) + '</div>' : '') +
+    var val = draftVal(t, key);
+    var changed = !def.readOnly && val !== cur;
+    var err = F.touched[key] ? fieldError(t, key) : null;
+    var help = inFlag ? (def.flagHelp || def.help || '') : (def.help || '');
+    return '<div class="rjf' + (changed ? ' changed' : '') + (err ? ' invalid' : '') + (inFlag ? ' rjf-flag' : '') + '" data-fieldwrap="' + key + '">' +
+      '<div class="rjf-label">' + esc(def.label) +
+      '<span class="rjf-chip">Changed</span>' +
+      (def.readOnly ? '<span class="rjf-ro">' + icon('lock', 11) + 'Read-only</span>' : '') + '</div>' +
+      fieldInput(t, key) +
+      (help ? '<div class="rjf-help">' + esc(help) + '</div>' : '') +
+      '<div class="rjf-err" data-errfor="' + key + '">' + (err ? esc(err) : '') + '</div>' +
       '</div>';
   }
 
-  function groupOpen(name) { return F.fgroups[name] !== false; }
+  /* Part 3.1 — the flagged field leads, lifted out of its group into its own
+     warning-tinted block so the user sees immediately what the network
+     objected to. When the IRD chooser is on, the IRD's plain input is replaced
+     by a read-only row reflecting what the chooser has staged. */
+  function irdFlagRow(t) {
+    var def = R.FIELDS.ird;
+    var cur = String(t.fields.ird || '');
+    var val = draftVal(t, 'ird');
+    var changed = val !== cur;
+    return '<div class="rjf rjf-flag' + (changed ? ' changed' : '') + '">' +
+      '<div class="rjf-label">' + esc(def.label) + '<span class="rjf-chip">Changed</span></div>' +
+      '<div class="rjf-ird-stage mono num">' + (changed
+        ? '<span class="rjf-ird-old">' + esc(cur) + '</span>' + icon('arrow-right', 14) + '<span class="rjf-ird-new">' + esc(val) + '</span>'
+        : esc(cur)) + '</div>' +
+      '<div class="rjf-help">' + (changed
+        ? 'Staged from the chooser above. Nothing is saved until you click Save fix.'
+        : 'Pick a replacement from the chooser above — it fills this field.') + '</div>' +
+      '</div>';
+  }
+  function flaggedBlock(t, flagged, chooserOn) {
+    if (!flagged.length) return '';
+    return '<div class="rej-flag-block">' +
+      '<div class="rej-flag-eyebrow"><span class="rej-flag-dot" aria-hidden="true"></span>Flagged by the reject</div>' +
+      flagged.map(function (k) {
+        if (k === 'ird' && chooserOn) return irdFlagRow(t);
+        return fieldRow(t, k, true);
+      }).join('') + '</div>';
+  }
+
+  // Part 3.3 — collapsed by default; a group holding a flagged field starts
+  // expanded (its flagged field itself already lifted above).
+  function groupOpen(name, flagged) {
+    if (F.fgroups[name] != null) return F.fgroups[name];
+    return flagged.some(function (k) { return (R.FIELDS[k] || {}).group === name; });
+  }
 
   function fieldEditor(t) {
-    var rel = R.relevantFields(t.reasonCode);
-    var out = '';
-    if (rel.length) {
-      out += '<div class="rej-fgroup flagged"><div class="rej-fgroup-head">' +
-        '<span class="rej-fgroup-name">' + (rel.length === 1 ? 'Flagged field' : 'Flagged fields') + '</span></div>' +
-        rel.map(function (k) { return fieldRow(t, k, true); }).join('') + '</div>';
-    }
+    var flagged = R.flaggedFields(t);
+    var chooserOn = ladderOn(t);
+    var present = R.fieldsForTxn(t);
+    var out = flaggedBlock(t, flagged, chooserOn);
     out += R.groupedFields().map(function (g) {
-      var keys = g.fields.filter(function (k) { return rel.indexOf(k) < 0; });
+      var keys = g.fields.filter(function (k) { return flagged.indexOf(k) < 0 && present.indexOf(k) >= 0; });
       if (!keys.length) return '';
-      var open = groupOpen(g.group);
+      var open = groupOpen(g.group, flagged);
       return '<div class="rej-fgroup' + (open ? ' open' : '') + '">' +
         '<button class="rej-fgroup-head" data-action="rej-fgroup" data-group="' + esc(g.group) + '" aria-expanded="' + (open ? 'true' : 'false') + '">' +
         icon(open ? 'chevron-down' : 'chevron-right', 15) +
         '<span class="rej-fgroup-name">' + esc(g.group) + '</span>' +
-        '<span class="meta"><span class="num">' + keys.length + '</span> field' + (keys.length === 1 ? '' : 's') + '</span></button>' +
-        (open ? keys.map(function (k) { return fieldRow(t, k, false); }).join('') : '') +
+        '<span class="rej-fgroup-count num">(' + keys.length + ')</span></button>' +
+        (open ? '<div class="rej-fgroup-body">' + keys.map(function (k) { return fieldRow(t, k, false); }).join('') + '</div>' : '') +
         '</div>';
     }).join('');
     return '<div class="rej-field-groups">' + out + '</div>';
   }
 
-  /* ---- Step 2b · the rule fix (Part 4.4) ---------------------------------
-     One question, an optional destination, a way to get there, and the action
-     that parks the reject in the state that says so. Nothing here edits the
-     transaction, because the transaction is not what is wrong. */
+  /* ---- Part 5 · Path B — config handoff ----------------------------------
+     One required question, an optional destination, and a link that carries
+     the reject's context to Platform Configs. The panel state survives the
+     round trip: navigating away does not close the editor, so returning to
+     this batch reopens it exactly as left. Saving is the footer's job — the
+     primary button relabels to "Mark as waiting on config". */
+  function cfgContextRoute(t) {
+    var fam = R.configFamily(F.cfgFamily || (t.configRequest && t.configRequest.family));
+    var base = fam ? fam.route : '#/dashboard/ops/configs';
+    return base + '?rejFrom=' + t.id + '&rejReason=' + t.reasonCode + '&rejBatch=' + t.batchId;
+  }
   function configPathPanel(t) {
-    var famOpts = R.CONFIG_FAMILIES.map(function (f) {
-      return '<option value="' + f.key + '"' + (F.cfgFamily === f.key ? ' selected' : '') + '>' + esc(f.label) + '</option>';
-    }).join('');
-    var fam = R.configFamily(F.cfgFamily);
-    var route = fam ? fam.route : '#/dashboard/ops/configs';
-    var already = t.status === 'awaiting_config' && t.configRequest;
-
+    // A transaction already parked on a config fix reads back: the saved note
+    // shown read-only, with re-derive waiting in the footer (Part 5).
+    if (t.status === 'awaiting_config' && t.configRequest) {
+      return '<div class="rej-cfg-panel">' +
+        '<div class="rej-awaiting-box">' + icon('clock', 18) +
+        '<div class="rej-awaiting-body">' +
+        '<strong>Waiting on a config fix' + (t.configRequest.familyLabel ? ' · ' + esc(t.configRequest.familyLabel) : '') + '</strong>' +
+        '<div class="rej-awaiting-note">' + esc(t.configRequest.note) + '</div>' +
+        '<div class="meta">Raised by ' + esc(t.configRequest.by) + ' on <span class="num">' + esc(t.configRequest.at) + '</span>.</div>' +
+        '</div></div>' +
+        '<div class="rej-cfg-row">' +
+        '<span class="meta">Once the config change has landed, re-derive this transaction from it below.</span>' +
+        '<a class="rej-cfg-link" data-route="' + cfgContextRoute(t) + '">Open Platform Configs' + icon('arrow-right', 15) + '</a>' +
+        '</div></div>';
+    }
+    var famOpts = [['network', 'Network files'], ['incoming', 'Incoming files'], ['settlement', 'Settlement reports'], ['', 'Not sure']];
     return '<div class="rej-cfg-panel">' +
-      (already
-        ? '<div class="rej-cfg-existing">' + icon('clock', 16) +
-        '<div><strong>Already waiting on a config fix</strong> — raised by ' + esc(t.configRequest.by) +
-        ' on <span class="num">' + esc(t.configRequest.at) + '</span>' +
-        (t.configRequest.familyLabel ? ' · ' + esc(t.configRequest.familyLabel) : '') +
-        '<div class="rej-cfg-existing-note">' + esc(t.configRequest.note) + '</div></div></div>'
-        : '') +
-
       '<label class="field rej-cfg-note">What needs to change? <span class="req">required</span>' +
       '<textarea class="input" rows="3" data-action="rej-i-cfg-note" ' +
       'placeholder="e.g. The MCC mapping for this acquirer BIN still points at the 2024 ISO 18245 table — 5732 is being emitted as 9732.">' +
       esc(F.cfgNote) + '</textarea></label>' +
-
       '<div class="rej-cfg-row">' +
-      '<label class="field inline">Which configuration? <span class="meta">optional</span>' +
+      '<label class="field inline">Where does the fix belong? <span class="meta">optional</span>' +
       '<select class="input w-260" data-action="rej-c-cfg-family">' +
-      '<option value=""' + (F.cfgFamily ? '' : ' selected') + '>Not sure yet</option>' + famOpts +
-      '<option value="code"' + (F.cfgFamily === 'code' ? ' selected' : '') + '>A code change — not a config</option>' +
+      famOpts.map(function (o) {
+        return '<option value="' + o[0] + '"' + (F.cfgFamily === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+      }).join('') +
       '</select></label>' +
-      (F.cfgFamily === 'code'
-        ? '<span class="meta rej-cfg-code">' + icon('git-branch', 14) + 'Raise with platform engineering — there is no config surface for it.</span>'
-        : '<a class="rej-cfg-link" data-route="' + route + '">Open Platform Configs' + icon('arrow-right', 15) + '</a>') +
-      '</div>' +
-
-      '<div class="rej-cfg-foot">' +
-      '<button class="btn btn-primary" id="rej-cfg-mark" data-action="rej-mark-config"' + (F.cfgNote.trim() ? '' : ' disabled') + '>' +
-      icon('settings', 16) + 'Mark as waiting on config</button>' +
+      '<a class="rej-cfg-link" data-route="' + cfgContextRoute(t) + '">Open Platform Configs' + icon('arrow-right', 15) + '</a>' +
       '</div></div>';
   }
 
-  /* Step 1 of the fix panel: what kind of fix is this? Two cards, two lines
-     each. Selecting one reveals its content below. */
-  function pathCards(t) {
+  /* Part 2 — what kind of fix is this? A real radio group: the whole card is
+     the hit target, exactly one selected, arrow keys move between options.
+     In read-back the chosen path stays visible but locked. */
+  function pathCards(t, locked) {
     var cards = ['data', 'config'].map(function (k) {
       var p = R.PATHS[k];
       var on = F.path === k;
-      return '<button class="rej-path-card' + (on ? ' on' : '') + '" data-action="rej-path" data-path="' + k + '" ' +
-        'role="radio" aria-checked="' + (on ? 'true' : 'false') + '">' +
+      return '<button class="rej-path-card' + (on ? ' on' : '') + (locked ? ' locked' : '') + '"' +
+        (locked ? ' disabled' : ' data-action="rej-path" data-path="' + k + '"') +
+        ' role="radio" aria-checked="' + (on ? 'true' : 'false') + '"' +
+        (on || (k === 'data' && !F.path) ? '' : ' tabindex="-1"') + '>' +
         '<span class="rej-path-radio">' + icon(on ? 'circle-dot' : 'circle', 20) + '</span>' +
         '<span class="rej-path-body">' +
         '<span class="rej-path-title">' + esc(p.label) + '</span>' +
@@ -777,6 +851,17 @@ window.RejectsUI = function (kit) {
         icon('arrow-right', 13) +
         '<span class="rej-diff-new mono">' + (c.to === '' ? 'empty' : esc(c.to)) + '</span></div>';
     }).join('') + '</div>';
+  }
+
+  /* Part 3.4 — the Changes summary. Sits directly above the footer, sticks to
+     the bottom of the scroll area, and disappears entirely when clean. */
+  function changesBlock(t) {
+    var changes = draftChanges(t);
+    if (!changes.length) return '';
+    return '<div class="rej-changes">' +
+      '<div class="rej-changes-head"><strong>Changes (<span class="num">' + changes.length + '</span>)</strong>' +
+      '<button class="rej-reset-link" data-action="rej-reset-changes">Reset all changes</button></div>' +
+      diffBlock(t) + '</div>';
   }
 
   /* =======================================================================
@@ -827,10 +912,10 @@ window.RejectsUI = function (kit) {
     if (s.n === 3) return 'Next matching IRD for the same details (' + o.rank + ' of ' + s.options.length + ')';
     return 'Broader IRD — fewer conditions, more likely accepted';
   }
-  // Why a strategy cannot be used here, in one line and in plain language.
+  // Why a card cannot be used here, in one line and in plain language (4.4).
   function unavailableLine(s) {
     if (s.n === 1) return 'Not available — the reject file didn’t include a corrected product ID';
-    if (s.n === 2) return 'Not available — this card range maps to a single product ID';
+    if (s.n === 2) return 'Not available — this card range has only one product ID';
     if (s.n === 3) return 'Not available — only one IRD matches these details';
     return 'Not available for this transaction';
   }
@@ -842,29 +927,34 @@ window.RejectsUI = function (kit) {
     return idx >= 0 ? idx + 1 : null;
   }
 
-  /* ---- The four option cards (Part 4.5) -----------------------------------
-     All four render at once, selectable by radio. No accordion, no ladder, no
-     "next strategy" progression that hides the others: the analyst chooses,
-     and the cost of each choice is visible without expanding anything. */
-  function irdOptionCard(t, s, res, anchorFee) {
+  /* ---- The four option cards (Part 4.2–4.4) -------------------------------
+     All four render simultaneously, selectable by radio. No accordion, no
+     progressive reveal, no ladder. Unavailable and already-tried cards still
+     render — greyed, disabled, each with a one-line reason. Never hide a card.
+     The already-rejected exclusion was applied globally in resolveIrd, after
+     all four strategies computed, so a burned IRD is unpickable on every card
+     no matter which derivation produced it. */
+  function irdOptionCard(t, s, res, anchor) {
     var cur = t.currency;
     var staged = stagedIrd(t);
+    var c = res.ctx;
 
     // What this card offers: the untried option if there is one, otherwise the
     // one that was tried, so an exhausted strategy still shows its value.
     var o = s.next || s.options[0] || null;
-    var disabled = false, reason = '';
+    var disabled = false, tried = false, reason = '';
     if (!s.available) { disabled = true; reason = unavailableLine(s); o = null; }
     else if (!s.next) {
-      disabled = true;
+      disabled = true; tried = true;
       var att = o ? triedOnAttempt(res, o.ird) : null;
-      reason = 'Already tried — rejected' + (att ? ' on attempt ' + att : '') + '';
+      reason = 'Already tried — rejected' + (att ? ' on attempt ' + att : '');
     }
 
     var selected = !disabled && o && staged === o.ird;
-    var cls = 'ird-card' + (disabled ? ' disabled' : '') + (selected ? ' selected' : '') +
-      (s.recommended ? ' recommended' : '') + (s.n === 4 ? ' fallback' : '');
+    var cls = 'ird-card' + (disabled ? ' disabled' : '') + (tried ? ' tried' : '') +
+      (selected ? ' selected' : '') + (s.n === 4 ? ' fallback' : '');
 
+    // Value row: the IRD is the largest element; rate and fee right-aligned.
     var head = '<span class="ird-radio">' + icon(selected ? 'circle-dot' : 'circle', 20) + '</span>' +
       '<span class="ird-value mono">' + esc(o ? o.ird : '—') + '</span>' +
       '<span class="ird-nums">' +
@@ -873,29 +963,32 @@ window.RejectsUI = function (kit) {
       '</span>';
 
     var lines = '';
-    if (disabled) {
+    if (disabled && !tried) {
+      lines += '<div class="ird-why muted">' + esc(reason) + '</div>';
+    } else if (tried) {
       lines += '<div class="ird-why muted">' + esc(reason) + '</div>';
     } else {
       lines += '<div class="ird-why">' + esc(optionLine(s, o)) + '</div>';
-      // The recommended card carries the attributes the derivation matched on.
-      // This line is why the separate attributes card is gone, so it has to
-      // carry everything that card did: the filter set, the account range and
-      // the product ID the network corrected (Part 4.5 + Part 6).
-      if (s.recommended) {
-        var c = res.ctx;
+      // Detail line: matched attributes on card 1, product ID on card 2, the
+      // filter set's provenance on card 3 (Part 4.2).
+      if (s.n === 1) {
         var attrs = c.filters.slice();
-        attrs.push('Card range ' + c.panRange);
-        attrs.push(c.correctedGcms
-          ? 'Product ID ' + c.submittedGcms + ' corrected to ' + c.correctedGcms
-          : 'Product ID ' + c.submittedGcms + ' (no correction supplied)');
         lines += '<div class="ird-matches">Matches: ' + esc(attrs.join(' · ')) + '</div>';
+      } else if (s.n === 2 && o.gcms) {
+        lines += '<div class="ird-matches">Product ID ' + esc(o.gcms) + ' · account range ' + esc(c.panRange) + '</div>';
+      } else if (s.n === 3) {
+        lines += '<div class="ird-matches">Same filter set as the rejected derivation</div>';
+      }
+      // Marker line: ✓ Recommended on card 1 when it is usable (Part 4.2).
+      if (s.n === 1) {
         lines += '<div class="ird-rec">' + icon('check', 14) + 'Recommended</div>';
       }
     }
 
-    // Fee delta against the recommended option, on every card but that one.
-    if (!disabled && o && anchorFee != null && !s.recommended) {
-      var delta = o.fee - anchorFee;
+    // Fee delta on cards 2–4, against the anchor (card 1 when usable,
+    // otherwise the best precise candidate).
+    if (!disabled && o && anchor && s.n !== 1 && o.ird !== anchor.ird) {
+      var delta = o.fee - anchor.fee;
       if (s.n === 4) {
         lines += '<div class="ird-delta warn">' + icon('alert-triangle', 14) +
           '<span>' + (delta > 0 ? '+' : '') + esc(R.money(delta, cur)) + ' vs recommended · higher rate</span></div>';
@@ -945,22 +1038,24 @@ window.RejectsUI = function (kit) {
   function fold(id, action, open, title, sub, body) {
     return '<div class="rej-res-fold' + (open ? ' open' : '') + '">' +
       '<div class="rej-res-fold-head" data-action="' + action + '" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">' +
-      icon(open ? 'chevron-up' : 'chevron-down', 15) + '<strong>' + esc(title) + '</strong>' +
+      icon(open ? 'chevron-down' : 'chevron-right', 15) + '<strong>' + esc(title) + '</strong>' +
       (sub ? '<span class="meta">' + esc(sub) + '</span>' : '') + '</div>' +
       (open ? '<div class="rej-res-fold-body">' + body + '</div>' : '') + '</div>';
   }
 
-  /* ---- IRD resolution (Part 4.5) -----------------------------------------
-     Four strategies, four cards, one list. The ladder position indicator, the
-     separate fee comparison table and the transaction-attributes card are all
-     gone: the cards carry rate, fee, delta and the matched attributes inline,
-     which is what those three surfaces existed to say. */
+  /* ---- Part 4 · the IRD chooser -------------------------------------------
+     Sits at the top of the Path A editor, above the flagged-field block, and
+     replaces the plain IRD input. Four cards, all visible; manual entry and
+     previous attempts collapsed beneath. */
   function irdResolutionPanel(t) {
     var res = R.resolveIrd(t);
     if (!res) return '';
     var c = res.ctx;
     var submitted = c.rejected[c.rejected.length - 1];
-    var anchorFee = res.recommended && res.recommended.next ? res.recommended.next.fee : null;
+    // Deltas anchor on card 1 when it is usable — that is the card carrying
+    // the Recommended marker — falling back to the best precise candidate.
+    var s1 = res.strategies[0];
+    var anchor = (s1.available && s1.next) ? s1.next : res.bestPrecise;
 
     var head = '<div class="ird-head">' +
       '<div class="sp-section-head">Choose a replacement IRD</div>' +
@@ -968,7 +1063,7 @@ window.RejectsUI = function (kit) {
       '</div>';
 
     var cards = '<div class="ird-cards" role="radiogroup" aria-label="Replacement IRD">' +
-      res.strategies.map(function (s) { return irdOptionCard(t, s, res, anchorFee); }).join('') +
+      res.strategies.map(function (s) { return irdOptionCard(t, s, res, anchor); }).join('') +
       '</div>';
 
     var dead = res.dead
@@ -981,7 +1076,7 @@ window.RejectsUI = function (kit) {
       '<div class="rej-ird-manual-row">' +
       '<label class="field">IRD value<input class="input mono w-100" type="text" placeholder="e.g. YB" maxlength="3" ' +
       'value="' + esc(F.irdManual) + '" data-action="rej-i-ird-manual" /></label>' +
-      '<label class="field" style="flex:1">Why this value? <span class="req">required</span>' +
+      '<label class="field" style="flex:1">How did you derive this? <span class="req">required</span>' +
       '<input class="input" type="text" placeholder="e.g. Merchant is in the petrol programme, which the account range does not carry — MC interchange manual 2025-Q4 §4.3." ' +
       'value="' + esc(F.irdNote) + '" data-action="rej-i-ird-note" /></label>' +
       '<button class="btn btn-secondary" id="rej-ird-manual-btn" data-action="rej-ird-manual"' +
@@ -994,97 +1089,17 @@ window.RejectsUI = function (kit) {
     return '<div class="rej-res-panel">' + head + dead + cards +
       fold('rej-res-manual', 'rej-res-manual', F.irdManualOpen, 'Enter a different IRD', '', manualBody) +
       (t.attempts > 1
-        ? fold('rej-res-history', 'rej-res-history', F.irdHistory, 'Previous attempts', '', attemptHistory(t, res))
+        ? fold('rej-res-history', 'rej-res-history', F.irdHistory, 'Previous attempts (' + c.log.length + ')', '', attemptHistory(t, res))
         : '') +
       '</div>';
   }
 
-  /* ---- IRD recommendation panel (Part 4) -------------------------------- */
-  function irdPanel(t) {
-    var rec = R.recommend(t);
-    var current = t.fields.ird;
-    var confKind = rec.confidence === 'High' ? 'success' : (rec.confidence === 'Medium' ? 'warning' : 'danger');
-    var draftIrd = F.draft && F.draft.ird != null ? String(F.draft.ird) : current;
-
-    var attemptedBlock = rec.attempted.length
-      ? '<div class="rej-ird-attempted"><span class="rej-ird-sub">Previously attempted</span>' +
-      rec.attempted.map(function (code) {
-        return '<span class="rej-ird-dead mono" title="Submitted and rejected on an earlier attempt — excluded from the recommendations">' +
-          esc(code) + icon('x', 12) + '</span>';
-      }).join('') +
-      '<span class="meta">Excluded from the ranking below. The engine will not recommend an IRD this transaction has already burned.</span></div>'
-      : '';
-
-    var demoted = rec.demoted
-      ? '<div class="rej-ird-demoted">' + icon('info', 14) +
-      '<span>The engine’s first-choice IRD for these attributes was <code class="mono">' + esc(rec.excluded[0].code) +
-      '</code> — already attempted and re-rejected, so it is excluded and the next candidate is promoted below.</span></div>'
-      : '';
-
-    var top = rec.top
-      ? '<div class="rej-ird-rec">' +
-      '<div class="rej-ird-rec-head">' +
-      '<span class="rej-ird-label">Recommended</span>' +
-      '<span class="ird-code mono">' + esc(rec.top.code) + '</span>' +
-      pill(rec.confidence + ' confidence', confKind, rec.confidence === 'High' ? 'check-circle' : 'help-circle') +
-      '<button class="btn btn-primary btn-sm" style="margin-left:auto" data-action="rej-ird-apply" data-code="' + esc(rec.top.code) + '"' +
-      (draftIrd === rec.top.code ? ' disabled' : '') + '>' +
-      icon('check', 14) + (draftIrd === rec.top.code ? 'Applied' : 'Apply') + '</button>' +
-      '</div>' +
-      '<div class="rej-ird-desc">' + esc(rec.top.desc) + '</div>' +
-      (rec.top.why ? '<div class="rej-ird-why">' + icon('corner-down-right', 13) + esc('Ranked here ' + rec.top.why) + '</div>' : '') +
-      '<div class="rej-ird-matched"><span class="rej-ird-sub">Matched on</span>' +
-      rec.matched.map(function (m) {
-        var unknown = m.indexOf('unknown') >= 0;
-        return '<span class="rej-ird-chip' + (unknown ? ' unknown' : '') + '">' + esc(m) + '</span>';
-      }).join('') + '</div>' +
-      (rec.missing.length
-        ? '<div class="rej-ird-conf">' + icon('alert-triangle', 13) + '<span>Confidence is ' + rec.confidence.toLowerCase() + ' because ' +
-        rec.missing.length + ' attribute' + (rec.missing.length > 1 ? 's are' : ' is') + ' unresolved for this transaction (' +
-        esc(rec.missing.join(', ')) + '). Fill the field in above and the ranking sharpens.</span></div>'
-        : '') +
-      '</div>'
-      : '<div class="callout warn">' + icon('alert-triangle', 18) +
-      '<div class="callout-body">Every candidate for these attributes has already been attempted and rejected. Derive the IRD by hand against the Mastercard interchange manual and enter it below with a note.</div></div>';
-
-    var alts = rec.alternatives.length
-      ? '<div class="rej-ird-alts">' +
-      '<div class="rej-ird-sub">Alternatives — what would have to be different</div>' +
-      rec.alternatives.map(function (c) {
-        return '<div class="rej-ird-alt">' +
-          '<span class="ird-code mono">' + esc(c.code) + '</span>' +
-          '<div class="rej-ird-alt-body"><div class="rej-ird-alt-why">' + esc(c.why) + '</div>' +
-          '<div class="rej-ird-alt-desc">' + esc(c.desc) + '</div></div>' +
-          '<button class="btn btn-sm btn-secondary" data-action="rej-ird-apply" data-code="' + esc(c.code) + '"' +
-          (draftIrd === c.code ? ' disabled' : '') + '>' + (draftIrd === c.code ? 'Applied' : 'Apply') + '</button>' +
-          '</div>';
-      }).join('') + '</div>'
-      : '';
-
-    var manual = '<div class="rej-ird-manual">' +
-      '<div class="rej-ird-sub">Manual entry <span class="meta">— last resort, when every candidate above is wrong</span></div>' +
-      '<div class="rej-ird-manual-row">' +
-      '<label class="field">IRD value<input class="input mono w-100" type="text" placeholder="e.g. 34" value="' + esc(F.irdManual) + '" data-action="rej-i-ird-manual" /></label>' +
-      '<label class="field" style="flex:1">Derivation note <span class="req">required</span>' +
-      '<input class="input" type="text" placeholder="e.g. Manual derivation against MC interchange manual 2025-Q4 §4.3 — merchant is in the petrol programme, which the account range does not carry." ' +
-      'value="' + esc(F.irdNote) + '" data-action="rej-i-ird-note" /></label>' +
-      '<button class="btn btn-secondary" id="rej-ird-manual-btn" data-action="rej-ird-manual"' +
-      (F.irdManual.trim() && F.irdNote.trim() ? '' : ' disabled') + '>' + icon('pencil', 15) + 'Use this IRD</button>' +
-      '</div></div>';
-
-    return '<div class="rej-ird-panel">' +
-      '<div class="rej-ird-head">' + icon('sparkles', 16) + '<strong>IRD recommendation</strong>' +
-      '<span class="meta">Derived from this transaction’s attributes. Deterministic — the same transaction always ranks the same way.</span></div>' +
-      '<div class="rej-ird-current"><span class="rej-ird-sub">Submitted and rejected</span>' +
-      '<span class="ird-code mono rej-ird-bad">' + esc(current) + '</span>' +
-      '<span class="meta">' + esc(R.reasonText(t.reasonCode)) + '</span></div>' +
-      attemptedBlock + demoted + top + alts + manual +
-      '</div>';
-  }
-
-  /* Part 4.4 — the fix panel. Eyebrow header, scrolling body, pinned footer
-     (Part 2.4). Step 1 is the path choice; everything below it depends on the
-     answer, because the answer decides what "below" is. */
+  /* Part 2/6/7 — the fix panel. Eyebrow header, scrolling body, pinned footer.
+     Step 1 is the path choice; everything below it depends on the answer,
+     because the answer decides what "below" is. Three shapes:
+       edit       — the working panel (Part 2–5)
+       awaiting   — Path B locked read-back with re-derive in the footer
+       read-back  — an already-fixed transaction, changes shown, Reopen only */
   function editorPanel() {
     var t = editingTxn();
     if (!t) return '';
@@ -1093,23 +1108,7 @@ window.RejectsUI = function (kit) {
     var idx = editIndex();
     var changes = draftChanges(t);
     var raw = R.rawMessage(t);
-
-    /* A transaction already parked on a config change opens straight onto the
-       action that unblocks it: "nobody has looked at this" and "this is waiting
-       on someone else" are different problems and must not look alike. */
-    var awaitingBlock = t.status === 'awaiting_config' && t.configRequest
-      ? '<div class="rej-awaiting-box">' + icon('settings', 18) +
-      '<div class="rej-awaiting-body">' +
-      '<strong>Waiting on a config fix' + (t.configRequest.familyLabel ? ' · ' + esc(t.configRequest.familyLabel) : '') + '</strong>' +
-      '<div class="rej-awaiting-note">' + esc(t.configRequest.note) + '</div>' +
-      '<div class="meta">Raised by ' + esc(t.configRequest.by) + ' on <span class="num">' + esc(t.configRequest.at) + '</span>.</div></div>' +
-      '<div class="rej-awaiting-actions">' +
-      '<a class="rej-cfg-link" data-route="' + esc((R.configFamily(t.configRequest.family) || {}).route || '#/dashboard/ops/configs') + '">' +
-      'Open Platform Configs' + icon('arrow-right', 15) + '</a>' +
-      '<button class="btn btn-primary btn-sm" data-action="rej-rederive" data-id="' + t.id + '">' +
-      icon('refresh-cw', 16) + 'Config updated — re-derive</button>' +
-      '</div></div>'
-      : '';
+    var awaiting = t.status === 'awaiting_config';
 
     var attemptBlock = t.attempts > 1
       ? '<div class="rej-attempt-box">' + icon('rotate-ccw', 16) +
@@ -1135,21 +1134,20 @@ window.RejectsUI = function (kit) {
       '</div>' +
       (raw ? '<div class="rej-raw"><span class="rej-ird-sub">Network reject message</span><code class="mono">' + esc(raw) + '</code></div>' : '');
 
-    /* The IRD cards and the recommendation panel live inside the data path,
-       because applying an IRD is a transaction-data fix. When the fix is to the
-       derivation logic itself both are hidden — recommending a value for a
-       field you have just said is derived wrongly is the wrong tool. */
+    /* Part 2.2 — selection reveals the matching workflow directly beneath the
+       cards. The reveal wrapper carries a one-shot slide-and-fade; it replays
+       only when the selection itself changes, not on every re-render. */
+    var anim = F.pathAnim ? ' anim' : '';
     var workspace = '';
-    if (F.path === 'data') {
-      workspace =
+    if (F.readback) {
+      workspace = '<div class="rej-reveal">' + readBackBlock(t) + '</div>';
+    } else if (F.path === 'data') {
+      workspace = '<div class="rej-reveal' + anim + '">' +
         (ladderOn(t) ? irdResolutionPanel(t) : '') +
-        (R.isIrd(t.reasonCode) && !ladderOn(t) ? irdPanel(t) : '') +
         '<div class="sp-section-head">Transaction record</div>' +
-        fieldEditor(t) +
-        '<div class="sp-section-head">Change summary</div>' +
-        '<div id="rej-diff">' + diffBlock(t) + '</div>';
+        fieldEditor(t) + '</div>';
     } else if (F.path === 'config') {
-      workspace = configPathPanel(t);
+      workspace = '<div class="rej-reveal' + anim + '">' + configPathPanel(t) + '</div>';
     }
 
     var historyBlock = t.history.length
@@ -1173,12 +1171,34 @@ window.RejectsUI = function (kit) {
       }).join('') + '</div>'
       : '';
 
-    var canSave = F.path === 'data' && changes.length > 0;
-    var nextTarget = nextUncorrected();
+    /* Part 6.1 — the footer. Save fix and Save and next are one gate: nothing
+       is enabled until a fix type is chosen, and each path then supplies its
+       own condition and its own tooltip. */
+    var st = saveState(t);
+    var foot;
+    if (F.readback) {
+      foot = '<span style="flex:1"></span>' +
+        '<button class="btn btn-primary" data-action="rej-reopen">' + icon('pencil', 16) + 'Reopen for editing</button>';
+    } else if (awaiting) {
+      foot = '<button class="btn btn-secondary btn-sm" data-action="rej-wontfix-open">' + icon('ban', 16) + "Mark as won't fix" + '</button>' +
+        '<span style="flex:1"></span>' +
+        '<button class="btn btn-secondary" data-action="rej-cancel">Cancel</button>' +
+        '<button class="btn btn-primary" data-action="rej-rederive" data-id="' + t.id + '" ' +
+        'title="Recompute this transaction from the corrected config">' +
+        icon('refresh-cw', 16) + 'Config updated — re-derive</button>';
+    } else {
+      foot = '<button class="btn btn-secondary btn-sm" data-action="rej-wontfix-open">' + icon('ban', 16) + "Mark as won't fix" + '</button>' +
+        '<span style="flex:1"></span>' +
+        '<button class="btn btn-secondary" data-action="rej-cancel">Cancel</button>' +
+        '<button class="btn btn-secondary" id="rej-save-next" data-action="rej-save-next"' + (st.canSave && st.next ? '' : ' disabled') +
+        ' title="' + esc(st.nextTitle) + '">Save and next' + icon('arrow-right', 16) + '</button>' +
+        '<button class="btn btn-primary" id="rej-save" data-action="rej-save"' + (st.canSave ? '' : ' disabled') +
+        ' title="' + esc(st.saveTitle) + '">' + icon(F.path === 'config' ? 'settings' : 'save', 16) + esc(st.saveLabel) + '</button>';
+    }
 
     return sidePanel({
       wide: true, cls: 'rej-panel', close: 'rej-cancel',
-      eyebrow: 'Fix reject',
+      eyebrow: F.readback ? 'View fix' : 'Fix reject',
       name: arnCell(t.arn) + '<span class="sp-name-meta">' + esc(t.merchant) + '</span>',
       headExtra: '<div class="rej-panel-nav">' +
         '<span class="meta num">' + (idx + 1) + ' of ' + list.length + '</span>' +
@@ -1189,19 +1209,71 @@ window.RejectsUI = function (kit) {
         '<div class="rej-panel-status">' + statusPill(t) + manualTag(t.manualTag) +
         '<span class="meta">' + esc(lc(t.status).note) + '</span>' +
         '<span class="meta" style="margin-left:auto">Assigned to ' + (t.assignee ? esc(t.assignee) : '—') + '</span></div>' +
-        attemptBlock + ctx + awaitingBlock + pathCards(t) + workspace + historyBlock,
-      foot:
-        '<button class="btn btn-secondary btn-sm" data-action="rej-wontfix-open">' + icon('ban', 16) + "Mark as won't fix" + '</button>' +
-        '<span style="flex:1"></span>' +
-        '<button class="btn btn-secondary" data-action="rej-cancel">Cancel</button>' +
-        (F.path === 'config' ? '' :
-          '<button class="btn btn-secondary" id="rej-save-next" data-action="rej-save-next"' + (canSave && nextTarget ? '' : ' disabled') +
-          ' title="' + (nextTarget ? 'Save and open the next transaction still to fix' : 'Nothing left to fix in this batch') + '">' +
-          'Save and next' + icon('arrow-right', 16) + '</button>' +
-          '<button class="btn btn-primary" id="rej-save" data-action="rej-save"' + (canSave ? '' : ' disabled') +
-          ' title="' + (F.path ? 'Save the edited fields and mark this transaction fixed' : 'Choose what kind of fix this is first') + '">' +
-          icon('save', 16) + 'Save fix</button>')
+        attemptBlock + ctx + pathCards(t, F.readback || awaiting) + workspace + historyBlock +
+        (!F.readback && !awaiting && F.path === 'data'
+          ? '<div id="rej-diff" class="rej-changes-mount">' + changesBlock(t) + '</div>' : ''),
+      foot: foot
     });
+  }
+
+  /* What the footer's save buttons may do right now, and why not (Part 2.2,
+     3.5, 5, 6.1) — one computation shared by the render and the live refresh. */
+  function saveState(t) {
+    var next = nextUncorrected();
+    var out = { next: next };
+    if (F.readback || t.status === 'awaiting_config') {
+      out.canSave = false; out.saveLabel = 'Save fix'; out.saveTitle = ''; out.nextTitle = '';
+      return out;
+    }
+    if (!F.path) {
+      out.canSave = false; out.saveLabel = 'Save fix';
+      out.saveTitle = 'Choose a fix type first';
+      out.nextTitle = 'Choose a fix type first';
+      return out;
+    }
+    if (F.path === 'data') {
+      var changes = draftChanges(t);
+      var errCount = Object.keys(editorErrors(t)).length;
+      out.canSave = changes.length > 0 && !errCount;
+      out.saveLabel = 'Save fix';
+      out.saveTitle = !changes.length ? 'Change at least one value to save'
+        : (errCount ? 'Fix the errors above to save' : 'Save the fix and mark this transaction Fixed');
+    } else {
+      out.canSave = !!F.cfgNote.trim();
+      out.saveLabel = 'Mark as waiting on config';
+      out.saveTitle = out.canSave
+        ? 'Record the request and move this transaction to Awaiting config fix'
+        : 'Describe what needs to change first';
+    }
+    out.nextTitle = !next ? 'No more transactions to fix'
+      : (out.canSave ? 'Save, then load the next unfixed transaction without closing the panel' : out.saveTitle);
+    return out;
+  }
+
+  /* Part 7.2 — read-back for an already-fixed transaction: the changed fields
+     with old and new values, the correction note, and who saved it when. */
+  function readBackBlock(t) {
+    var h = null;
+    for (var i = t.history.length - 1; i >= 0; i--) {
+      if (['correction', 'rederive', 'wont_fix', 'config_request'].indexOf(t.history[i].kind) >= 0) { h = t.history[i]; break; }
+    }
+    if (!h) return '<div class="meta">No recorded correction on this transaction.</div>';
+    var rows = (h.changes || []).map(function (c) {
+      var def = R.FIELDS[c.field] || { label: c.field };
+      return '<div class="rej-diff-row"><span class="rej-diff-field">' + esc(def.label) + '</span>' +
+        '<span class="rej-diff-old mono">' + (c.from === '' ? 'empty' : esc(c.from)) + '</span>' +
+        icon('arrow-right', 13) +
+        '<span class="rej-diff-new mono">' + (c.to === '' ? 'empty' : esc(c.to)) + '</span></div>';
+    }).join('');
+    return '<div class="sp-section-head">What was changed</div>' +
+      '<div class="rej-readback">' +
+      (rows ? '<div class="rej-diff">' + rows + '</div>'
+        : '<div class="meta">' + (t.status === 'wont_fix'
+          ? 'Marked as won’t fix — no field was changed.'
+          : 'No field values changed.') + '</div>') +
+      (h.note ? '<div class="rej-history-note">' + esc(h.note) + '</div>' : '') +
+      '<div class="meta mt-8">Saved by ' + esc(h.by) + ' on <span class="num">' + esc(h.at) + '</span>.</div>' +
+      '</div>';
   }
 
   function nextUncorrected() {
@@ -1232,36 +1304,61 @@ window.RejectsUI = function (kit) {
     else if (m.kind === 'wont-fix') body = wontFixModal();
     else if (m.kind === 'history') body = historyModal();
     else if (m.kind === 'ird-fallback') body = fallbackConfirmModal();
+    else if (m.kind === 'discard') body = discardModal();
+    else if (m.kind === 'navsave') body = navSaveModal();
     if (!body) return '';
+    // No stopPropagation on the modal — the delegated click listener needs
+    // inner clicks to bubble; it refuses to resolve them to the backdrop.
     var dismissable = m.kind !== 'gen-running';
     return '<div class="overlay on-top"' + (dismissable ? ' data-action="rej-modal-close"' : '') + '>' +
-      '<div class="modal rej-modal" onclick="event.stopPropagation()">' + body + '</div></div>';
+      '<div class="modal rej-modal">' + body + '</div></div>';
   }
 
-  /* Strategy 4 confirmation (Part 3.5). The cost is stated in rupees on this
-     transaction before anything is populated — a rate percentage alone does not
-     read as money. */
+  /* Part 4.3 — the card 4 confirmation. The cost is stated in rupees on this
+     transaction before anything is populated — a rate percentage alone does
+     not read as money. */
   function fallbackConfirmModal() {
     var t = editingTxn(); if (!t) return '';
     var res = R.resolveIrd(t); if (!res || !res.s4.next) return '';
     var s4 = res.s4, o = s4.next, bp = s4.bestPrecise, cur = t.currency;
-    return '<div class="modal-head"><div class="section-title">Apply the broader IRD?</div>' +
+    return '<div class="modal-head"><div class="section-title">This IRD has a higher rate</div>' +
       '<button class="icon-btn" data-action="rej-modal-close" aria-label="Close">' + icon('x', 16) + '</button></div>' +
-      '<div class="rej-fallback-warn">' + icon('alert-triangle', 20) +
-      '<div><strong>This IRD carries a higher interchange rate — <span class="num">' + esc(R.money(s4.delta, cur)) +
-      '</span> more than the best precise candidate on this transaction. Continue?</strong>' +
-      '<div class="rr-grid">' +
-      '<span>Broader IRD</span><span class="mono num">' + esc(o.ird) + ' · ' + Number(o.rate).toFixed(2) + '% · ' + esc(R.money(o.fee, cur)) + '</span>' +
-      '<span>Best precise candidate</span><span class="mono num">' + esc(bp.ird) + ' · ' + Number(bp.rate).toFixed(2) + '% · ' + esc(R.money(bp.fee, cur)) + '</span>' +
-      '<span>Difference</span><span class="num rej-res-delta up">+' + esc(R.money(s4.delta, cur)) + '</span>' +
-      '<span>Drops filters</span><span>' + esc(res.ctx.broadDropped.join(', ')) + '</span>' +
-      '</div></div></div>' +
-      '<div class="meta mt-16">Applying still only stages the value — the correction is not committed until you click ' +
-      '<strong>Save correction</strong>.</div>' +
+      '<div class="meta mb-16"><span class="mono">' + esc(o.ird) + '</span> charges <span class="num">' + Number(o.rate).toFixed(2) +
+      '%</span> instead of <span class="num">' + Number(bp.rate).toFixed(2) + '%</span> — <strong class="num">' +
+      esc(R.money(s4.delta, cur)) + '</strong> more on this transaction. It’s more likely to be accepted because it matches on fewer conditions.</div>' +
       '<div class="row" style="justify-content:flex-end;gap:10px;margin-top:20px">' +
       '<button class="btn btn-secondary" data-action="rej-modal-close">Cancel</button>' +
-      '<button class="btn btn-primary rej-btn-warn" data-action="rej-res-apply-fallback">' +
-      icon('alert-triangle', 15) + 'Apply ' + esc(o.ird) + ' anyway</button></div>';
+      '<button class="btn btn-primary" data-action="rej-res-apply-fallback">Use this IRD</button></div>';
+  }
+
+  /* Part 6.1 — Cancel with unsaved changes. */
+  function discardModal() {
+    var t = editingTxn(); if (!t) return '';
+    var n = F.path === 'data' ? draftChanges(t).length : 0;
+    return '<div class="modal-head"><div class="section-title">Discard your changes?</div>' +
+      '<button class="icon-btn" data-action="rej-modal-close" aria-label="Close">' + icon('x', 16) + '</button></div>' +
+      '<div class="meta mb-16">' + (n
+        ? '<span class="num">' + n + '</span> field' + (n === 1 ? '' : 's') + ' ' + (n === 1 ? 'has' : 'have') + ' been edited but not saved.'
+        : 'Your note has not been saved.') + ' Closing now throws that away.</div>' +
+      '<div class="row" style="justify-content:flex-end;gap:10px;margin-top:16px">' +
+      '<button class="btn btn-secondary" data-action="rej-modal-close">Keep editing</button>' +
+      '<button class="btn btn-danger" data-action="rej-discard">Discard</button></div>';
+  }
+
+  /* Part 7.1 — prev/next with unsaved changes. */
+  function navSaveModal() {
+    var t = editingTxn(); if (!t) return '';
+    var st = saveState(t);
+    return '<div class="modal-head"><div class="section-title">Save your changes before moving on?</div>' +
+      '<button class="icon-btn" data-action="rej-modal-close" aria-label="Close">' + icon('x', 16) + '</button></div>' +
+      '<div class="meta mb-16">This transaction has unsaved changes. Moving to another transaction without saving discards them.</div>' +
+      (!st.canSave && F.path === 'data'
+        ? '<div class="callout warn">' + icon('alert-triangle', 16) + '<div class="callout-body">' + esc(st.saveTitle) + '</div></div>'
+        : '') +
+      '<div class="row" style="justify-content:flex-end;gap:10px;margin-top:16px">' +
+      '<button class="btn btn-secondary" data-action="rej-nav-discard">Discard</button>' +
+      '<button class="btn btn-secondary" data-action="rej-modal-close">Cancel</button>' +
+      '<button class="btn btn-primary" data-action="rej-nav-save"' + (st.canSave ? '' : ' disabled') + '>Save and continue</button></div>';
   }
 
   /* §C.5 — the confirmation states what the file will contain, in the terms of
@@ -1282,13 +1379,13 @@ window.RejectsUI = function (kit) {
     var ledger = replacement
       ? '<div class="rej-gen-ledger">' +
       '<div class="rej-gen-line"><span>Total transactions in file</span><span class="num">' + num(plan.total) + '</span></div>' +
-      '<div class="rej-gen-line"><span>Corrected transactions</span><span class="num">' + plan.corrected + '</span></div>' +
+      '<div class="rej-gen-line"><span>Fixed transactions</span><span class="num">' + plan.corrected + '</span></div>' +
       '<div class="rej-gen-line"><span>Unchanged transactions</span><span class="num">' + num(plan.unchanged) + '</span></div>' +
       '<div class="rej-gen-line total"><span>Total value</span><span class="num">' + fmt(plan.value, 2, b.currency) + '</span></div>' +
       '</div>'
       : '<div class="rej-gen-ledger">' +
-      '<div class="rej-gen-line"><span>Corrected transactions to include</span><span class="num">' + plan.corrected + '</span></div>' +
-      '<div class="rej-gen-line"><span>Still uncorrected (excluded)</span><span class="num">' + plan.uncorrected + '</span></div>' +
+      '<div class="rej-gen-line"><span>Fixed transactions to include</span><span class="num">' + plan.corrected + '</span></div>' +
+      '<div class="rej-gen-line"><span>Still unfixed (excluded)</span><span class="num">' + plan.uncorrected + '</span></div>' +
       '<div class="rej-gen-line total"><span>Total value</span><span class="num">' + fmt(plan.value, 2, b.currency) + '</span></div>' +
       '</div>';
 
@@ -1329,7 +1426,7 @@ window.RejectsUI = function (kit) {
       (plan.uncorrected
         ? '<div class="callout warn mt-16">' + icon('alert-triangle', 18) +
         '<div class="callout-body"><span class="num">' + plan.uncorrected + '</span> transaction' + (plan.uncorrected > 1 ? 's remain' : ' remains') +
-        ' uncorrected and will not be corrected in this file. ' + (replacement
+        ' unfixed and will not be corrected in this file. ' + (replacement
           ? 'They go out unchanged and will be refused again.'
           : 'They stay in this batch and can go out in a later retry.') + '</div></div>'
         : '') +
@@ -1376,7 +1473,7 @@ window.RejectsUI = function (kit) {
         g.kind === 'replacement' ? 'danger' : 'info', g.kind === 'replacement' ? 'files' : 'file-plus') + '</span>' +
       '<span>Transactions in file</span><span class="num">' + num(g.count) + '</span>' +
       (replacement
-        ? '<span>Corrected in place</span><span class="num">' + (g.corrected || 0) + '</span>' +
+        ? '<span>Fixed in place</span><span class="num">' + (g.corrected || 0) + '</span>' +
         '<span>Unchanged</span><span class="num">' + num(g.unchanged || 0) + '</span>'
         : '') +
       '<span>Total value</span><span class="num">' + fmt(g.value, 2, g.currency) + '</span>' +
@@ -1428,9 +1525,9 @@ window.RejectsUI = function (kit) {
       esc(R.reasonText(t.reasonCode)) + statusPill(t, false) + '</div>' +
       '<div class="meta mt-16 mb-16">' + (changes.length
         ? 'The corrected configuration produced ' + changes.length + ' new value' + (changes.length > 1 ? 's' : '') +
-        ' for this transaction. It has moved to <strong>Corrected</strong> and now counts towards the next clearing file.'
+        ' for this transaction. It has moved to <strong>Fixed</strong> and now counts towards the next clearing file.'
         : 'The corrected configuration produces the same values for this transaction — nothing on the record changed. ' +
-        'It has moved to <strong>Corrected</strong> so it is no longer blocked.') + '</div>' +
+        'It has moved to <strong>Fixed</strong> so it is no longer blocked.') + '</div>' +
       (changes.length
         ? '<div class="rej-diff">' + changes.map(function (c) {
           var def = R.FIELDS[c.field] || { label: c.field };
@@ -1503,6 +1600,17 @@ window.RejectsUI = function (kit) {
      ======================================================================= */
   function rerender() { return F.batchId ? viewBatch() : viewOverview(); }
 
+  // Which states open as read-back rather than as an editable fix (Part 7.2).
+  var READBACK_STATES = ['corrected', 'regenerated', 'resubmitted', 'cleared', 'wont_fix'];
+  // The path the last recorded fix took — what read-back pre-selects.
+  function savedPath(t) {
+    for (var i = t.history.length - 1; i >= 0; i--) {
+      if (t.history[i].path) return t.history[i].path;
+      if (t.history[i].kind === 'correction') return 'data';
+    }
+    return null;
+  }
+
   function openEditor(id, keepOrder) {
     var t = R.txnById[id]; if (!t) return;
     var b = currentBatch();
@@ -1512,14 +1620,20 @@ window.RejectsUI = function (kit) {
     F.editing = id;
     F.editFrom = t.status;
     F.draft = {};
+    F.touched = {};
+    F.fgroups = {};
     R.ALL_FIELDS.forEach(function (k) { F.draft[k] = t.fields[k] == null ? '' : String(t.fields[k]); });
-    // §C.6 — the path is declared per transaction, never carried over from the
-    // last one. A transaction already parked on a config change reopens on that
-    // path with its note intact, because that is the conversation in progress.
+    // The path is declared per transaction, never carried over from the last
+    // one. A transaction parked on a config change reopens on Path B with its
+    // note read-only; an already-fixed one opens read-back on its saved path.
+    F.readback = READBACK_STATES.indexOf(t.status) >= 0;
     if (t.status === 'awaiting_config' && t.configRequest) {
       F.path = 'config';
       F.cfgNote = t.configRequest.note || '';
       F.cfgFamily = t.configRequest.family || '';
+    } else if (F.readback) {
+      F.path = savedPath(t);
+      F.cfgNote = ''; F.cfgFamily = '';
     } else {
       F.path = null; F.cfgNote = ''; F.cfgFamily = '';
     }
@@ -1527,7 +1641,7 @@ window.RejectsUI = function (kit) {
     F.irdCards = {}; F.irdHistory = false; F.irdManualOpen = false; F.irdApplied = null;
     // NEW ──edit──▶ UNDER CORRECTION. A re-reject keeps its attempt count, so it
     // still sorts to the top while someone is working it. A transaction awaiting
-    // a config fix keeps its state — opening it is not working it.
+    // a config fix — or opened read-back — keeps its state.
     if (t.status === 'new' || t.status === 're_rejected') t.status = 'under_correction';
     viewBatch();
   }
@@ -1538,23 +1652,49 @@ window.RejectsUI = function (kit) {
     F.path = null; F.cfgNote = ''; F.cfgFamily = '';
     F.irdManual = ''; F.irdNote = '';
     F.irdCards = {}; F.irdHistory = false; F.irdManualOpen = false; F.irdApplied = null;
+    F.touched = {}; F.readback = false; F.pathAnim = false;
     if (!keepOrder) F.navOrder = null;
   }
+
+  // Unsaved work the prompts protect (Part 6.1, 7.1).
+  function hasUnsaved() {
+    var t = editingTxn(); if (!t || F.readback) return false;
+    if (F.path === 'data') return draftChanges(t).length > 0;
+    if (F.path === 'config') return t.status !== 'awaiting_config' && !!F.cfgNote.trim();
+    return false;
+  }
+
+  /* Part 6.2 — what saving does, per path. Returns true when the save
+     committed; the caller decides whether the panel closes or advances. */
   function doSave() {
     var t = editingTxn(); if (!t) return false;
-    if (F.path !== 'data') { toast('Choose “Update transaction data” to edit fields here', 'info'); return false; }
+    if (F.path === 'config') {
+      if (!F.cfgNote.trim()) { toast('Describe what needs to change — the note is what the config owner works from', 'info'); return false; }
+      R.markAwaitingConfig(t, F.cfgNote.trim(), F.cfgFamily || null, WHO);
+      if (!t.assignee) t.assignee = WHO;
+      return true;
+    }
+    if (F.path !== 'data') { toast('Choose a fix type first', 'info'); return false; }
     var changes = draftChanges(t);
-    if (!changes.length) { toast('Change at least one field before saving', 'info'); return false; }
-    // A ladder application carries its own generated reasoning note (Part 3.5);
-    // it only counts if the draft still holds the IRD that application staged.
+    if (!changes.length) { toast('Change at least one value to save', 'info'); return false; }
+    var errs = editorErrors(t);
+    if (Object.keys(errs).length) {
+      // Save attempt paints every error, not just the blurred ones (Part 3.5).
+      Object.keys(errs).forEach(function (k) { F.touched[k] = true; });
+      viewBatch();
+      toast('Fix the errors above to save', 'info');
+      return false;
+    }
+    // A chooser application carries its own generated derivation note (Part
+    // 4.7); it only counts if the draft still holds the IRD it staged.
     var applied = F.irdApplied && F.draft && String(F.draft.ird) === F.irdApplied.ird ? F.irdApplied : null;
     var note = applied ? applied.note
       : (F.irdNote.trim() ? 'Manual IRD derivation — ' + F.irdNote.trim() : null);
     var at = R.nowStamp();
     var irdChanged = changes.filter(function (c) { return c.field === 'ird'; })[0];
     R.saveCorrection(t, changes, note, WHO, at, 'data');
-    // Every committed IRD change on a ladder transaction becomes a row. An
-    // analyst who bypassed the ladder and typed into the field directly is
+    // Every committed IRD change on a chooser transaction becomes a row. An
+    // analyst who bypassed the chooser and typed into the field directly is
     // still on attempt N — leaving that out would make the history a record of
     // the panel rather than of the transaction.
     if (ladderOn(t) && irdChanged) {
@@ -1569,30 +1709,43 @@ window.RejectsUI = function (kit) {
     if (!t.assignee) t.assignee = WHO;
     return true;
   }
+  function saveToast(t) {
+    return F.path === 'config'
+      ? t.arn + ' moved to Awaiting config fix — excluded from the generate count'
+      : 'Fix saved — ' + t.arn + ' is now Fixed';
+  }
 
-  /* ---- Applying a ladder candidate (Part 3.5) ----------------------------
-     Applying populates the IRD field below and records the reasoning. It does
-     not commit anything — Save correction still has to be clicked. */
+  // Prev/next through the batch in table order (Part 7.1).
+  function navGo(dir) {
+    var list = editableList(), i = editIndex();
+    var j = dir === 'prev' ? i - 1 : i + 1;
+    if (j < 0 || j >= list.length) return;
+    closeEditor(true, true);
+    openEditor(list[j].id, true);
+  }
+
+  /* ---- Part 4.7 · selecting a chooser card --------------------------------
+     Populates the IRD field below, marks it Changed, and attaches the
+     derivation note. Nothing is saved until Save fix. */
   function applyStrategy(n) {
     var t = editingTxn(); if (!t || !F.draft) return;
     var res = R.resolveIrd(t); if (!res) return;
     var s = res.strategies[n - 1];
-    if (!s || !s.next) { toast('Strategy ' + n + ' has nothing left to apply', 'info'); return; }
+    if (!s || !s.next) { toast('That option has nothing left to offer', 'info'); return; }
     F.draft.ird = s.next.ird;
     F.irdApplied = { strategy: n, ird: s.next.ird, note: R.irdApplyNote(t, n, s.next), manual: false };
     F.irdManual = ''; F.irdNote = '';
-    F.irdCards[n] = true;
-    toast('IRD ' + s.next.ird + ' applied via strategy ' + n + ' — Save correction to commit it', 'success');
+    toast('IRD ' + s.next.ird + ' staged — Save fix to commit it', 'success');
     viewBatch();
   }
-  // Live typing must not re-render the panel (it would drop focus), so only the
-  // diff block and the save buttons refresh.
+  // Live typing must not re-render the panel (it would drop focus), so only
+  // the Changes summary and the footer buttons refresh.
   function refreshDiff() {
     var t = editingTxn(); if (!t) return;
-    remount('rej-diff', diffBlock(t));
-    var can = draftChanges(t).length > 0;
-    var s = el('rej-save'); if (s) s.disabled = !can;
-    var sn = el('rej-save-next'); if (sn) sn.disabled = !can || !nextUncorrected();
+    remount('rej-diff', changesBlock(t));
+    var st = saveState(t);
+    var s = el('rej-save'); if (s) { s.disabled = !st.canSave; s.title = st.saveTitle; }
+    var sn = el('rej-save-next'); if (sn) { sn.disabled = !st.canSave || !st.next; sn.title = st.nextTitle; }
   }
 
   function exportCsv(b) {
@@ -1622,7 +1775,8 @@ window.RejectsUI = function (kit) {
     'rej-clear-q': function () { F.q = ''; viewBatch(); },
     'rej-fgroup': function (t) {
       var g = t.getAttribute('data-group');
-      F.fgroups[g] = F.fgroups[g] === false;
+      var txn = editingTxn(); if (!txn) return;
+      F.fgroups[g] = !groupOpen(g, R.flaggedFields(txn));
       viewBatch();
     },
     'rej-c-network': function (t) { F.network = t.value; viewOverview(); },
@@ -1716,36 +1870,69 @@ window.RejectsUI = function (kit) {
 
     /* ---- correction editor ---- */
     'rej-edit': function (t) { openEditor(t.getAttribute('data-id')); },
-    'rej-cancel': function () { closeEditor(true); viewBatch(); },
+    'rej-cancel': function () {
+      // Part 6.1 — Cancel discards, but never silently.
+      if (hasUnsaved()) { F.modal = { kind: 'discard' }; viewBatch(); return; }
+      closeEditor(true); viewBatch();
+    },
+    'rej-discard': function () { F.modal = null; closeEditor(true); viewBatch(); },
     'rej-prev': function () {
-      var list = editableList(), i = editIndex();
-      if (i > 0) { closeEditor(true, true); openEditor(list[i - 1].id, true); }
+      var i = editIndex();
+      if (i <= 0) return;
+      if (hasUnsaved()) { F.modal = { kind: 'navsave', dir: 'prev' }; viewBatch(); return; }
+      navGo('prev');
     },
     'rej-next': function () {
       var list = editableList(), i = editIndex();
-      if (i >= 0 && i < list.length - 1) { closeEditor(true, true); openEditor(list[i + 1].id, true); }
+      if (i < 0 || i >= list.length - 1) return;
+      if (hasUnsaved()) { F.modal = { kind: 'navsave', dir: 'next' }; viewBatch(); return; }
+      navGo('next');
     },
-    /* ---- correction path (§C.6) ---- */
-    'rej-path': function (t) {
-      var p = t.getAttribute('data-path');
-      F.path = (F.path === p) ? null : p;
+    // Part 7.1 — the three-way prompt on prev/next with unsaved changes.
+    'rej-nav-discard': function () {
+      var dir = F.modal && F.modal.dir; F.modal = null;
+      if (dir) navGo(dir); else viewBatch();
+    },
+    'rej-nav-save': function () {
+      var dir = F.modal && F.modal.dir; F.modal = null;
+      var t = editingTxn();
+      if (!doSave()) { viewBatch(); return; }
+      toast(saveToast(t), 'success');
+      if (dir) navGo(dir); else viewBatch();
+    },
+    // Part 7.2 — read-back's single action: restore the editable state.
+    'rej-reopen': function () {
+      var t = editingTxn(); if (!t) return;
+      F.readback = false;
+      F.touched = {};
+      if (t.status === 'wont_fix' || !F.path) F.path = F.path || 'data';
       viewBatch();
+    },
+    /* ---- Part 2 · the fix-type radio group ---- */
+    'rej-path': function (t) {
+      if (F.readback) return;
+      var txn = editingTxn();
+      if (txn && txn.status === 'awaiting_config') return;
+      var p = t.getAttribute('data-path');
+      if (F.path === p) return;                     // radio: reselecting is a no-op
+      F.path = p;
+      F.pathAnim = true;                            // one-shot reveal transition
+      viewBatch();
+      F.pathAnim = false;
+      // Part 3.1 — the flagged input is pre-focused when the section opens.
+      var focus = p === 'data'
+        ? document.querySelector('.rej-flag-block .input:not([disabled])')
+        : document.querySelector('.rej-cfg-note textarea');
+      if (focus) focus.focus();
     },
     'rej-i-cfg-note': function (t) {
       F.cfgNote = t.value;
-      var b = el('rej-cfg-mark'); if (b) b.disabled = !t.value.trim();
+      var txn = editingTxn(); if (!txn) return;
+      var st = saveState(txn);
+      var s = el('rej-save'); if (s) { s.disabled = !st.canSave; s.title = st.saveTitle; }
+      var sn = el('rej-save-next'); if (sn) { sn.disabled = !st.canSave || !st.next; sn.title = st.nextTitle; }
     },
     'rej-c-cfg-family': function (t) { F.cfgFamily = t.value; viewBatch(); },
-    'rej-mark-config': function () {
-      var t = editingTxn(); if (!t) return;
-      if (!F.cfgNote.trim()) { toast('Describe what needs to change — the note is what the config owner works from', 'info'); return; }
-      R.markAwaitingConfig(t, F.cfgNote.trim(), F.cfgFamily === 'code' ? null : F.cfgFamily, WHO);
-      if (!t.assignee) t.assignee = WHO;
-      var arn = t.arn;
-      closeEditor(false);
-      toast(arn + ' moved to Awaiting config fix — excluded from the regenerate count', 'success');
-      viewBatch();
-    },
     // Mocked recompute against the corrected config (§C.6). Real re-derivation
     // is a backend job; the progress and the resulting diff are what an analyst
     // needs to see either way.
@@ -1766,54 +1953,87 @@ window.RejectsUI = function (kit) {
           clearInterval(timer);
           var changes = R.rederive(txn, WHO);
           F.modal = { kind: 'rederive', txnId: id, phase: 'done', changes: changes };
-          toast(txn.arn + ' re-derived — now Corrected', 'success');
+          toast(txn.arn + ' re-derived — now Fixed', 'success');
         }
         viewBatch();
       }, 150);
     },
+    /* ---- Part 3 · live editing ------------------------------------------
+       Typing updates the draft and the Changed chip / left border in place —
+       a full re-render would drop focus mid-keystroke. Validation paints on
+       blur (rej-blur-field, wired through the focusout delegate). */
     'rej-i-field': function (t) {
-      F.draft[t.getAttribute('data-field')] = t.value;
+      var key = t.getAttribute('data-field');
+      F.draft[key] = t.value;
+      var txn = editingTxn(); if (!txn) return;
+      var wrap = document.querySelector('[data-fieldwrap="' + key + '"]');
+      if (wrap) {
+        var cur = txn.fields[key] == null ? '' : String(txn.fields[key]);
+        wrap.classList.toggle('changed', t.value !== cur);
+        // A field being retyped sheds its painted error until the next blur.
+        if (F.touched[key] && !fieldError(txn, key)) {
+          wrap.classList.remove('invalid');
+          var e = wrap.querySelector('[data-errfor]'); if (e) e.textContent = '';
+        }
+      }
+      refreshDiff();
+    },
+    'rej-blur-field': function (t) {
+      var key = t.getAttribute('data-field');
+      var txn = editingTxn(); if (!txn || F.readback) return;
+      F.touched[key] = true;
+      var err = fieldError(txn, key);
+      var wrap = document.querySelector('[data-fieldwrap="' + key + '"]');
+      if (wrap) {
+        wrap.classList.toggle('invalid', !!err);
+        var e = wrap.querySelector('[data-errfor]'); if (e) e.textContent = err || '';
+      }
       refreshDiff();
     },
     'rej-c-field': function (t) {
       F.draft[t.getAttribute('data-field')] = t.value;
+      F.touched[t.getAttribute('data-field')] = true;
       viewBatch();
     },
+    'rej-reset-changes': function () {
+      var t = editingTxn(); if (!t) return;
+      R.ALL_FIELDS.forEach(function (k) { F.draft[k] = t.fields[k] == null ? '' : String(t.fields[k]); });
+      F.touched = {};
+      F.irdApplied = null; F.irdManual = ''; F.irdNote = '';
+      viewBatch();
+    },
+    /* ---- Part 6 · save ---- */
     'rej-save': function () {
+      var t = editingTxn(); if (!t) return;
       if (!doSave()) return;
-      var arn = editingTxn().arn;
+      var msg = saveToast(t);
       closeEditor(false);
-      toast('Correction saved — ' + arn + ' is now Corrected', 'success');
+      toast(msg, 'success');
       viewBatch();
     },
     'rej-save-next': function () {
+      var t = editingTxn(); if (!t) return;
       var nxt = nextUncorrected();
       if (!doSave()) return;
+      var msg = saveToast(t);
       closeEditor(false, !!nxt);
-      if (nxt) { openEditor(nxt.id, true); toast('Saved — next uncorrected transaction loaded', 'success'); }
-      else { toast('Saved — no uncorrected transaction left in this batch', 'success'); viewBatch(); }
+      if (nxt) { openEditor(nxt.id, true); toast(msg + ' — next unfixed transaction loaded', 'success'); }
+      else { toast(msg + ' — nothing left to fix in this batch', 'success'); viewBatch(); }
     },
 
-    /* ---- IRD Resolution ladder ---- */
+    /* ---- Part 4 · the IRD chooser ---- */
     'rej-res-manual': function () { F.irdManualOpen = !F.irdManualOpen; viewBatch(); },
     'rej-res-history': function () { F.irdHistory = !F.irdHistory; viewBatch(); },
     'rej-res-apply': function (t) {
       var n = parseInt(t.getAttribute('data-n'), 10);
       var res = R.resolveIrd(editingTxn());
       var s = res && res.strategies[n - 1];
-      if (!s || !s.next) { toast('Strategy ' + n + ' has nothing left to apply', 'info'); return; }
-      // Strategy 4 trades money for acceptance, so it is never one click away.
+      if (!s || !s.next) { toast('That option has nothing left to offer', 'info'); return; }
+      // Card 4 trades money for acceptance, so it is never one click away (4.3).
       if (n === 4) { F.modal = { kind: 'ird-fallback' }; viewBatch(); return; }
       applyStrategy(n);
     },
     'rej-res-apply-fallback': function () { F.modal = null; applyStrategy(4); },
-
-    /* ---- IRD recommendation panel ---- */
-    'rej-ird-apply': function (t) {
-      if (!F.draft) return;
-      F.draft.ird = t.getAttribute('data-code');
-      viewBatch();
-    },
     'rej-i-ird-manual': function (t) {
       F.irdManual = t.value;
       var b = el('rej-ird-manual-btn'); if (b) b.disabled = !(F.irdManual.trim() && F.irdNote.trim());
@@ -1838,11 +2058,11 @@ window.RejectsUI = function (kit) {
         }
         F.irdApplied = {
           strategy: null, ird: v, manual: true,
-          note: 'Manually entered IRD ' + v + ' — ' + F.irdNote.trim()
+          note: 'IRD ' + v + ' — manual entry: ' + F.irdNote.trim()
         };
       }
       F.draft.ird = v;
-      toast('Manual IRD ' + v + ' staged — save to record it with your note', 'success');
+      toast('Manual IRD ' + v + ' staged — Save fix to record it with your note', 'success');
       viewBatch();
     },
 
@@ -1855,10 +2075,15 @@ window.RejectsUI = function (kit) {
     'rej-wontfix': function () {
       var t = R.txnById[F.modal.txnId];
       if (!t || !(F.modal.note || '').trim()) { toast('A note is required', 'info'); return; }
+      // Part 6.1 — mark, close the modal, and advance to the next transaction
+      // still to fix; the panel closes only when nothing is left.
+      var wasEditing = F.editing === t.id;
+      var nxt = wasEditing ? nextUncorrected() : null;
       R.markWontFix(t, F.modal.note.trim(), WHO);
-      F.modal = null; closeEditor(false);
-      toast(t.arn + " marked as won't fix", 'success');
-      viewBatch();
+      F.modal = null;
+      closeEditor(false, !!nxt);
+      toast(t.arn + " marked as won't fix — excluded from the generate count", 'success');
+      if (nxt) openEditor(nxt.id, true); else viewBatch();
     },
     'rej-history': function (t) { F.modal = { kind: 'history', txnId: t.getAttribute('data-id') }; viewBatch(); },
     'rej-modal-close': function () { F.modal = null; viewBatch(); },
@@ -1866,7 +2091,7 @@ window.RejectsUI = function (kit) {
     /* ---- generate corrected clearing file ---- */
     'rej-gen-open': function () {
       var b = currentBatch(); if (!b) return;
-      if (!R.correctedTxns(b).length) { toast('Correct at least one transaction first', 'info'); return; }
+      if (!R.correctedTxns(b).length) { toast('Fix at least one transaction first', 'info'); return; }
       closeEditor(true);
       F.modal = { kind: 'gen-confirm' };
       viewBatch();

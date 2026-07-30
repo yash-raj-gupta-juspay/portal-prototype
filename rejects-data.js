@@ -57,7 +57,7 @@ window.REJDATA = (function () {
       label: 'Awaiting config fix', kind: 'warning', icon: 'settings', order: 3, open: true,
       note: 'Blocked on a config or code change — the fix lives in Platform Configs, not on this transaction'
     },
-    corrected: { label: 'Corrected', kind: 'warning', icon: 'check', order: 4, open: true, note: 'Fields updated, clearing file not yet regenerated' },
+    corrected: { label: 'Fixed', kind: 'success', icon: 'check', order: 4, open: true, note: 'Fields updated, clearing file not yet regenerated' },
     regenerated: { label: 'Regenerated', kind: 'info', icon: 'file-plus', order: 5, open: true, note: 'New clearing file produced, not yet submitted' },
     resubmitted: { label: 'Resubmitted', kind: 'neutral', icon: 'send', order: 6, open: true, note: 'File sent to network, awaiting confirmation' },
     cleared: { label: 'Cleared', kind: 'success', icon: 'check-circle', order: 7, open: false, note: 'Confirmed accepted in a subsequent cycle' },
@@ -140,19 +140,19 @@ window.REJDATA = (function () {
     '0104': 'DE026 CARD ACCEPTOR BUSINESS CODE {mcc} NOT IN ISO 18245 TABLE — GCMS EDIT 0104',
     '0117': 'DE004 TRANSACTION AMOUNT FAILS RANGE EDIT FOR DE049 {currency} — GCMS EDIT 0117',
     '0142': 'DE031 ACQUIRER REFERENCE DATA CHECK DIGIT INVALID — GCMS EDIT 0142',
-    '0208': 'DE043 CARD ACCEPTOR NAME/LOCATION INCOMPLETE — MANDATORY SUBFIELD ABSENT — GCMS EDIT 0208',
+    '0208': 'DE038 AUTHORIZATION ID RESPONSE ABSENT — MANDATORY DATA ELEMENT MISSING — GCMS EDIT 0208',
     '0311': 'DE063 CARD PRODUCT CODE "{cardProduct}" NOT DEFINED FOR ISSUER ACCOUNT RANGE — GCMS EDIT 0311',
     '0501': 'TCR0 PURCHASE DATE {txnDate} OUTSIDE PERMITTED PRESENTMENT WINDOW — V.I.P. EDIT 0501',
     '0512': 'TCR0 TRANSACTION AMOUNT DOES NOT MATCH AUTHORIZED AMOUNT {authAmount} — V.I.P. EDIT 0512',
     '0523': 'TCR0 MERCHANT CATEGORY CODE {mcc} INVALID FOR ACQUIRER BIN {acquirerBin} — V.I.P. EDIT 0523',
-    '0541': 'TCR1 REQUIRED FIELD MERCHANT NAME/CITY NOT PRESENT — V.I.P. EDIT 0541',
+    '0541': 'TCR1 REQUIRED FIELD MERCHANT NAME NOT PRESENT — V.I.P. EDIT 0541',
     '0567': 'TCR0 ACQUIRING INSTITUTION ID {acquirerBin} NOT REGISTERED FOR THIS BIN RANGE — V.I.P. EDIT 0567',
-    '0588': 'TCR0 TRANSACTION IDENTIFIER {txnRef} ALREADY PRESENTED IN CYCLE — V.I.P. EDIT 0588',
+    '0588': 'TCR0 TRANSACTION IDENTIFIER {rrn} ALREADY PRESENTED IN CYCLE — V.I.P. EDIT 0588',
     'R012': 'DE018 MERCHANT CATEGORY CODE {mcc} NOT IN NPCI ACCEPTED LIST — RUPAY EDIT R012',
-    'R024': 'DE043 CARD ACCEPTOR CITY/POSTAL CODE ABSENT FOR DOMESTIC PRESENTMENT — RUPAY EDIT R024',
+    'R024': 'DE043 CARD ACCEPTOR COUNTRY ABSENT FOR DOMESTIC PRESENTMENT — RUPAY EDIT R024',
     'R031': 'DE005 SETTLEMENT AMOUNT DOES NOT MATCH DE004 TRANSACTION AMOUNT {amount} — RUPAY EDIT R031',
     'R047': 'DE032 ACQUIRING INSTITUTION ID {acquirerBin} NOT REGISTERED WITH NPCI — RUPAY EDIT R047',
-    'R053': 'DE037 RETRIEVAL REFERENCE {txnRef} ALREADY PRESENTED IN THIS CYCLE — RUPAY EDIT R053'
+    'R053': 'DE037 RETRIEVAL REFERENCE {rrn} ALREADY PRESENTED IN THIS CYCLE — RUPAY EDIT R053'
   };
   function rawMessage(txn) {
     var tpl = RAW[txn.reasonCode];
@@ -161,90 +161,237 @@ window.REJDATA = (function () {
   }
 
   /* =======================================================================
-     3 · Editable field catalogue + reason-code → field lookup (Part 3.3)
+     3 · The entity transaction record (Part 3.3)
+     -----------------------------------------------------------------------
+     The full ET record the field editor shows, in seven groups. Per-field:
+       label · group · mono/num rendering · select options where the value set
+       is fixed · a helper line for non-obvious formats · a flagHelp line the
+       flagged block uses to state the constraint in plain language · a
+       validation regex + message · required (a clearing file cannot omit it) ·
+       readOnly (card number always; network always) · mcOnly (IRD, GCMS).
      ======================================================================= */
+  var CUR_OPTS = [['356', '356 — INR'], ['702', '702 — SGD'], ['344', '344 — HKD']];
   var FIELDS = {
-    ird: { label: 'Interchange Rate Designator', group: 'Interchange', mono: true, help: '2 characters. Mastercard IRD from the current interchange manual.' },
-    posEntryMode: { label: 'POS entry mode', group: 'Terminal', mono: true, help: '2 digits — 01 key-entered · 05 chip · 07 contactless · 81 e-commerce' },
-    contactless: { label: 'Contactless', group: 'Terminal', type: 'select', options: ['Yes', 'No'], help: 'Derived from POS entry mode 07 on the original presentment.' },
-    mcc: { label: 'Merchant category code', group: 'Merchant', mono: true, help: '4 digits, ISO 18245.' },
-    merchantName: { label: 'Card acceptor name', group: 'Merchant', help: 'Max 22 characters as presented to the network.' },
-    merchantId: { label: 'Merchant ID (MID)', group: 'Merchant', mono: true, help: '15 digits, acquirer-assigned.' },
-    terminalId: { label: 'Terminal ID (TID)', group: 'Terminal', mono: true, help: '8 characters, acquirer-assigned.' },
-    acquirerBin: { label: 'Acquirer BIN', group: 'Acquirer', mono: true, help: '6 digits. Must be registered for this network and region.' },
-    acceptorName: { label: 'Acceptor name (DE43 SF1)', group: 'Acceptor address', help: 'Mandatory. Max 25 characters.' },
-    acceptorCity: { label: 'Acceptor city (DE43 SF3)', group: 'Acceptor address', help: 'Mandatory. Max 13 characters.' },
-    acceptorPostcode: { label: 'Acceptor postcode (DE43 SF4)', group: 'Acceptor address', mono: true, help: 'Mandatory for domestic presentments.' },
-    amount: { label: 'Transaction amount', group: 'Amounts', mono: true, help: 'Major units, 2 decimals. Must equal the cleared amount.' },
-    authAmount: { label: 'Authorized amount', group: 'Amounts', mono: true, help: 'Major units, 2 decimals, as returned on the authorization.' },
-    currency: { label: 'Currency code', group: 'Amounts', mono: true, help: '3-digit ISO 4217 numeric — 356 INR · 702 SGD · 344 HKD.' },
-    conversionRate: { label: 'Conversion rate', group: 'Amounts', mono: true, help: '6 decimals. 1.000000 when settlement and transaction currency match.' },
-    pan: { label: 'Primary account number', group: 'Card', mono: true, help: 'Masked at rest. Only the BIN and last 4 are editable.' },
-    expiry: { label: 'Card expiry', group: 'Card', mono: true, help: 'MM/YY.' },
-    cardProduct: { label: 'Card product code', group: 'Card', mono: true, help: '3 characters — e.g. MCC consumer credit, DMC debit, MCW world.' },
-    arn: { label: 'Acquirer reference number', group: 'References', mono: true, help: '16 digits. Check digit is the last position.' },
-    txnRef: { label: 'Transaction reference', group: 'References', mono: true, help: '15 characters. Must be unique within the cycle.' },
-    txnDate: { label: 'Transaction date', group: 'Dates', mono: true, help: 'YYYY-MM-DD. Must fall inside the presentment window.' },
-    processingDate: { label: 'Processing date', group: 'Dates', mono: true, help: 'YYYY-MM-DD. The date the file was built.' },
-    settlementDate: { label: 'Settlement date', group: 'Dates', mono: true, help: 'YYYY-MM-DD. The network settlement cycle date.' }
+    // --- Transaction identity ---
+    arn: {
+      label: 'ARN', group: 'Transaction identity', mono: true, required: true,
+      help: '16 digits. The check digit is the last position.',
+      flagHelp: 'Current value rejected. 16 digits — the acquirer reference the network matches this presentment on; the check digit is the last position.',
+      re: /^\d{16}$/, err: 'Must be exactly 16 digits.'
+    },
+    txnId: { label: 'Transaction ID', group: 'Transaction identity', mono: true, help: 'Platform transaction identifier.' },
+    rrn: {
+      label: 'RRN', group: 'Transaction identity', mono: true, required: true,
+      help: '12 digits — retrieval reference number.',
+      flagHelp: 'Current value rejected. 12 digits, must be unique within the cycle.',
+      re: /^\d{12}$/, err: 'Must be exactly 12 digits.'
+    },
+    authCode: {
+      label: 'Authorization code', group: 'Transaction identity', mono: true, required: true,
+      help: '6 characters from the authorization response.',
+      flagHelp: 'Required but missing from the record. 6 characters, as returned on the authorization.',
+      re: /^[A-Z0-9]{6}$/i, err: 'Must be 6 letters or digits.'
+    },
+    procCode: {
+      label: 'Processing code', group: 'Transaction identity', mono: true,
+      help: '6 digits — transaction type, from-account, to-account.',
+      re: /^\d{6}$/, err: 'Must be exactly 6 digits.'
+    },
+    // --- Merchant ---
+    merchantId: {
+      label: 'Merchant ID (MID)', group: 'Merchant', mono: true, required: true,
+      help: 'Acquirer-assigned merchant identifier.'
+    },
+    merchantName: {
+      label: 'Merchant name', group: 'Merchant', required: true,
+      help: 'Max 22 characters as presented to the network.',
+      flagHelp: 'Required but missing from the record. Max 22 characters as presented to the network.'
+    },
+    mcc: {
+      label: 'Merchant category code (MCC)', group: 'Merchant', mono: true, required: true,
+      help: '4 digits, ISO 18245.',
+      flagHelp: 'Current value rejected. 4 digits, must be a valid ISO 18245 code.',
+      re: /^\d{4}$/, err: 'Must be exactly 4 digits.'
+    },
+    terminalId: { label: 'Terminal ID', group: 'Merchant', mono: true, required: true, help: '8 characters, acquirer-assigned.' },
+    merchantCountry: {
+      label: 'Merchant country', group: 'Merchant', mono: true, required: true,
+      help: 'ISO 3166 alpha-2, as presented to the network.',
+      flagHelp: 'Required but missing from the record. ISO 3166 alpha-2 country code.',
+      re: /^[A-Z]{2}$/i, err: 'Must be a 2-letter country code.'
+    },
+    // --- Card ---
+    pan: { label: 'Card number', group: 'Card', mono: true, readOnly: true, help: 'Masked at rest — never editable, never fully revealed.' },
+    cardBin: {
+      label: 'Card BIN', group: 'Card', mono: true,
+      help: '6 digits — the issuer account range prefix.',
+      re: /^\d{6}$/, err: 'Must be exactly 6 digits.'
+    },
+    cardType: { label: 'Card type', group: 'Card', type: 'select', options: ['Credit', 'Debit', 'Prepaid', 'Commercial'] },
+    cardProduct: {
+      label: 'Card product code', group: 'Card', mono: true,
+      help: '3 characters — e.g. MCC consumer credit, DMC debit.',
+      flagHelp: 'Current value rejected. 3 characters, must be a product code defined for the issuer account range.',
+      re: /^[A-Z]{3}$/i, err: 'Must be 3 letters.'
+    },
+    gcmsProductId: { label: 'GCMS product ID', group: 'Card', mono: true, mcOnly: true, help: 'Mastercard product ID from the account range table.' },
+    accountRange: { label: 'Account range', group: 'Card', mono: true, readOnly: true, help: 'Issuer account range this PAN falls in.' },
+    // --- Amounts ---
+    amount: {
+      label: 'Transaction amount', group: 'Amounts', num: true, required: true,
+      help: 'Major units, 2 decimals. Must equal the cleared amount.',
+      flagHelp: 'Current value rejected. Major units with exactly 2 decimals; must equal the cleared amount.',
+      re: /^\d+\.\d{2}$/, err: 'Must be a positive amount with exactly 2 decimals.'
+    },
+    currency: {
+      label: 'Transaction currency', group: 'Amounts', type: 'select', options: CUR_OPTS, mono: true, required: true,
+      flagHelp: 'Flagged with the amount. 3-digit ISO 4217 numeric — 356 INR · 702 SGD · 344 HKD.'
+    },
+    authAmount: {
+      label: 'Authorization amount', group: 'Amounts', num: true,
+      help: 'Major units, 2 decimals, as returned on the authorization.',
+      flagHelp: 'Flagged by the reject. Must match the transaction amount within the network tolerance.',
+      re: /^\d+\.\d{2}$/, err: 'Must be a positive amount with exactly 2 decimals.'
+    },
+    settlementAmount: {
+      label: 'Settlement amount', group: 'Amounts', num: true,
+      help: 'Amount settled after conversion.',
+      flagHelp: 'Current value rejected. Must equal the transaction amount times the conversion rate.',
+      re: /^\d+\.\d{2}$/, err: 'Must be a positive amount with exactly 2 decimals.'
+    },
+    settlementCurrency: { label: 'Settlement currency', group: 'Amounts', type: 'select', options: CUR_OPTS, mono: true },
+    conversionRate: {
+      label: 'Conversion rate', group: 'Amounts', num: true,
+      help: '6 decimals. 1.000000 when settlement and transaction currency match.',
+      re: /^\d+\.\d{6}$/, err: 'Must have exactly 6 decimals.'
+    },
+    // --- Network & interchange ---
+    network: { label: 'Network', group: 'Network & interchange', readOnly: true },
+    ird: {
+      label: 'IRD', group: 'Network & interchange', mono: true, mcOnly: true,
+      help: '2 characters. Mastercard IRD from the current interchange manual.',
+      flagHelp: 'Current value rejected. 2-character Mastercard IRD from the current interchange manual.',
+      re: /^[A-Z0-9]{2}$/i, err: 'Must be 2 letters or digits.'
+    },
+    posEntryMode: {
+      label: 'POS entry mode', group: 'Network & interchange', type: 'select', mono: true,
+      options: [['01', '01 — key-entered'], ['05', '05 — chip-read'], ['07', '07 — contactless'], ['81', '81 — e-commerce']]
+    },
+    contactless: { label: 'Contactless indicator', group: 'Network & interchange', type: 'select', options: ['Yes', 'No'] },
+    cardholderPresent: { label: 'Cardholder present indicator', group: 'Network & interchange', type: 'select', options: ['Present', 'Not present'] },
+    // --- Dates ---
+    txnDate: {
+      label: 'Transaction date', group: 'Dates', num: true, required: true,
+      help: 'YYYY-MM-DD. Must fall inside the presentment window.',
+      flagHelp: 'Current value rejected. YYYY-MM-DD — must fall inside the network’s permitted presentment window.',
+      re: /^\d{4}-\d{2}-\d{2}$/, err: 'Must be YYYY-MM-DD.'
+    },
+    processingDate: {
+      label: 'Processing date', group: 'Dates', num: true, help: 'YYYY-MM-DD. The date the file was built.',
+      re: /^\d{4}-\d{2}-\d{2}$/, err: 'Must be YYYY-MM-DD.'
+    },
+    captureDate: {
+      label: 'Capture date', group: 'Dates', num: true, help: 'YYYY-MM-DD. When the presentment was captured.',
+      re: /^\d{4}-\d{2}-\d{2}$/, err: 'Must be YYYY-MM-DD.'
+    },
+    settlementDate: {
+      label: 'Settlement date', group: 'Dates', num: true, help: 'YYYY-MM-DD. The network settlement cycle date.',
+      re: /^\d{4}-\d{2}-\d{2}$/, err: 'Must be YYYY-MM-DD.'
+    },
+    // --- Acquirer ---
+    acquirerBin: {
+      label: 'Acquirer BIN', group: 'Acquirer', mono: true, required: true,
+      help: '6 digits. Must be registered for this network and region.',
+      flagHelp: 'Current value rejected. 6 digits, must be registered for this network and region.',
+      re: /^\d{6}$/, err: 'Must be exactly 6 digits.'
+    },
+    acquirerRef: { label: 'Acquirer reference', group: 'Acquirer', mono: true, help: 'Internal acquirer reference for this presentment.' },
+    fileId: { label: 'File ID', group: 'Acquirer', mono: true, readOnly: true, help: 'The clearing file this transaction was submitted in.' },
+    siteId: { label: 'Site ID', group: 'Acquirer', mono: true }
   };
-  // Every field, in the order "Show all fields" reveals them.
-  var ALL_FIELDS = ['ird', 'posEntryMode', 'contactless', 'mcc', 'merchantName', 'merchantId', 'terminalId',
-    'acquirerBin', 'acceptorName', 'acceptorCity', 'acceptorPostcode', 'amount', 'authAmount', 'currency',
-    'conversionRate', 'pan', 'expiry', 'cardProduct', 'arn', 'txnRef', 'txnDate', 'processingDate', 'settlementDate'];
+  // Every field, in record order. The editor renders these in their groups.
+  var ALL_FIELDS = ['arn', 'txnId', 'rrn', 'authCode', 'procCode',
+    'merchantId', 'merchantName', 'mcc', 'terminalId', 'merchantCountry',
+    'pan', 'cardBin', 'cardType', 'cardProduct', 'gcmsProductId', 'accountRange',
+    'amount', 'currency', 'authAmount', 'settlementAmount', 'settlementCurrency', 'conversionRate',
+    'network', 'ird', 'posEntryMode', 'contactless', 'cardholderPresent',
+    'txnDate', 'processingDate', 'captureDate', 'settlementDate',
+    'acquirerBin', 'acquirerRef', 'fileId', 'siteId'];
+  // Fields a clearing record cannot omit — what the "missing required data"
+  // reason codes scan for.
+  var REQUIRED_FIELDS = ALL_FIELDS.filter(function (k) { return FIELDS[k].required; });
 
-  // Part 3.3 — which fields a reject's reason code makes relevant. Surfaced
-  // first; everything else stays behind "Show all fields".
-  var REASON_FIELDS = {
-    '0221': ['ird', 'posEntryMode', 'contactless', 'mcc'],
-    '0225': ['ird', 'mcc', 'cardProduct'],
-    '0104': ['mcc', 'merchantName'],
-    '0117': ['amount', 'currency', 'conversionRate'],
-    '0142': ['arn', 'acquirerBin', 'txnRef'],
-    '0208': ['acceptorName', 'acceptorCity', 'acceptorPostcode', 'terminalId'],
-    '0311': ['cardProduct', 'pan', 'expiry'],
-    '0501': ['txnDate', 'processingDate', 'settlementDate'],
-    '0512': ['amount', 'authAmount', 'currency', 'conversionRate'],
-    '0523': ['mcc', 'merchantName'],
-    '0541': ['acceptorName', 'acceptorCity', 'terminalId'],
-    '0567': ['acquirerBin', 'merchantId', 'terminalId'],
-    '0588': ['txnRef', 'arn', 'txnDate'],
-    'R012': ['mcc', 'merchantName'],
-    'R024': ['acceptorCity', 'acceptorPostcode', 'acceptorName'],
-    'R031': ['amount', 'authAmount', 'currency'],
-    'R047': ['acquirerBin', 'merchantId'],
-    'R053': ['txnRef', 'arn', 'txnDate']
-  };
-  function relevantFields(code) { return REASON_FIELDS[code] || []; }
-  function otherFields(code) {
-    var rel = relevantFields(code);
-    return ALL_FIELDS.filter(function (f) { return rel.indexOf(f) < 0; });
+  // Which fields exist on this record. IRD and GCMS product ID are Mastercard
+  // constructs; other networks' records simply do not carry them.
+  function fieldsForTxn(txn) {
+    var mc = (txn.fields.network || 'Mastercard') === 'Mastercard';
+    return ALL_FIELDS.filter(function (k) { return mc || !FIELDS[k].mcOnly; });
   }
 
-  /* Round 3 §C.6 — the data path shows the whole entity record, grouped. The
-     reason code no longer decides what is editable; it only marks which field
-     it points at. Groups are ordered the way an analyst reads a presentment:
-     what the transaction is, then who took it, then how it was taken, then the
-     network-specific derivation at the end. */
-  var GROUP_ORDER = ['References', 'Dates', 'Amounts', 'Merchant', 'Acceptor address',
-    'Terminal', 'Acquirer', 'Card', 'Interchange'];
-  var GROUP_NOTE = {
-    References: 'Identifiers the network matches this presentment on.',
-    Dates: 'Presentment window and settlement cycle.',
-    Amounts: 'Cleared value, as authorized and as presented.',
-    Merchant: 'Merchant record as carried in the clearing file.',
-    'Acceptor address': 'DE43 subfields — mandatory on domestic presentments.',
-    Terminal: 'How the card was read.',
-    Acquirer: 'Acquiring institution registration.',
-    Card: 'Card product and account range.',
-    Interchange: 'Network-specific derivation.'
+  /* Part 3.2 — reason code → flagged field lookup. A code either names its
+     fields outright or scans for empty required fields ('empty-required' —
+     the missing-data codes cannot know in advance which field is absent).
+     RuPay reuses the Mastercard-style mapping for its equivalent codes. */
+  var FLAGGED = {
+    // Mastercard
+    '0104': ['mcc'],
+    '0117': ['amount', 'currency'],
+    '0142': ['arn'],
+    '0208': 'empty-required',
+    '0221': ['ird'],
+    '0225': ['ird', 'mcc'],
+    '0311': ['cardProduct'],
+    // Visa
+    '0501': ['txnDate'],
+    '0512': ['amount', 'authAmount'],
+    '0523': ['mcc'],
+    '0541': 'empty-required',
+    '0567': ['acquirerBin'],
+    '0588': ['arn', 'rrn'],
+    // RuPay — Mastercard-style equivalents
+    'R012': ['mcc'],
+    'R024': 'empty-required',
+    'R031': ['settlementAmount', 'amount'],
+    'R047': ['acquirerBin'],
+    'R053': ['arn', 'rrn']
   };
+  function relevantFields(code) {
+    var m = FLAGGED[code];
+    return Array.isArray(m) ? m : [];
+  }
+  // The flagged fields for a specific transaction. The empty-required codes
+  // resolve against the record itself: whichever required fields are absent.
+  function flaggedFields(txn) {
+    var m = FLAGGED[txn.reasonCode];
+    if (!m) return [];
+    var present = fieldsForTxn(txn);
+    if (m === 'empty-required') {
+      var empty = REQUIRED_FIELDS.filter(function (k) {
+        return present.indexOf(k) >= 0 && String(txn.fields[k] == null ? '' : txn.fields[k]).trim() === '';
+      });
+      return empty.length ? empty : ['authCode'];
+    }
+    return m.filter(function (k) { return present.indexOf(k) >= 0; });
+  }
+
+  /* Part 3.5 — field validation, run on blur and on save attempt. */
+  function validateField(key, value) {
+    var def = FIELDS[key] || {};
+    var v = String(value == null ? '' : value).trim();
+    if (def.required && v === '') return 'Required — the clearing file cannot omit this field.';
+    if (v !== '' && def.re && !def.re.test(v)) return def.err || 'Invalid format.';
+    return null;
+  }
+
+  /* Part 3.3 — the seven collapsible groups, in record order. */
+  var GROUP_ORDER = ['Transaction identity', 'Merchant', 'Card', 'Amounts',
+    'Network & interchange', 'Dates', 'Acquirer'];
   function groupedFields() {
     var seen = {}, out = [];
-    GROUP_ORDER.forEach(function (g) { seen[g] = { group: g, note: GROUP_NOTE[g] || '', fields: [] }; out.push(seen[g]); });
+    GROUP_ORDER.forEach(function (g) { seen[g] = { group: g, fields: [] }; out.push(seen[g]); });
     ALL_FIELDS.forEach(function (k) {
       var g = (FIELDS[k] || {}).group || 'Other';
-      if (!seen[g]) { seen[g] = { group: g, note: '', fields: [] }; out.push(seen[g]); }
+      if (!seen[g]) { seen[g] = { group: g, fields: [] }; out.push(seen[g]); }
       seen[g].fields.push(k);
     });
     return out.filter(function (g) { return g.fields.length; });
@@ -573,6 +720,7 @@ window.REJDATA = (function () {
     txn.attempts = c.rejected.length;
     txn.attemptedIrds = c.rejected.slice(0, -1);
     txn.fields.ird = c.rejected[c.rejected.length - 1];
+    txn.fields.gcmsProductId = c.submittedGcms;
     txn.attemptLog = [];
     txn.history = [];
 
@@ -602,9 +750,12 @@ window.REJDATA = (function () {
     return c;
   }
 
+  // Part 4 — the IRD chooser applies to every Mastercard IRD reject, staging
+  // or incoming. Other networks and non-IRD codes fall through to the plain
+  // field editor.
   function hasIrdLadder(txn) {
     var b = batchById[txn.batchId];
-    return !!(txn && txn.irdCtx && b && b.network === 'Mastercard' && b.family === 'staging' && isIrd(txn.reasonCode));
+    return !!(txn && txn.irdCtx && b && b.network === 'Mastercard' && isIrd(txn.reasonCode));
   }
 
   /* ---- The engine the panel calls (Part 5.2 output shape) ----------------- */
@@ -731,29 +882,29 @@ window.REJDATA = (function () {
   }
   function rateText(rate) { return Number(rate).toFixed(2) + '%'; }
 
+  /* Part 4.7 — the auto-attached derivation note. Reads as a record on its
+     own months later: which IRD, and how it was derived, in plain language. */
   function irdApplyNote(txn, strategyN, o) {
     var c = txn.irdCtx, cur = txn.currency;
-    var tail = ' Interchange ' + rateText(o.rate) + ' — ' + money(o.fee, cur) + ' on this transaction.';
     if (strategyN === 1) {
-      return 'Applied via Strategy 1 (corrected GCMS product ID ' + o.gcms + ' from the reject summary, replacing submitted ' +
-        c.submittedGcms + '). Derived IRD ' + o.ird + '.' + tail;
+      return 'IRD ' + o.ird + ' — from the corrected product ID in the reject file (' + o.gcms +
+        ', replacing submitted ' + c.submittedGcms + '). Interchange ' + rateText(o.rate) + ' — ' + money(o.fee, cur) + ' on this transaction.';
     }
     if (strategyN === 2) {
-      return 'Applied via Strategy 2 (GCMS product ID ' + o.gcms + ', priority ' + o.priority +
-        ' on account range ' + c.panRange + '). Derived IRD ' + o.ird + '.' + tail;
+      return 'IRD ' + o.ird + ' — next product ID for this card range (' + o.gcms + ', priority ' + o.priority +
+        ' of ' + c.products.length + '). Interchange ' + rateText(o.rate) + ' — ' + money(o.fee, cur) + ' on this transaction.';
     }
     if (strategyN === 3) {
-      return 'Applied via Strategy 3 (rank ' + o.rank + ' candidate under the same filter set — ' +
-        c.filters.join(', ') + '). Derived IRD ' + o.ird + '.' + tail;
+      return 'IRD ' + o.ird + ' — next matching IRD for the same details (' + o.rank + ' of ' + c.candidates.length +
+        '). Interchange ' + rateText(o.rate) + ' — ' + money(o.fee, cur) + ' on this transaction.';
     }
     if (strategyN === 4) {
       var res = resolveIrd(txn);
-      return 'Applied via Strategy 4 (broader IRD matching on ' + c.broadMatched.join(', ') +
-        '; drops ' + c.broadDropped.join(', ') + '). IRD ' + o.ird + ' at ' + rateText(o.rate) +
-        ' against ' + rateText(res.bestPrecise.rate) + ' on the best precise candidate ' + res.bestPrecise.ird +
-        ' — ' + money(res.s4.delta, cur) + ' more on this transaction. Accepted the higher interchange rate to clear the reject.';
+      return 'IRD ' + o.ird + ' — broader IRD, fewer conditions. Accepted ' + money(res.s4.delta, cur) +
+        ' more than the best precise candidate (' + res.bestPrecise.ird + ' at ' + rateText(res.bestPrecise.rate) +
+        ') to clear the reject.';
     }
-    return 'Applied IRD ' + o.ird + '.';
+    return 'IRD ' + o.ird + '.';
   }
 
   // The candidate the ladder would hand an analyst right now, with the note
@@ -796,8 +947,6 @@ window.REJDATA = (function () {
   var VISA_CYCLE = ['0501', '0512', '0523', '0541', '0567', '0588', '0512', '0501', '0541', '0523'];
   var RUPAY_CYCLE = ['R012', 'R024', 'R031', 'R047', 'R053', 'R024', 'R012', 'R031'];
 
-  var CITY = { 'hsbc-in': 'MUMBAI', yesbank: 'BENGALURU', 'hsbc-sg': 'SINGAPORE', 'hsbc-hk': 'HONG KONG' };
-  var POSTCODE = { 'hsbc-in': '400051', yesbank: '560034', 'hsbc-sg': '238801', 'hsbc-hk': '999077' };
 
   function hhmm(r) { return pad(rint(r, 0, 23), 2) + ':' + pad(rint(r, 0, 59), 2); }
   function stamp(date, time) { return U.prettyDate(date) + ', ' + time + ' IST'; }
@@ -876,80 +1025,91 @@ window.REJDATA = (function () {
     // The IRD actually staged and rejected. Deliberately one axis away from the
     // engine's answer, so the recommendation panel has something to say.
     var wrongAxis = cloneAttrs(txn.attrs, 'entry', entry === '05' ? '81' : '05');
+    var COUNTRY = { 'hsbc-in': 'IN', yesbank: 'IN', 'hsbc-sg': 'SG', 'hsbc-hk': 'HK' };
     txn.fields = {
-      ird: batch.network === 'Mastercard' ? irdCode(wrongAxis) : '—',
-      posEntryMode: entry,
-      contactless: txn.attrs.contactless,
-      mcc: m.mcc,
-      merchantName: String(m.name).toUpperCase().slice(0, 22),
+      arn: arn,
+      txnId: 'TXN' + pad(rint(r, 0, 999999999), 9),
+      rrn: pad(rint(r, 0, 999999999999), 12),
+      authCode: pad(rint(r, 0, 999999), 6),
+      procCode: pick(r, ['000000', '003000']),
       merchantId: String(m.mid).replace(/\s/g, ''),
+      merchantName: String(m.name).toUpperCase().slice(0, 22),
+      mcc: m.mcc,
       terminalId: 'T' + pad(rint(r, 0, 9999999), 7),
-      acquirerBin: bin,
-      acceptorName: String(m.name).toUpperCase().slice(0, 25),
-      acceptorCity: CITY[batch.tenantId] || 'MUMBAI',
-      acceptorPostcode: POSTCODE[batch.tenantId] || '400051',
-      amount: amount.toFixed(2),
-      authAmount: amount.toFixed(2),
-      currency: ISO_CUR[t.currency] || '356',
-      conversionRate: '1.000000',
+      merchantCountry: COUNTRY[batch.tenantId] || 'IN',
       pan: bin.slice(0, 6) + ' ' + bin.slice(4, 6) + '** **** ' + last4,
-      expiry: pad(rint(r, 1, 12), 2) + '/' + rint(r, 26, 30),
+      cardBin: bin,
+      cardType: card,
       cardProduct: batch.network === 'Mastercard' ? (card === 'Credit' ? 'MCC' : 'DMC')
         : (batch.network === 'RuPay' ? (card === 'Credit' ? 'RUC' : 'RUD') : (card === 'Credit' ? 'VCC' : 'VDB')),
-      arn: arn,
-      txnRef: 'TXR' + pad(rint(r, 0, 999999999999), 12),
+      gcmsProductId: batch.network === 'Mastercard' ? pick(r, GCMS_POOL) : '',
+      accountRange: bin.slice(0, 4) + ' ' + bin.slice(4, 6) + '** **** ****',
+      amount: amount.toFixed(2),
+      currency: ISO_CUR[t.currency] || '356',
+      authAmount: amount.toFixed(2),
+      settlementAmount: amount.toFixed(2),
+      settlementCurrency: ISO_CUR[t.currency] || '356',
+      conversionRate: '1.000000',
+      network: batch.network,
+      ird: batch.network === 'Mastercard' ? irdCode(wrongAxis) : '',
+      posEntryMode: entry,
+      contactless: txn.attrs.contactless,
+      cardholderPresent: entry === '81' ? 'Not present' : 'Present',
       txnDate: txnDate,
       processingDate: batch.cycleDate,
-      settlementDate: U.addDays(batch.cycleDate, 1)
+      captureDate: batch.cycleDate,
+      settlementDate: U.addDays(batch.cycleDate, 1),
+      acquirerBin: bin,
+      acquirerRef: 'AR' + pad(rint(r, 0, 99999999), 8),
+      fileId: batch.clearingFile,
+      siteId: 'S' + pad(rint(r, 0, 9999), 4)
     };
 
     // Reject-specific damage: the field the reason code points at is the one
-    // that is actually wrong, so the surfaced field is worth editing.
+    // that is actually wrong, so the flagged block is worth editing.
     if (code === '0104' || code === '0523' || code === 'R012') txn.fields.mcc = '9' + m.mcc.slice(1);
     if (code === '0142') txn.fields.arn = arn.slice(0, 15) + '0';
-    if (code === '0208' || code === '0541') { txn.fields.acceptorPostcode = ''; if (code === '0541') txn.fields.acceptorCity = ''; }
-    if (code === 'R024') { txn.fields.acceptorPostcode = ''; txn.fields.acceptorCity = ''; }
-    if (code === '0311') txn.fields.cardProduct = 'XX' + (card === 'Credit' ? 'C' : 'D');
-    if (code === '0512' || code === 'R031') txn.fields.authAmount = (amount - Math.round(amount * 0.07 * 100) / 100).toFixed(2);
+    if (code === '0208') txn.fields.authCode = '';        // missing required data element
+    if (code === '0541') txn.fields.merchantName = '';    // missing required field
+    if (code === 'R024') txn.fields.merchantCountry = ''; // acceptor location incomplete
+    if (code === '0311') txn.fields.cardProduct = 'XXC';
+    if (code === '0512') txn.fields.authAmount = (amount - Math.round(amount * 0.07 * 100) / 100).toFixed(2);
+    if (code === 'R031') txn.fields.settlementAmount = (amount - Math.round(amount * 0.07 * 100) / 100).toFixed(2);
     if (code === '0501') txn.fields.txnDate = U.addDays(batch.cycleDate, -34);
     if (code === '0567' || code === 'R047') txn.fields.acquirerBin = bin.slice(0, 5) + '9';
-    if (code === '0117') txn.fields.currency = '999';
+    if (code === '0117') txn.fields.amount = amount.toFixed(2) + '9'; // 3 decimals — fails the range edit
 
     // A few transactions arrive with attributes the platform could not resolve —
     // that is what drives Medium / Low confidence in the recommendation panel.
     if (isIrd(code) && seed % 7 === 0) txn.attrs.region = null;
     if (isIrd(code) && seed % 11 === 0) { txn.attrs.mcc = null; txn.attrs.card = null; }
 
-    // A Mastercard staging IRD reject resolves through the four-strategy ladder
-    // instead of the single-answer recommendation engine, so it owns its own
-    // attempt trail — Y-series codes, and a burn order that matches the rungs.
-    var ladder = batch.family === 'staging' && batch.network === 'Mastercard' && isIrd(code);
+    // A Mastercard IRD reject resolves through the four-strategy chooser
+    // (Part 4) whether the batch is staging or incoming, so it owns its own
+    // attempt trail — Y-series codes, and a burn order that matches the cards.
+    var ladder = batch.network === 'Mastercard' && isIrd(code);
     if (ladder) attachIrdLadder(txn, batch, sc, r);
 
     // Re-rejects carry their attempt history, and the IRDs already burned.
     if (!ladder && txn.attempts > 1) {
       var prevIrd = txn.fields.ird;
+      var histField = flaggedFields(txn)[0] || 'mcc';
       for (var k = 1; k < txn.attempts; k++) {
         var corrAt = stamp(U.addDays(batch.cycleDate, k), pad(rint(r, 9, 18), 2) + ':' + pad(rint(r, 0, 59), 2));
         var rejAt = stamp(U.addDays(batch.cycleDate, k + 1), '0' + rint(r, 3, 8) + ':' + pad(rint(r, 0, 59), 2));
         txn.attemptLog.push({ attempt: k, ird: prevIrd, correctedAt: corrAt, by: pick(r, USERS), rejectedAt: rejAt });
-        if (batch.network === 'Mastercard' && isIrd(code)) txn.attemptedIrds.push(prevIrd);
         txn.history.push({
           at: corrAt, by: txn.attemptLog[k - 1].by, kind: 'correction',
-          changes: [{ field: isIrd(code) ? 'ird' : relevantFields(code)[0], from: prevIrd, to: prevIrd }],
+          changes: [{ field: histField, from: String(txn.fields[histField] || ''), to: String(txn.fields[histField] || '') }],
           note: 'Attempt ' + k + ' correction — re-rejected ' + rejAt + '.'
         });
-        // Each failed attempt burned a different candidate.
-        var burned = candidates(txn.attrs.region ? txn.attrs : { mcc: '5411', region: 'Domestic', card: 'Credit', entry: '05' });
-        prevIrd = (burned[k - 1] || burned[0] || { code: prevIrd }).code;
       }
-      if (batch.network === 'Mastercard' && isIrd(code)) txn.fields.ird = prevIrd;
     }
 
-    // Transactions past Corrected already carry a recorded correction.
+    // Transactions past Fixed already carry a recorded correction.
     var past = ['corrected', 'regenerated', 'resubmitted', 'cleared'];
     if (past.indexOf(recipeStatus) >= 0) {
-      var f0 = relevantFields(code)[0] || 'mcc';
+      var f0 = flaggedFields(txn)[0] || 'mcc';
       var oldV = txn.fields[f0];
       var ladderPick = (ladder && f0 === 'ird') ? nextLadderPick(txn) : null;
       var newV = ladderPick ? ladderPick.ird : correctedValue(f0, txn, m, r);
@@ -972,6 +1132,26 @@ window.REJDATA = (function () {
         'Authorization reversed by the issuer before clearing — nothing to resubmit.'
       ]);
       txn.manualTag = { label: 'manually marked', by: CURRENT_USER, at: stamp(U.addDays(batch.cycleDate, 2), '11:0' + rint(r, 0, 9)) };
+      txn.history.push({
+        at: stamp(U.addDays(batch.cycleDate, 2), '11:0' + rint(r, 0, 9)), by: CURRENT_USER,
+        kind: 'wont_fix', changes: [], note: txn.wontFixNote
+      });
+    }
+    // A transaction parked on a config fix carries the request that parked it —
+    // the note is what the config owner works from, so it is never empty.
+    if (recipeStatus === 'awaiting_config') {
+      var cfgAt = stamp(U.addDays(batch.cycleDate, 1), pad(rint(r, 10, 17), 2) + ':' + pad(rint(r, 0, 59), 2));
+      var cfgBy = txn.assignee || pick(r, USERS);
+      var cfgNote = (sc && sc.cfgNote) ||
+        'The MCC mapping for this acquirer BIN still points at the 2024 ISO 18245 table — ' + m.mcc + ' is being emitted as ' + txn.fields.mcc + '.';
+      var cfgFam = (sc && sc.cfgFamily) || 'network';
+      var famDef = configFamily(cfgFam);
+      txn.configRequest = { note: cfgNote, family: cfgFam, familyLabel: famDef ? famDef.label : null, by: cfgBy, at: cfgAt };
+      txn.manualTag = { label: 'awaiting config fix', by: cfgBy, at: cfgAt };
+      txn.history.push({
+        at: cfgAt, by: cfgBy, kind: 'config_request', path: 'config', changes: [],
+        note: cfgNote, configFamily: famDef ? famDef.label : null
+      });
     }
     return txn;
   }
@@ -984,13 +1164,13 @@ window.REJDATA = (function () {
     }
     if (field === 'mcc') return m.mcc;
     if (field === 'arn') return txn.arn;
-    if (field === 'acceptorName') return String(m.name).toUpperCase().slice(0, 25);
-    if (field === 'acceptorCity') return CITY[txn.batchId] || 'MUMBAI';
-    if (field === 'acceptorPostcode') return '400051';
+    if (field === 'authCode') return pad(rint(r, 0, 999999), 6);
+    if (field === 'merchantName') return String(m.name).toUpperCase().slice(0, 22);
+    if (field === 'merchantCountry') return 'IN';
     if (field === 'cardProduct') return txn.attrs.card === 'Credit' ? 'MCC' : 'DMC';
-    if (field === 'amount') return txn.amount.toFixed(2);
+    if (field === 'amount' || field === 'authAmount' || field === 'settlementAmount') return txn.amount.toFixed(2);
     if (field === 'txnDate') return txn.txnDate;
-    if (field === 'txnRef') return 'TXR' + pad(rint(r, 0, 999999999999), 12);
+    if (field === 'rrn') return pad(rint(r, 0, 999999999999), 12);
     if (field === 'acquirerBin') return txn.fields.acquirerBin.slice(0, 5) + '1';
     if (field === 'currency') return ISO_CUR[txn.currency] || '356';
     return txn.fields[field];
@@ -1002,31 +1182,39 @@ window.REJDATA = (function () {
      Every reject count sits between 0.02% and 0.15% of the file. */
   var SPECS = [
     // --- 3 staging rejects (Part 7.1) ---
-    // The Mastercard staging batch also carries the six IRD scenarios the
-    // resolution ladder has to make legible (Part 6). They are appended rather
-    // than folded into the recipe so the batch's original lifecycle counts are
-    // untouched — `burn` is the trail of rungs each one has already spent.
+    // The Mastercard staging batch carries the ten Part 8 scenarios, so every
+    // branch of the fix flow is walkable in one batch. They are appended after
+    // the recipe rather than folded into it so the batch's original lifecycle
+    // counts are untouched — `burn` is the trail of IRDs a scenario has spent.
     {
       tenant: 'hsbc-in', network: 'Mastercard', family: 'staging', date: ago(1), fileTxns: 18420,
       recipe: { corrected: 4, new: 2 },
       irdPlan: [
-        // Reject summary supplies a corrected product ID → Strategy 1 recommended.
-        // Convergent: priority 2 and rank 2 land on one IRD, both still untried.
-        { reason: '0221', status: 'new', amount: 21900.00, corrected: true, productIds: 3, candidates: 3, converge: true, burn: ['submitted'] },
-        // No corrected product ID, but the PAN range holds three → ladder opens at 2.
+        // 1 · Simple single-field data fix — wrong MCC, nothing else.
+        { reason: '0104', status: 'new', amount: 12480.00 },
+        // 2 · Multi-field flag — amount fails the range edit, currency flagged with it.
+        { reason: '0117', status: 'new', amount: 18320.00 },
+        // 3 · IRD chooser with all four options available. The reject summary
+        // supplies a corrected product ID, the card range holds three product
+        // IDs and the filter set returns three candidates.
+        { reason: '0221', status: 'new', amount: 21900.00, corrected: true, productIds: 3, candidates: 3, converge: false, burn: ['submitted'] },
+        // 4 · IRD chooser with two flagged fields (IRD + MCC). No corrected
+        // product ID in the reject file, so card 1 renders unavailable.
         { reason: '0225', status: 'new', amount: 8460.00, corrected: false, productIds: 3, candidates: 2, converge: false, burn: ['submitted'] },
-        // Attempt 2 — Strategy 1 already tried and rejected, so it is Exhausted.
+        // 5 · Attempt 2 — card 1 already tried and rejected, so it is greyed
+        // with the value struck through.
         { reason: '0221', status: 're_rejected', amount: 34250.00, corrected: true, productIds: 3, candidates: 3, converge: false, burn: ['submitted', 's1'] },
-        // Attempt 3 — Strategies 1 and 2 exhausted. Converge is on, so Strategy
-        // 3's rank 2 is the same IRD Strategy 2 already burned: the global
-        // exclusion has to grey it out even though Strategy 3 never ran.
-        { reason: '0221', status: 're_rejected', amount: 47180.00, corrected: true, productIds: 2, candidates: 3, converge: true, burn: ['submitted', 's1', 'p2'] },
-        // Attempt 4 — every precise rung burned. Only the costly fallback left.
-        { reason: '0225', status: 're_rejected', amount: 12730.00, corrected: true, productIds: 2, candidates: 2, converge: false, burn: ['submitted', 's1', 'p2', 'c2'] },
-        // Single product ID, single candidate — the shortest ladder there is:
-        // Strategy 1, then straight to the fallback. Worth showing because it is
-        // where an analyst reaches the expensive option fastest.
-        { reason: '0221', status: 'new', amount: 29640.00, corrected: true, productIds: 1, candidates: 1, converge: false, burn: ['submitted'] }
+        // 6 · Cards 2 and 3 both unavailable (single product ID, single
+        // candidate) — the shortest path to the expensive fallback.
+        { reason: '0221', status: 'new', amount: 29640.00, corrected: true, productIds: 1, candidates: 1, converge: false, burn: ['submitted'] },
+        // 7 · Missing required data element — flags the empty required field.
+        { reason: '0208', status: 'new', amount: 9860.00 },
+        // 8 · Already Fixed — demonstrates the read-back state.
+        { reason: '0104', status: 'corrected', amount: 15240.00 },
+        // 9 · Already Awaiting config fix — demonstrates re-derive.
+        { reason: '0104', status: 'awaiting_config', amount: 26750.00 },
+        // 10 · Already Won't fix — excluded from the regeneration count.
+        { reason: '0142', status: 'wont_fix', amount: 7420.00 }
       ]
     },
     { tenant: 'yesbank', network: 'Visa', family: 'staging', date: ago(3), fileTxns: 12880, recipe: { cleared: 3 } },
@@ -1060,14 +1248,14 @@ window.REJDATA = (function () {
   var MODELS = {
     replacement: {
       key: 'replacement', label: 'Replacement', tag: 'Full file replacement',
-      action: 'Generate replacement clearing file',
+      action: 'Generate replacement file',
       banner: 'Full file replacement — the entire clearing file was refused and must be resubmitted in full.',
       suffix: ''
     },
     supplementary: {
       key: 'supplementary', label: 'Supplementary', tag: 'Supplementary file',
-      action: 'Generate clearing file for corrected rejects',
-      banner: 'Supplementary file — only corrected rejects will be resubmitted. The rest of this cycle already cleared.',
+      action: 'Generate file for fixed rejects',
+      banner: 'Supplementary file — only fixed rejects will be resubmitted. The rest of this cycle already cleared.',
       suffix: '_SUPP'
     }
   };
@@ -1308,6 +1496,10 @@ window.REJDATA = (function () {
       path: path || 'data', changes: changes, note: note || null
     });
     txn.status = 'corrected';
+    // A save is a fresh state: a reopened won't-fix or awaiting-config
+    // transaction sheds the tag that described its previous parking spot.
+    txn.wontFixNote = null;
+    txn.manualTag = null;
     return true;
   }
 
@@ -1333,7 +1525,7 @@ window.REJDATA = (function () {
   // re-derivation is a backend job against the activated config version.
   function rederive(txn, who, at) {
     var stampAt = at || nowStamp();
-    var fields = relevantFields(txn.reasonCode);
+    var fields = flaggedFields(txn);
     var m = { name: txn.merchant, mid: txn.mid, mcc: txn.attrs.mcc || txn.fields.mcc };
     var r = rng(arnSeed(txn.arn) + 41);
     var changes = [];
@@ -1490,8 +1682,9 @@ window.REJDATA = (function () {
     LIFECYCLE: LIFECYCLE, LIFECYCLE_ORDER: LIFECYCLE_ORDER, isOpen: isOpen,
     PATHS: PATHS, pathLabel: pathLabel, CONFIG_FAMILIES: CONFIG_FAMILIES, configFamily: configFamily,
     REASONS: REASONS, reasonText: reasonText, isIrd: isIrd, rawMessage: rawMessage,
-    FIELDS: FIELDS, ALL_FIELDS: ALL_FIELDS, relevantFields: relevantFields, otherFields: otherFields,
-    groupedFields: groupedFields,
+    FIELDS: FIELDS, ALL_FIELDS: ALL_FIELDS, REQUIRED_FIELDS: REQUIRED_FIELDS,
+    relevantFields: relevantFields, flaggedFields: flaggedFields, fieldsForTxn: fieldsForTxn,
+    validateField: validateField, groupedFields: groupedFields,
     recommend: recommend, irdCode: irdCode, irdDesc: irdDesc, mccLabel: mccLabel, entryLabel: entryLabel,
     // --- Mastercard staging IRD resolution ladder (Part 5) ---
     hasIrdLadder: hasIrdLadder, resolveIrd: resolveIrd, irdApplyNote: irdApplyNote,

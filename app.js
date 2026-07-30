@@ -277,8 +277,13 @@
 
   // Right-hand side panel: eyebrow + name header, scrolling body, pinned footer.
   function sidePanel(o) {
+    // No stopPropagation on the panel: every control inside relies on the
+    // document-level delegated click listener, and stopping propagation here
+    // swallows those clicks before they reach it (the panel goes inert). The
+    // delegate itself refuses to resolve an inside-the-panel click to the
+    // overlay backdrop's close action.
     return '<div class="overlay" data-action="' + (o.close || 'close-overlay') + '">' +
-      '<div class="side-panel' + (o.wide ? ' wide' : '') + ' ' + (o.cls || '') + '" onclick="event.stopPropagation()">' +
+      '<div class="side-panel' + (o.wide ? ' wide' : '') + ' ' + (o.cls || '') + '">' +
       '<div class="sp-head"><div style="flex:1;min-width:0">' +
       '<div class="sp-eyebrow">' + esc(o.eyebrow || '') + '</div>' +
       '<div class="sp-name">' + (o.name || '') + '</div></div>' +
@@ -2318,6 +2323,14 @@
   /* ---- Delegated events --------------------------------------------------- */
   document.addEventListener('click', function (e) {
     var actionEl = e.target.closest('[data-action]');
+    // A click inside a side panel or modal must not walk up to the overlay
+    // backdrop's own action (close) — but real actions inside it delegate
+    // normally. This replaces the old inline stopPropagation on the panel,
+    // which silenced every inner control.
+    if (actionEl && actionEl.classList && actionEl.classList.contains('overlay') &&
+      e.target.closest && e.target.closest('.side-panel, .modal')) {
+      actionEl = null;
+    }
     if (actionEl && ACTIONS[actionEl.getAttribute('data-action')]) {
       // Native form controls (<select>, text inputs, radios / checkboxes, <textarea>)
       // are driven by the 'change' / 'input' listeners below — never by click. Running
@@ -2365,6 +2378,37 @@
     if (!t) return;
     e.preventDefault();
     ACTIONS['cfg-tag-add'](t);
+  });
+  // Rejects fix panel: validation runs on blur (focusout bubbles; blur does not).
+  document.addEventListener('focusout', function (e) {
+    if (!e.target || !e.target.closest) return;
+    var t = e.target.closest('[data-action="rej-i-field"], [data-action="rej-c-field"]');
+    if (t && ACTIONS['rej-blur-field']) ACTIONS['rej-blur-field'](t);
+  });
+  // Rejects fix panel: radio groups (fix-type cards, IRD chooser cards) follow
+  // the standard pattern — arrows move and select, Space/Enter select. Buttons
+  // get Space/Enter natively; the div-based IRD cards need it wired.
+  document.addEventListener('keydown', function (e) {
+    var t = e.target.closest && e.target.closest('.rej-panel [role="radio"]');
+    if (!t) return;
+    var group = t.closest('[role="radiogroup"]');
+    if (!group) return;
+    var radios = [].slice.call(group.querySelectorAll('[role="radio"]'))
+      .filter(function (x) { return !x.disabled && x.getAttribute('aria-disabled') !== 'true'; });
+    var i = radios.indexOf(t);
+    if (i < 0) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      var n = radios[(i + 1) % radios.length];
+      n.focus(); n.click();
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      var p = radios[(i - 1 + radios.length) % radios.length];
+      p.focus(); p.click();
+    } else if ((e.key === ' ' || e.key === 'Enter') && t.tagName !== 'BUTTON') {
+      e.preventDefault();
+      t.click();
+    }
   });
   document.addEventListener('keydown', function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); var s = el('globalSearch'); if (s) s.focus(); }
