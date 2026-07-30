@@ -598,7 +598,7 @@ window.CycleUI = function (kit) {
       '<span>Cycle schedule for this tenant</span>' +
       '<span class="cyc-sched-tag">' + esc(prof.label) + ' · ' + esc(prof.tenants) + '</span></button>';
     var body = S.cycle.schedOpen
-      ? '<div class="meta mb-16">' + esc(prof.dayNote) + ' Cutoff is the expected time plus two hours on every leg. Times IST; T is the transaction date.</div>' +
+      ? '<div class="meta mb-16">' + esc(prof.dayNote) + ' Cutoff is expected + 2h on every leg. Times IST; T is the transaction date.</div>' +
       '<table class="data"><thead><tr><th>Leg</th><th class="num">Expected</th><th class="num">Cutoff</th><th class="num">Actual</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table>'
       : '';
     return '<div class="card cyc-sched">' + head + body + '</div>';
@@ -640,15 +640,14 @@ window.CycleUI = function (kit) {
       '<div class="subtitle">Cycle ' + U.prettyDate(snap.date) + ' · ' + snap.dow +
       ' <span class="cyc-daytag" title="' + esc(DATE_TIP) + '">transaction date · cohort in ' + snap.tz.code + ' (' + snap.tz.offset + ')</span>' +
       (hol ? ' ' + pill(hol.name, hol.impact === 'Full holiday' ? 'danger' : 'warning', 'calendar-x') : '') + '</div>' +
-      '<div class="meta cyc-nowline">All processing times IST · viewed ' + esc(snap.nowLabel) + '</div>' +
+      '<div class="meta cyc-nowline">Processing times IST · viewed ' + esc(snap.nowLabel) + '</div>' +
       '</div>' +
       '<div class="cyc-head-right">' +
       (snap.status ? '<div class="cyc-status"><div class="cyc-status-pill">' + pill(snap.status.text, snap.status.kind, snap.status.icon) + '</div><div class="meta cyc-status-line">' + esc(snap.status.line) + '</div></div>' : '') +
       '<div class="head-actions">' +
-      '<button class="btn btn-secondary" data-action="cyc-back">' + icon('arrow-left', 15) + 'Back to Ops Home</button>' +
-      '<button class="btn btn-secondary" data-action="cyc-refresh">' + icon('refresh-cw', 15) + 'Refresh</button>' +
-      '<button class="btn btn-secondary" data-action="cyc-files">' + icon('folder', 15) + 'View settlement files</button>' +
-      '<button class="btn btn-secondary" data-route="#/dashboard/ops/reconciliation?reconTenant=' + t.id + (snap.recon && snap.recon.cycleId ? '&reconCycle=' + snap.recon.cycleId : '') + '">' + icon('git-compare', 15) + 'View reconciliation</button>' +
+      '<button class="icon-btn" data-action="cyc-refresh" title="Refresh" aria-label="Refresh">' + icon('refresh-cw', 18) + '</button>' +
+      '<button class="btn btn-secondary" data-action="cyc-files">' + icon('folder', 18) + 'Settlement files</button>' +
+      '<button class="btn btn-primary" data-route="#/dashboard/ops/reconciliation?reconTenant=' + t.id + (snap.recon && snap.recon.cycleId ? '&reconCycle=' + snap.recon.cycleId : '') + '">' + icon('git-compare', 18) + 'View reconciliation</button>' +
       '</div>' + nav +
       '</div></div>';
   }
@@ -706,14 +705,14 @@ window.CycleUI = function (kit) {
       '<div class="modal-head"><div class="section-title">Mark ' + leg.label + ' as sent</div>' +
       '<button class="icon-btn" data-action="cyc-mark-cancel">' + icon('x', 16) + '</button></div>' +
       '<div class="stack">' +
-      '<div class="callout warn">' + icon('hand', 20) + '<div class="callout-body">This records a <strong>manual assertion</strong> that the acquirer has the file. ' +
-      'The leg turns green on Ops Home but keeps a “manually marked” tag, so nobody reads it as a delivery the platform confirmed.</div></div>' +
+      '<div class="callout warn">' + icon('hand', 20) + '<div class="callout-body">A <strong>manual assertion</strong> that the acquirer has the file. ' +
+      'The leg keeps a <strong>manually marked</strong> tag on Ops Home.</div></div>' +
       '<dl class="def-list"><dt>Tenant</dt><dd>' + tenantTag(snap.tenant.id) + '</dd>' +
       '<dt>Network</dt><dd>' + esc(snap.network.name) + '</dd>' +
       '<dt>Cycle</dt><dd>' + U.prettyDate(snap.date) + '</dd>' +
       '<dt>Leg</dt><dd>' + leg.short + ' · ' + esc(leg.label) + '</dd>' +
       '<dt>Current state</dt><dd>' + pill(leg.meta.label, leg.meta.kind, leg.meta.icon) + '</dd></dl>' +
-      '<label class="field">Reason for manual marking <span class="req">*</span>' +
+      '<label class="field">Why are you marking this manually? <span class="req">*</span>' +
       '<textarea class="input" id="cyc-note" placeholder="e.g. Files delivered by secure email after the SFTP endpoint failed; acquirer confirmed receipt at 08:55."></textarea></label>' +
       '<div class="row" style="justify-content:flex-end;gap:10px;margin-top:8px">' +
       '<button class="btn btn-secondary" data-action="cyc-mark-cancel">Cancel</button>' +

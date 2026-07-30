@@ -25,7 +25,7 @@ window.FilesUI = function (kit) {
   // In-memory only. The tenant filter lives on S.ops.filesTenant because the
   // Ops Home queues deep-link into this screen with ?filesTenant=…
   S.files = {
-    type: 'all', delivery: 'all', validation: 'all',
+    q: '', type: 'all', delivery: 'all', validation: 'all',
     dateMode: 'today', date: TODAY, from: U.addDays(TODAY, -6), to: TODAY,
     openReport: null
   };
@@ -140,13 +140,29 @@ window.FilesUI = function (kit) {
       '<input type="date" class="sf-dateinput" data-action="sf-to" value="' + S.files.to +
       '" min="' + MIN_DATE + '" max="' + TODAY + '" /></div>';
 
-    return '<div class="filter-row sf-filters">' +
-      '<label class="field sf-field"><strong style="color:var(--text-primary)">Tenant</strong> ' + select('sf-tenant', tid, tenantOpts) + '</label>' +
-      '<label class="field sf-field">File ' + select('sf-type', S.files.type, typeOpts) + '</label>' +
-      '<label class="field sf-field">Delivery ' + select('sf-delivery', S.files.delivery, delOpts) + '</label>' +
-      '<label class="field sf-field">Validation ' + select('sf-validation', S.files.validation, valOpts) + '</label>' +
-      '<div class="sf-datefilter">' + presets + dateBox + rangeBox + '</div>' +
-      '</div>';
+    // Part 3.3 — search, then four categorical filters, then the preset, then
+    // the resolved date range, then refresh.
+    return kit.opsFilterRow({
+      search: { placeholder: 'Search file name', action: 'sf-i-q', value: S.files.q || '' },
+      filters: [
+        { action: 'sf-tenant', value: tid, label: 'Tenant', options: tenantOpts },
+        { action: 'sf-type', value: S.files.type, label: 'File', options: typeOpts },
+        { action: 'sf-delivery', value: S.files.delivery, label: 'Delivery', options: delOpts },
+        { action: 'sf-validation', value: S.files.validation, label: 'Validation', options: valOpts }
+      ],
+      preset: {
+        action: 'sf-preset', value: S.files.dateMode,
+        options: [['today', 'Today'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['date', 'Specific date'], ['range', 'Custom range']]
+      },
+      dateRange: (onDate
+        ? '<input type="date" data-action="sf-date" value="' + S.files.date + '" min="' + MIN_DATE + '" max="' + TODAY + '" aria-label="Cycle date" />'
+        : (onRange
+          ? '<input type="date" data-action="sf-from" value="' + S.files.from + '" min="' + MIN_DATE + '" max="' + TODAY + '" aria-label="From" />' +
+          '<span class="meta">–</span>' +
+          '<input type="date" data-action="sf-to" value="' + S.files.to + '" min="' + MIN_DATE + '" max="' + TODAY + '" aria-label="To" />'
+          : '<span>' + esc(range().label) + '</span>')) + kit.icon('chevron-down', 16),
+      refresh: 'sf-refresh'
+    }) + '<div class="mb-16"></div>';
   }
 
   /* ---- row actions (§C.4) ------------------------------------------------- */
@@ -198,8 +214,8 @@ window.FilesUI = function (kit) {
       (rep.rows.length
         ? '<div class="cyc-sub-title">Mismatched records</div>' +
         '<div class="table-wrap"><table class="data sf-report-table"><thead><tr><th>Record</th><th>Field</th><th class="num">File value</th><th class="num">Source value</th><th class="num">Delta</th></tr></thead><tbody>' + recRows + '</tbody></table></div>' +
-        '<div class="meta mt-16">Correct these records in the source extract, upload the corrected file, then re-run validation.</div>'
-        : '<div class="meta mt-16">Every record in the file reconciles against the source. Nothing to correct.</div>') +
+        '<div class="meta mt-16">Correct these in the source extract, upload the corrected file, then re-run validation.</div>'
+        : '<div class="meta mt-16">Every record reconciles against the source.</div>') +
       '<div class="cyc-sub-title">File history</div>' +
       '<div class="sf-events">' + kit.immutableTimeline(row.events.slice().reverse()) + '</div>' +
       '</div>';
@@ -213,6 +229,7 @@ window.FilesUI = function (kit) {
       if (f.type !== 'all' && r.type !== f.type) return false;
       if (f.delivery !== 'all' && r.delivery !== f.delivery) return false;
       if (f.validation !== 'all' && r.validation !== f.validation) return false;
+      if (f.q && r.name.toLowerCase().indexOf(f.q.toLowerCase()) < 0) return false;
       return true;
     }).sort(function (a, b) {
       if (a.date !== b.date) return a.date < b.date ? 1 : -1;
@@ -223,8 +240,9 @@ window.FilesUI = function (kit) {
 
   function table(rows) {
     if (!rows.length) {
-      return '<div class="card">' + emptyState('file-check', 'No files match',
-        'No settlement files match the current tenant, file, status or date selection.') + '</div>';
+      return '<div class="card">' + emptyState('file-check', 'No settlement files in this view',
+        'Widen the date range or clear the tenant, file and status filters.',
+        '<button class="btn btn-secondary" data-action="sf-clear">' + icon('rotate-ccw', 18) + 'Clear filters</button>') + '</div>';
     }
     var body = rows.map(function (r) {
       var cls = r.delivery === 'Failed' ? 'sf-row-failed' : (r.validation === 'Mismatch' ? 'sf-row-mismatch' : '');
@@ -245,10 +263,10 @@ window.FilesUI = function (kit) {
       var exp = open ? '<tr class="sf-expand"><td colspan="9">' + reportBlock(r) + '</td></tr>' : '';
       return main + exp;
     }).join('');
-    return '<div class="table-wrap sf-table-wrap"><table class="data sf-table"><thead><tr>' +
+    return '<div class="table-card"><div class="table-wrap sf-table-wrap"><table class="data sf-table"><thead><tr>' +
       '<th class="sf-tenant-col">Tenant</th><th>Cycle date</th><th>File</th>' +
       '<th>Delivery status</th><th>Validation status</th><th>Generated at</th><th>Shared at</th>' +
-      '<th class="num">Size</th><th>Actions</th></tr></thead><tbody>' + body + '</tbody></table></div>';
+      '<th class="num">Size</th><th>Actions</th></tr></thead><tbody>' + body + '</tbody></table></div></div>';
   }
 
   /* ---- screen ------------------------------------------------------------- */
@@ -258,8 +276,8 @@ window.FilesUI = function (kit) {
     var tid = S.ops.filesTenant;
     var scope = tid === 'all' ? 'all acquirers' : O.tenantById[tid].name;
     setView(
-      '<div class="page-head"><div><h1 class="page-title">Settlement File Monitoring</h1>' +
-      '<div class="subtitle">Delivery to the acquirer and validation against the base DB source · one row per tenant × cycle date × file</div></div></div>' +
+      kit.pageHead('Settlement File Monitoring',
+        'Whether each settlement file reached the acquirer, and whether its contents match the source.') +
       overviewStrip(rg) +
       filters() +
       '<div class="sf-scope meta">Showing <strong>' + rows.length + '</strong> file' + (rows.length === 1 ? '' : 's') +
@@ -286,13 +304,12 @@ window.FilesUI = function (kit) {
       '<div class="modal-head"><div class="section-title">Mark as shared with the acquirer</div>' +
       '<button class="icon-btn" data-action="sf-close">' + icon('x', 16) + '</button></div>' +
       '<div class="stack">' +
-      '<div class="callout warn">' + icon('hand', 20) + '<div class="callout-body">This records a <strong>manual assertion</strong>, not a system-confirmed delivery. ' +
-      'The row stays tagged “manually marked” so nobody later mistakes it for a transfer the platform saw complete.</div></div>' +
+      '<div class="callout warn">' + icon('hand', 20) + '<div class="callout-body">A manual assertion, not a confirmed delivery. The row stays tagged <strong>manually marked</strong>.</div></div>' +
       '<dl class="def-list"><dt>File</dt><dd class="mono">' + esc(row.name) + '</dd>' +
       '<dt>Tenant</dt><dd>' + tenantTag(row.tenantId) + '</dd>' +
       '<dt>Cycle date</dt><dd>' + U.prettyDate(row.date) + '</dd>' +
       '<dt>Current status</dt><dd>' + pill(F.DELIVERY[row.delivery].label, F.DELIVERY[row.delivery].kind) + '</dd></dl>' +
-      '<label class="field">Reason for manual marking <span class="req">*</span>' +
+      '<label class="field">Why are you marking this manually? <span class="req">*</span>' +
       '<textarea class="input" id="sf-note" placeholder="e.g. Acquirer confirmed receipt by email at 08:40 — transfer log never registered the ACK."></textarea></label>' +
       '<div class="row" style="justify-content:flex-end;gap:10px;margin-top:8px">' +
       '<button class="btn btn-secondary" data-action="sf-close">Cancel</button>' +
@@ -308,8 +325,7 @@ window.FilesUI = function (kit) {
       '<dl class="def-list"><dt>Replacing</dt><dd class="mono">' + esc(row.name) + '</dd>' +
       '<dt>Current size</dt><dd class="num">' + row.size + '</dd>' +
       '<dt>Validation</dt><dd>' + pill(F.VALIDATION[row.validation].label, F.VALIDATION[row.validation].kind) + '</dd></dl>' +
-      '<div class="callout info">' + icon('info', 20) + '<div class="callout-body">The corrected file becomes the active file for this row and ' +
-      '<strong>validation resets to Not run</strong>. In production this writes to S3; here the upload is simulated.</div></div>' +
+      '<div class="callout info">' + icon('info', 20) + '<div class="callout-body">This becomes the active file for the row and <strong>validation resets to Not run</strong>.</div></div>' +
       '<label class="field">Choose the corrected file' +
       '<input type="file" class="input sf-file" data-action="sf-upload-file" data-id="' + esc(row.id) + '" /></label>' +
       '<div class="row" style="justify-content:flex-end;gap:10px;margin-top:8px">' +
@@ -371,6 +387,18 @@ window.FilesUI = function (kit) {
     'sf-delivery': function (t) { S.files.delivery = t.value; render(); },
     'sf-validation': function (t) { S.files.validation = t.value; render(); },
     'sf-datemode': function (t) { S.files.dateMode = t.getAttribute('data-mode'); S.files.openReport = null; render(); },
+    'sf-preset': function (t) { S.files.dateMode = t.value; S.files.openReport = null; render(); },
+    'sf-i-q': function (t) {
+      S.files.q = t.value; S.files.openReport = null; render();
+      var i = el('view').querySelector('[data-action="sf-i-q"]');
+      if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+    },
+    'sf-clear': function () {
+      S.ops.filesTenant = 'all';
+      S.files.q = ''; S.files.type = 'all'; S.files.delivery = 'all'; S.files.validation = 'all';
+      S.files.dateMode = '30'; S.files.openReport = null; render();
+    },
+    'sf-refresh': function () { S.files.openReport = null; render(); toast('Refreshed', 'success'); },
     'sf-date': function (t) { S.files.date = clampDate(t.value || TODAY); S.files.dateMode = 'date'; S.files.openReport = null; render(); },
     'sf-from': function (t) { S.files.from = clampDate(t.value || S.files.from); S.files.dateMode = 'range'; S.files.openReport = null; render(); },
     'sf-to': function (t) { S.files.to = clampDate(t.value || S.files.to); S.files.dateMode = 'range'; S.files.openReport = null; render(); },

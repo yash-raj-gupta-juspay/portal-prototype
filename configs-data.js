@@ -105,6 +105,36 @@ window.CFGDATA = (function () {
       return { name: d[0], length: d[1] || null, type: d[2] || 'AN', note: F.describe(d[0]) };
     });
   }
+  /* =========================================================================
+     Parsing issues (overhaul Part 5.4) — mocked, deterministic.
+     Fields that turned up in recent incoming files but are not declared by the
+     current configuration. This is the most common reason anyone opens an
+     incoming parsing config, so the screen leads with it.
+     There is no backend: the set is derived from the config id so it is stable
+     across renders, and each entry carries what the platform would already know
+     from the file — the name as seen, an inferred window, and a content type.
+     ========================================================================= */
+  var ISSUE_POOL = [
+    { field: 'mandate_type', files: 12, since: '28 Jul', start: 118, length: 2, type: 'AN', note: 'Recurring mandate classification' },
+    { field: 'chargeback_ref_id', files: 4, since: '29 Jul', start: 120, length: 15, type: 'AN', note: 'Network chargeback reference' },
+    { field: 'original_txn_date', files: 2, since: '30 Jul', start: 135, length: 8, type: 'N', note: 'Date of the original presentment' },
+    { field: 'settlement_indicator', files: 7, since: '27 Jul', start: 143, length: 1, type: 'AN', note: 'Settlement service indicator' },
+    { field: 'fee_program_id', files: 3, since: '30 Jul', start: 144, length: 3, type: 'AN', note: 'Fee program the item was priced under' }
+  ];
+  function parsingIssues(cfg) {
+    if (!cfg || cfg.family !== 'incoming-parsing') return [];
+    // Deterministic per config: the id decides how many issues and which.
+    var seed = 0, id = String(cfg.configId || '');
+    for (var i = 0; i < id.length; i++) seed = (seed * 31 + id.charCodeAt(i)) % 9973;
+    // Only parser configs: "a field isn't being read" is a parser concern, and
+    // the panel renders on that tab.
+    if (cfg.subType !== 'parser') return [];
+    var n = 1 + (seed % 3);                  // 1–3 unrecognised fields
+    var out = [];
+    for (var j = 0; j < n; j++) out.push(ISSUE_POOL[(seed + j) % ISSUE_POOL.length]);
+    return out;
+  }
+
   function isFiller(f) { return /filler|reserved|unused|rfu/i.test(f.name || ''); }
   function fieldNames(body) {
     var out = [];
@@ -2008,6 +2038,7 @@ window.CFGDATA = (function () {
     itemKeyForConfig: itemKeyForConfig, splitReport: splitReport,
     // helpers
     clone: clone, ts: ts, packFields: packFields, placedFields: placedFields,
+    parsingIssues: parsingIssues,
     isFiller: isFiller, fieldNames: fieldNames, inputColumns: inputColumns,
     blankBody: blankBody, nextId: nextId, holidayOn: holidayOn, TODAY: TODAY
   };

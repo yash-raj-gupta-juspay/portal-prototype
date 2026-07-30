@@ -9,7 +9,8 @@ window.ConfigsUI = function (kit) {
   var S = window.AppState;
   var icon = kit.icon, esc = kit.esc, pill = kit.pill, cardBox = kit.cardBox, emptyState = kit.emptyState,
     setView = kit.setView, toast = kit.toast, el = kit.el, go = kit.go, tenantTag = kit.tenantTag,
-    slaBadge = kit.slaBadge, immutableEntry = kit.immutableEntry, immutablePair = kit.immutablePair;
+    slaBadge = kit.slaBadge, immutableEntry = kit.immutableEntry, immutablePair = kit.immutablePair,
+    pageHead = kit.pageHead, tableCard = kit.tableCard, opsFilterRow = kit.opsFilterRow, opsToggle = kit.opsToggle;
 
   /* ---- In-memory screen state (no browser storage) ----------------------- */
   S.cfg = {
@@ -37,7 +38,18 @@ window.ConfigsUI = function (kit) {
     history: { open: false, a: null, b: null, compare: false },
     drawer: null,
     showUnchanged: false,
-    queue: { tab: 'pending', family: 'all', submitter: 'all', sla: 'all' }
+    queue: { tab: 'pending', family: 'all', submitter: 'all', sla: 'all' },
+    // Task-based landing (Part 5.1) — which task the user came in on, and the
+    // Browse all configurations disclosure beneath the task cards.
+    task: null, browseOpen: false, browseFam: 'network-file', unusedOpen: false, parseForm: null,
+    // Layout ruler: hovered field index and the pre-filled add-field form.
+    hoverField: null, gapForm: null,
+    // Incoming parsing issues that have been resolved this session.
+    parsedFixed: {},
+    // Fee calculator inputs (Part 5.5 tab 3).
+    feeCalc: { amount: 250000, network: 'Mastercard', card: 'Credit' },
+    // Sample-file test output (Part 5.4).
+    sampleTest: null
   };
 
   var SEG = { 'network-file': 'network-files', settlement: 'settlement', 'incoming-parsing': 'incoming' };
@@ -46,13 +58,15 @@ window.ConfigsUI = function (kit) {
   function famRoute(fam, id) { return '#/dashboard/ops/configs/' + SEG[fam] + (id ? '/' + id : ''); }
 
   /* ---- State pills — same vocabulary as Fee Config Approvals (Part 8.2) -- */
+  /* Part 5.6 — plain status vocabulary. The maker-checker states themselves are
+     unchanged; only what they are called on screen is. */
   var STATE_PILL = {
     DRAFT: ['Draft', 'neutral', 'file-pen'],
-    PENDING_APPROVAL: ['Pending Approval', 'info', 'clock'],
+    PENDING_APPROVAL: ['Waiting for approval', 'info', 'clock'],
     APPROVED: ['Approved', 'success', 'badge-check'],
-    ACTIVE: ['Active', 'success', 'check'],
-    INACTIVE: ['Inactive', 'neutral', 'pause'],
-    REJECTED: ['Rejected', 'danger', 'x-circle']
+    ACTIVE: ['Live', 'success', 'check-circle'],
+    INACTIVE: ['Turned off', 'neutral', 'pause'],
+    REJECTED: ['Not approved', 'danger', 'x-circle']
   };
   function statePill(cfg) {
     var d = STATE_PILL[cfg.state] || ['Unknown', 'neutral', 'help-circle'];
@@ -328,8 +342,8 @@ window.ConfigsUI = function (kit) {
     }
 
     var table = list.length
-      ? '<div class="table-wrap"><table class="data cfg-list-table"><thead><tr><th>' + (fam === 'settlement' ? 'Report' : 'Config') + '</th><th>State · last updated</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
-      : emptyState('search-x', 'No configs match', 'Adjust the filters or search to see configs in this family.');
+      ? '<div class="table-wrap"><table class="data cfg-list-table"><thead><tr><th>' + (fam === 'settlement' ? 'Report' : 'Config') + '</th><th>Status · last updated</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      : emptyState('search-x', 'Nothing matches', 'Clear the search or the filters to see everything in this family.');
 
     return '<div class="cfg-pane cfg-list" id="cfgListPane">' +
       '<div class="cfg-pane-head">' +
@@ -341,7 +355,7 @@ window.ConfigsUI = function (kit) {
       '<button class="btn btn-primary btn-sm" data-action="cfg-new">' + icon('plus', 14) + 'Create new</button>' +
       '</div>' +
       '<div class="chip search-chip cfg-search">' + icon('search', 15) +
-      '<input class="input" placeholder="Search config name" value="' + esc(f.q) + '" data-action="cfgi-list-q" />' +
+      '<input class="input" placeholder="Search by name" value="' + esc(f.q) + '" data-action="cfgi-list-q" />' +
       '</div>' +
       '<div class="cfg-filters">' +
       '<select class="input" data-action="cfgc-list-tenant"><option value="all">All entities</option>' +
@@ -480,10 +494,16 @@ window.ConfigsUI = function (kit) {
     }).join('');
     return '<div class="cfg-tabbar" id="cfgTabBar">' +
       '<div class="tabs cfg-tabs">' + tabHtml + '</div>' +
+      // Part 5.2 — Simple is the default and the fully usable path; Advanced is
+      // the same JSON/YAML editor, and is the guarantee that nothing the Simple
+      // surface does not render is unreachable.
       '<div class="mode-toggle" role="tablist" aria-label="Editor mode">' +
-      '<button class="' + (S.cfg.mode === 'form' ? 'active' : '') + '" data-action="cfg-mode" data-mode="form" role="tab">' + icon('list', 14) + 'Form</button>' +
-      '<button class="' + (S.cfg.mode === 'raw' ? 'active' : '') + '" data-action="cfg-mode" data-mode="raw" role="tab">' + icon('braces', 14) + 'Raw</button>' +
-      '</div></div>';
+      '<button class="' + (S.cfg.mode === 'form' ? 'active' : '') + '" data-action="cfg-mode" data-mode="form" role="tab">' + icon('list', 14) + 'Simple</button>' +
+      '<button class="' + (S.cfg.mode === 'raw' ? 'active' : '') + '" data-action="cfg-mode" data-mode="raw" role="tab">' + icon('braces', 14) + 'Advanced</button>' +
+      '</div></div>' +
+      (S.cfg.mode === 'raw'
+        ? '<div class="meta cfg-mode-note">Editing the raw configuration. Changes here still require approval.</div>'
+        : '');
   }
 
   /* ---- Raw mode ---------------------------------------------------------- */
@@ -492,10 +512,10 @@ window.ConfigsUI = function (kit) {
     if (e.raw == null) e.raw = X.serialize(e.body, S.cfg.rawFormat);
     var errBar = e.rawErr
       ? '<div class="raw-err">' + icon('alert-triangle', 15) + esc(e.rawErr) + '</div>'
-      : '<div class="raw-ok">' + icon('check-circle', 15) + S.cfg.rawFormat.toUpperCase() + ' parses cleanly — the form tabs reflect these values.</div>';
+      : '<div class="raw-ok">' + icon('check-circle', 15) + S.cfg.rawFormat.toUpperCase() + ' parses cleanly — Simple mode reflects these values.</div>';
     return '<div class="raw-wrap">' +
       '<div class="raw-head">' +
-      '<div class="meta">Edits here update the same in-memory config object the form tabs bind to. Keys the form does not render are preserved.</div>' +
+      '<div class="meta">Same config object as Simple mode. Keys Simple does not render are preserved.</div>' +
       '<div class="fmt-toggle">' +
       '<button class="' + (S.cfg.rawFormat === 'json' ? 'active' : '') + '" data-action="cfg-rawfmt" data-fmt="json">JSON</button>' +
       '<button class="' + (S.cfg.rawFormat === 'yaml' ? 'active' : '') + '" data-action="cfg-rawfmt" data-fmt="yaml">YAML</button>' +
@@ -562,10 +582,10 @@ window.ConfigsUI = function (kit) {
     var specific = '';
     if (fmt === 'fixed_width') {
       specific = '<div class="cfg-grid-4">' +
-        fld('Record length', txt('record_length', b.record_length, { type: 'number', cast: 'int', refresh: 'bytemap', cls: 'num' })) +
+        fld('Record length (characters)', txt('record_length', b.record_length, { type: 'number', cast: 'int', refresh: 'bytemap', cls: 'num' })) +
         fld('Padding character', txt('padding_char', b.padding_char, { maxlength: 1, ph: 'space', cls: 'mono' }),
-          'single character · currently ' + (b.padding_char === ' ' ? 'a space' : '"' + String(b.padding_char == null ? '' : b.padding_char) + '"')) +
-        fld('Encoding', selIn('encoding', b.encoding, ['ASCII', 'EBCDIC'], { refresh: 'validation' })) +
+          'One character · currently ' + (b.padding_char === ' ' ? 'a space' : '"' + String(b.padding_char == null ? '' : b.padding_char) + '"')) +
+        fld('Character encoding', selIn('encoding', b.encoding, ['ASCII', 'EBCDIC'], { refresh: 'validation' })) +
         '</div>';
     } else if (fmt === 'xml') {
       var x = b.xml_file_config || (b.xml_file_config = {});
@@ -610,7 +630,41 @@ window.ConfigsUI = function (kit) {
     return fmtPicker + specific + strip + ext;
   }
 
-  /* ---- Fixed width (Visa) ------------------------------------------------- */
+  /* ---- Fixed width (Visa) -------------------------------------------------
+     Part 5.3 — the ruler renders full content width ABOVE the field table and
+     is the primary interface. Every technical key carries a plain-language
+     label; the bound path is unchanged, so each control still writes exactly
+     the config key it always did. */
+
+  // Part 5.3 — content type as words, not codes.
+  var TYPE_LABEL = [['N', 'Numbers only'], ['AN', 'Letters and numbers']];
+
+  /* The add-field form, pre-filled from a gap in the ruler. This is the whole
+     point of making the gaps clickable: the user reads the spec, sees the hole,
+     clicks it, and types in what belongs there. */
+  function gapForm(rtIndex) {
+    var g = S.cfg.gapForm;
+    if (!g || g.rt !== rtIndex) return '';
+    return '<div class="gap-form">' +
+      '<div class="gap-form-head">' + icon('plus-circle', 18) +
+      '<strong>Add a field at characters <span class="num">' + g.start + '</span>–<span class="num">' + (g.start + g.len - 1) + '</span></strong>' +
+      '<button class="icon-btn xs" data-action="cfg-gap-cancel" title="Cancel" aria-label="Cancel">' + icon('x', 14) + '</button></div>' +
+      '<div class="cfg-grid-4">' +
+      fld('Field name', '<input class="input" id="gapName" placeholder="e.g. Acquirer reference number" />') +
+      fld('Starts at character', '<input class="input num" id="gapStart" type="number" value="' + g.start + '" />') +
+      fld('Length (characters)', '<input class="input num" id="gapLen" type="number" value="' + g.len + '" />') +
+      fld('Content type', '<select class="input" id="gapType">' +
+        TYPE_LABEL.map(function (t) { return '<option value="' + t[0] + '">' + t[1] + '</option>'; }).join('') + '</select>') +
+      '</div>' +
+      '<div class="cfg-grid-2 mt-16">' +
+      fld('Notes', '<input class="input" id="gapNote" placeholder="What this field carries, per the spec" />') +
+      '</div>' +
+      '<div class="row mt-16" style="gap:10px;justify-content:flex-end">' +
+      '<button class="btn btn-secondary" data-action="cfg-gap-cancel">Cancel</button>' +
+      '<button class="btn btn-primary" data-action="cfg-gap-add" data-rt="' + rtIndex + '">' + icon('plus', 18) + 'Add field</button>' +
+      '</div></div>';
+  }
+
   function nfRecordsFixed() {
     var e = edit(), b = e.body;
     return (b.record_types || []).map(function (rt, i) {
@@ -618,13 +672,13 @@ window.ConfigsUI = function (kit) {
       var packed = !!S.cfg.autoPack[e.configId + ':' + i];
       var rows = (rt.fields || []).map(function (f, j) {
         var fp = path + '.fields.' + j;
-        return '<tr draggable="true" data-dnd="' + path + '.fields" data-idx="' + j + '">' +
+        return '<tr draggable="true" data-dnd="' + path + '.fields" data-idx="' + j + '" data-fieldkey="' + i + '-' + j + '">' +
           '<td class="grip">' + icon('grip-vertical', 14) + '</td>' +
           '<td class="num idx">' + (j + 1) + '</td>' +
           '<td>' + txt(fp + '.name', f.name, { refresh: 'bytemap' }) + '</td>' +
           '<td class="num">' + txt(fp + '.start', f.start, { type: 'number', cast: 'int', cls: 'num w-70', refresh: 'bytemap' }) + '</td>' +
           '<td class="num">' + txt(fp + '.length', f.length, { type: 'number', cast: 'int', cls: 'num w-70', refresh: 'bytemap' }) + '</td>' +
-          '<td>' + selIn(fp + '.type', f.type, C.FIELD_TYPES, { cls: 'w-70', refresh: 'bytemap' }) + '</td>' +
+          '<td>' + selIn(fp + '.type', f.type, TYPE_LABEL, { cls: 'w-180', refresh: 'bytemap' }) + '</td>' +
           '<td class="src-col">' + srcCell(b, f.name) + '</td>' +
           '<td>' + txt(fp + '.note', f.note, { ph: '—' }) + '</td>' +
           '<td class="row-actions">' +
@@ -642,15 +696,25 @@ window.ConfigsUI = function (kit) {
         groupChip(b, rt) +
         '</div>' +
         '<div class="row" style="gap:8px;align-items:center">' +
-        '<label class="cfg-toggle"><input type="checkbox"' + (packed ? ' checked' : '') + ' data-action="cfgc-autopack" data-rt="' + i + '" /><span>Auto-pack sequential positions</span></label>' +
         iconBtn('cfg-arr-del', 'trash-2', 'Delete record type', 'data-path="record_types" data-idx="' + i + '"') +
         '</div></div>' +
+
+        // The ruler first, full width — it is what the user reads the layout from.
+        '<div class="bm-wrap" id="bmw-' + i + '">' +
+        X.byteMapHtml(b.record_length, rt.fields, { interactive: true, rt: i }) + '</div>' +
+        gapForm(i) +
+
         '<div class="table-wrap"><table class="data cfg-field-table" data-dnd-table="' + path + '.fields"><thead><tr>' +
-        '<th></th><th class="num">#</th><th>Field name</th><th class="num">Start</th><th class="num">Length</th><th>Type</th>' +
-        '<th>' + srcHeader() + '</th><th>Note</th><th></th>' +
-        '</tr></thead><tbody>' + (rows || '<tr><td colspan="9" class="meta" style="padding:18px">No fields yet — add the first one.</td></tr>') + '</tbody></table></div>' +
-        '<div class="mt-16">' + addBtn('Add field', 'cfg-arr-add', 'data-path="' + path + '.fields" data-tpl="field"') + '</div>' +
-        '<div class="bm-wrap" id="bmw-' + i + '">' + X.byteMapHtml(b.record_length, rt.fields, { title: 'Byte map · record type ' + esc(rt.record_type || '?') }) + '</div>' +
+        '<th></th><th class="num">#</th><th>Field name</th><th class="num">Starts at</th><th class="num">Length</th><th>Content type</th>' +
+        '<th>' + srcHeader() + '</th><th>Notes</th><th></th>' +
+        '</tr></thead><tbody>' + (rows || '<tr><td colspan="9" class="meta" style="padding:18px">No fields yet — click a gap in the ruler above, or use Add field.</td></tr>') + '</tbody></table></div>' +
+        '<div class="mt-16 row" style="gap:10px;align-items:center">' +
+        addBtn('Add field', 'cfg-arr-add', 'data-path="' + path + '.fields" data-tpl="field"') +
+        '<button class="btn btn-secondary btn-sm" data-action="cfg-autopack-run" data-rt="' + i + '" ' +
+        'title="Recalculate every start position so the fields run back to back from character 1">' +
+        icon('wand-2', 16) + 'Fix positions automatically</button>' +
+        '<label class="cfg-toggle"><input type="checkbox"' + (packed ? ' checked' : '') + ' data-action="cfgc-autopack" data-rt="' + i + '" /><span>Keep positions contiguous while editing</span></label>' +
+        '</div>' +
         '</div>';
     }).join('');
   }
@@ -772,13 +836,13 @@ window.ConfigsUI = function (kit) {
     var addLabel = fmt === 'xml' ? 'Add record' : 'Add record type';
     var tpl = fmt === 'xml' ? 'xmlrecord' : (fmt === 'csv' ? 'csvrecord' : 'recordtype');
     var title = fmt === 'csv' ? 'Record types — DE / PDS columns' : (fmt === 'xml' ? 'Records' : 'Record types');
-    return nfHeader() +
+    return taskHint() + nfHeader() +
       '<div class="cfg-section-title mt-24">' + title + '</div>' + records +
       '<div class="mt-16">' + addBtn(addLabel, 'cfg-arr-add', 'data-path="record_types" data-tpl="' + tpl + '"') + '</div>' +
       (fmt === 'csv'
-        ? '<div class="callout info mt-24">' + icon('info', 18) + '<div class="callout-body">Mastercard is CSV, not TCR — there is no record length, no byte positions and no byte map. Composite elements (DE43 → name / suburb / postcode, DE48 → its PDS elements) collapse into an accordion; expand a parent to edit its sub-fields.</div></div>'
+        ? '<div class="callout info mt-24">' + icon('info', 18) + '<div class="callout-body">Mastercard files are CSV — columns, not character positions. Expand a composite element to edit its sub-fields.</div></div>'
         : fmt === 'xml'
-          ? '<div class="callout info mt-24">' + icon('info', 18) + '<div class="callout-body">RuPay is XML — records are elements and every field carries a tag, so there is no record length, no start / length and no byte map. Record order here is element order in the output.</div></div>'
+          ? '<div class="callout info mt-24">' + icon('info', 18) + '<div class="callout-body">RuPay files are XML — records are elements and every field carries a tag. Row order is element order in the output.</div></div>'
           : '') +
       dataList('dl-layout-fields', C.fieldNames(b));
   }
@@ -815,11 +879,36 @@ window.ConfigsUI = function (kit) {
       '</tr>';
   }
 
+  /* Part 5.3 — the data mapping tab is a two-column visual, not a JSON editor:
+     the data we have on the left, the field in the file on the right, and the
+     connection drawn between them. Unmapped file fields are counted and
+     highlighted; unused source data is informational, not a problem.
+     Every control still writes the same `field_mappings` keys as before, and
+     the transform / params editors are unchanged — they sit inside the row. */
+  function mapRow(b, name, depth) {
+    var m = (b.transform.field_mappings || {})[name] || {};
+    var p = 'transform.field_mappings.' + name;
+    var src = m.source || '';
+    return '<div class="map-row' + (depth ? ' child' : '') + (src ? '' : ' unmapped') + '">' +
+      '<div class="map-left">' +
+      txt(p + '.source', src, { list: 'dl-input-cols', cls: 'mono', ph: 'pick the source data', refresh: 'validation' }) +
+      '</div>' +
+      '<div class="map-arrow">' + icon('arrow-right', 18) + '</div>' +
+      '<div class="map-right">' +
+      '<span class="map-field mono">' + esc(name) + '</span>' +
+      '<span class="map-src">' + srcCell(b, name) + '</span>' +
+      '</div>' +
+      '<div class="map-detail">' +
+      '<label class="field inline">Transform ' + selIn(p + '.transform', m.transform || 'passthrough', F.TRANSFORMS, { cls: 'w-180', refresh: 'validation' }) + '</label>' +
+      paramsEditor(p + '.params', m.params) +
+      iconBtn('cfg-map-del', 'trash-2', 'Remove mapping', 'data-path="transform.field_mappings" data-key="' + esc(name) + '"') +
+      '</div></div>';
+  }
+
   function nfFieldMappings() {
     var e = edit(), b = e.body, tf = b.transform || (b.transform = {});
     var fmMap = tf.field_mappings || (tf.field_mappings = {});
     var mapped = Object.keys(fmMap);
-    // Composite children nest under their parent, mirroring the Layout accordion.
     var allFields = [];
     (b.record_types || []).forEach(function (rt) { (rt.fields || []).forEach(function (f) { allFields.push(f); }); });
     var childOf = F.childIndex(b, allFields);
@@ -827,22 +916,54 @@ window.ConfigsUI = function (kit) {
     mapped.forEach(function (n) { if (!childOf[n]) parents[n] = []; });
     mapped.forEach(function (n) { var p = childOf[n]; if (p && parents[p]) parents[p].push(n); else if (p && !parents[p]) parents[n] = parents[n] || []; });
     Object.keys(parents).forEach(function (n) {
-      rows += fmRow(b, n, null, 0);
-      parents[n].forEach(function (c) { rows += fmRow(b, c, null, 1); });
+      rows += mapRow(b, n, 0);
+      parents[n].forEach(function (c) { rows += mapRow(b, c, 1); });
     });
 
+    // Fields declared in the layout that nothing feeds — the thing this screen
+    // exists to surface.
     var unmappedOpts = C.fieldNames(b).filter(function (n) { return mapped.indexOf(n) < 0; });
-    return '<div class="cfg-section-title">Field mapping <span class="meta">— one entry per output field, from <code>field_mappings</code></span></div>' +
-      '<div class="cfg-block">' +
-      '<div class="table-wrap"><table class="data cfg-sub-table fm-table"><thead><tr>' +
-      '<th>Output field</th><th>Source</th><th>Transform</th><th>Params</th><th>' + srcHeader() + '</th><th></th>' +
-      '</tr></thead><tbody>' + (rows || '<tr><td colspan="6" class="meta" style="padding:14px">No field mappings yet.</td></tr>') + '</tbody></table></div>' +
+    var noSource = mapped.filter(function (n) { return !(fmMap[n] || {}).source; });
+    var missing = unmappedOpts.length + noSource.length;
+
+    var unmappedList = unmappedOpts.length
+      ? '<div class="map-unmapped">' + unmappedOpts.map(function (n) {
+        return '<button class="map-unmapped-chip" data-action="cfg-map-quick" data-name="' + esc(n) + '">' +
+          icon('plus', 14) + '<span class="mono">' + esc(n) + '</span></button>';
+      }).join('') + '</div>'
+      : '';
+
+    // Source data the file does not use. Informational, collapsed.
+    var used = {};
+    mapped.forEach(function (n) { if (fmMap[n] && fmMap[n].source) used[fmMap[n].source] = true; });
+    var unused = C.inputColumns(b).filter(function (c) { return !used[c]; });
+
+    return taskHint() +
+      '<div class="cfg-section-title">Data mapping</div>' +
+      (missing
+        ? '<div class="map-warn">' + icon('alert-triangle', 18) +
+        '<span><strong><span class="num">' + missing + '</span> field' + (missing === 1 ? '' : 's') +
+        ' in the file ha' + (missing === 1 ? 's' : 've') + ' no data mapped.</strong> Pick one below to map it.</span></div>' + unmappedList
+        : '<div class="map-ok">' + icon('check-circle', 18) + '<span>Every field in the file has data mapped to it.</span></div>') +
+      '<div class="map-grid">' +
+      '<div class="map-head"><span>Data we have</span><span></span><span>Field in the file</span></div>' +
+      (rows || '<div class="meta" style="padding:14px">Nothing mapped yet.</div>') +
+      '</div>' +
       '<div class="mt-16 row" style="gap:8px;align-items:center">' +
       '<select class="input w-260" id="fmsel">' +
       (unmappedOpts.length ? unmappedOpts.map(function (n) { return '<option value="' + esc(n) + '">' + esc(n) + '</option>'; }).join('')
-        : '<option value="">— every layout field is already mapped —</option>') + '</select>' +
-      addBtn('Add field mapping', 'cfg-map-add', 'data-path="transform.field_mappings" data-sel="fmsel" data-tpl="fieldmap"') +
-      '</div></div>';
+        : '<option value="">— every field in the file is already mapped —</option>') + '</select>' +
+      addBtn('Map another field', 'cfg-map-add', 'data-path="transform.field_mappings" data-sel="fmsel" data-tpl="fieldmap"') +
+      '</div>' +
+      (unused.length
+        ? '<div class="map-unused">' +
+        '<button class="map-unused-head" data-action="cfg-unused" aria-expanded="' + (S.cfg.unusedOpen ? 'true' : 'false') + '">' +
+        icon(S.cfg.unusedOpen ? 'chevron-down' : 'chevron-right', 16) +
+        'Source data this file does not use <span class="meta"><span class="num">' + unused.length + '</span> available</span></button>' +
+        (S.cfg.unusedOpen
+          ? '<div class="map-unused-body">' + unused.map(function (c) { return '<span class="mono map-chip">' + esc(c) + '</span>'; }).join('') + '</div>'
+          : '') + '</div>'
+        : '');
   }
 
   function groupSection(b, g, gi) {
@@ -1036,54 +1157,92 @@ window.ConfigsUI = function (kit) {
   /* =======================================================================
      TAB BODIES — Family 2 · Settlement
      ======================================================================= */
-  function schedBlock(block, prefix, isRule) {
-    var td = block.transaction_date || {};
-    return '<div class="cfg-grid-2">' +
-      '<div class="sched-field"><span class="sf-label">Transaction date — from</span>' +
-      '<div class="sf-row">' + offsetPicker(prefix + '.transaction_date.from.offset', (td.from || {}).offset) +
-      txt(prefix + '.transaction_date.from.time', (td.from || {}).time, { cls: 'mono w-120', ph: 'HH:MM:SS', refresh: 'preview' }) + '</div></div>' +
-      '<div class="sched-field"><span class="sf-label">Transaction date — to</span>' +
-      '<div class="sf-row">' + offsetPicker(prefix + '.transaction_date.to.offset', (td.to || {}).offset) +
-      txt(prefix + '.transaction_date.to.time', (td.to || {}).time, { cls: 'mono w-120', ph: 'HH:MM:SS', refresh: 'preview' }) + '</div></div>' +
-      '<div class="sched-field"><span class="sf-label">Report offset</span><div class="sf-row">' + offsetPicker(prefix + '.report_offset', block.report_offset) + '</div></div>' +
-      '<div class="sched-field"><span class="sf-label">Calendar</span><div class="sf-row wrap">' +
-      toggle(prefix + '.sundays_off', block.sundays_off, 'Sundays off', { refresh: 'preview' }) +
-      toggle(prefix + '.saturdays_off', block.saturdays_off, 'Saturdays off', { refresh: 'preview' }) +
-      toggle(prefix + '.apply_general_holiday', block.apply_general_holiday, 'Apply general holiday', { refresh: 'preview' }) +
-      '</div></div></div>';
+  /* =======================================================================
+     5.5 · Settlement — Tab 1 "When does it run?"
+     The offset grammar (T-1, T+0) is replaced by plain controls. Nobody has to
+     reason about T±n arithmetic: they change a control and read Next 5 runs.
+     The bound paths are unchanged — this is a relabelling, not a new model.
+     ======================================================================= */
+  function offsetOptions() {
+    var out = [];
+    for (var n = -5; n <= 5; n++) {
+      var label = n === 0 ? 'the report date'
+        : (n < 0 ? Math.abs(n) + ' day' + (n === -1 ? '' : 's') + ' before the report date'
+          : n + ' day' + (n === 1 ? '' : 's') + ' after the report date');
+      out.push([X.fmtOffset(n), label]);
+    }
+    return out;
+  }
+  function runOffsetOptions() {
+    var out = [];
+    for (var n = -5; n <= 5; n++) {
+      var label = n === 0 ? 'the same day'
+        : (n < 0 ? Math.abs(n) + ' day' + (n === -1 ? '' : 's') + ' earlier'
+          : n + ' day' + (n === 1 ? '' : 's') + ' later');
+      out.push([X.fmtOffset(n), label]);
+    }
+    return out;
   }
 
+  function schedBlock(block, prefix, isRule) {
+    var td = block.transaction_date || {};
+    return '<div class="sched-plain">' +
+      '<div class="sched-line"><span class="sched-lead">This report covers transactions from</span></div>' +
+      '<div class="sched-line indent">' +
+      selIn(prefix + '.transaction_date.from.offset', (td.from || {}).offset, offsetOptions(), { cls: 'w-260', refresh: 'preview' }) +
+      '<span class="sched-kw">at</span>' +
+      txt(prefix + '.transaction_date.from.time', (td.from || {}).time, { cls: 'mono w-120', ph: 'HH:MM:SS', refresh: 'preview' }) +
+      '</div>' +
+      '<div class="sched-line"><span class="sched-lead">through</span></div>' +
+      '<div class="sched-line indent">' +
+      selIn(prefix + '.transaction_date.to.offset', (td.to || {}).offset, offsetOptions(), { cls: 'w-260', refresh: 'preview' }) +
+      '<span class="sched-kw">at</span>' +
+      txt(prefix + '.transaction_date.to.time', (td.to || {}).time, { cls: 'mono w-120', ph: 'HH:MM:SS', refresh: 'preview' }) +
+      '</div>' +
+      '<div class="sched-line mt-16">' +
+      '<span class="sched-lead">The report is generated on</span>' +
+      selIn(prefix + '.report_offset', block.report_offset, runOffsetOptions(), { cls: 'w-200', refresh: 'preview' }) +
+      '</div>' +
+      '<div class="sched-toggles">' +
+      kit.opsToggle('cfgc-set', block.saturdays_off, 'Skip Saturdays', ' data-path="' + esc(prefix + '.saturdays_off') + '" data-cast="bool" data-refresh="preview"') +
+      kit.opsToggle('cfgc-set', block.sundays_off, 'Skip Sundays', ' data-path="' + esc(prefix + '.sundays_off') + '" data-cast="bool" data-refresh="preview"') +
+      kit.opsToggle('cfgc-set', block.apply_general_holiday, 'Skip bank holidays', ' data-path="' + esc(prefix + '.apply_general_holiday') + '" data-cast="bool" data-refresh="preview"') +
+      '</div></div>';
+  }
+
+  /* The live preview — the single most valuable element on this screen.
+     It recalculates on every change, so nobody derives a run date by hand. */
   function schedulePreviewHtml() {
     var e = edit(), b = e.body, blk = (b && b['default']) || {}, tz = b ? b.timezone : null;
     var sample = S.cfg.sampleDate;
-    var r = X.resolveRun(blk, tz, sample);
-    var runs = X.nextRuns(blk, tz, sample, 5);
-    // Offsets can be mid-edit and unparseable — never let the preview throw.
-    function d(v) { return v ? U.prettyDate(v) : '<span class="bad-text">invalid offset</span>'; }
-    var rows = runs.map(function (x) {
-      return '<tr class="' + (x.fires ? '' : 'skipped') + '">' +
-        '<td class="nowrap">' + U.prettyDate(x.runDate) + '<div class="cell-sub">' + x.dow + '</div></td>' +
-        '<td class="nowrap mono">' + (x.fires ? d(x.fromDate) + ' ' + esc(x.fromTime) : '—') + '</td>' +
-        '<td class="nowrap mono">' + (x.fires ? d(x.toDate) + ' ' + esc(x.toTime) : '—') + '</td>' +
-        '<td class="nowrap">' + (x.fires ? d(x.reportDate) : '—') + '</td>' +
-        '<td>' + (x.fires ? pill('will run', 'success', 'check') : '<span class="tip" data-tip="' + esc(x.skipReason) + '">' + pill('skipped', 'neutral', 'pause') + '</span>') + '</td>' +
-        '<td class="cell-sub">' + esc(x.skipReason || '') + '</td></tr>';
-    }).join('');
+    var runs = X.nextRuns(blk, tz, sample, 8).filter(function (x) { return true; }).slice(0, 8);
+    function d(v) { return v ? U.prettyDate(v) : '<span class="bad-text">check the times above</span>'; }
+    // "Next 5 runs" means five that actually fire; skipped days are shown in
+    // place so the reason a date is missing is never a mystery.
+    var shown = 0, rows = '';
+    runs.forEach(function (x) {
+      if (shown >= 5 && x.fires) return;
+      if (shown >= 5) return;
+      if (x.fires) shown++;
+      rows += '<tr class="' + (x.fires ? '' : 'skipped') + '">' +
+        '<td class="nowrap num">' + U.prettyDate(x.runDate) + ' ' + esc((blk.transaction_date || {}).to && blk.report_time ? '' : '') +
+        '<div class="cell-sub">' + x.dow + '</div></td>' +
+        '<td class="nowrap num">' + (x.fires ? d(x.fromDate) + ' <span class="mono">' + esc(x.fromTime) + '</span>' : '—') + '</td>' +
+        '<td class="nowrap num">' + (x.fires ? d(x.toDate) + ' <span class="mono">' + esc(x.toTime) + '</span>' : '—') + '</td>' +
+        '<td>' + (x.fires ? pill('Runs', 'success', 'check-circle')
+          : pill('Skipped', 'neutral', 'pause') + '<div class="cell-sub">' + esc(x.skipReason || '') + '</div>') + '</td></tr>';
+    });
 
     return '<div class="sched-preview" id="cfgSchedPreview">' +
-      '<div class="sp-head">' + icon('calendar-search', 16) + '<strong>Schedule preview</strong>' +
-      '<span class="meta">Recalculates on every field change · timezone ' + esc(tz || '—') + '</span>' +
-      '<label class="field inline" style="margin-left:auto">Sample run date <input class="input w-160" type="date" value="' + esc(sample) + '" data-action="cfgc-sample" /></label>' +
+      '<div class="sp-head">' + icon('calendar-search', 18) + '<strong>Next 5 runs</strong>' +
+      '<span class="meta">Recalculates on every change · ' + esc(tz || '—') + '</span>' +
+      '<label class="field inline" style="margin-left:auto">Starting from <input class="input w-160" type="date" value="' + esc(sample) + '" data-action="cfgc-sample" /></label>' +
       '</div>' +
-      '<div class="sp-resolved">' +
-      '<div class="sp-cell"><span class="spc-label">Run date</span><span class="spc-val">' + U.prettyDate(sample) + '</span><span class="spc-sub">' + r.dow + '</span></div>' +
-      '<div class="sp-cell"><span class="spc-label">Resolved from</span><span class="spc-val mono">' + (r.fromDate ? U.prettyDate(r.fromDate) : 'invalid') + '</span><span class="spc-sub mono">' + esc(r.fromTime) + '</span></div>' +
-      '<div class="sp-cell"><span class="spc-label">Resolved to</span><span class="spc-val mono">' + (r.toDate ? U.prettyDate(r.toDate) : 'invalid') + '</span><span class="spc-sub mono">' + esc(r.toTime) + '</span></div>' +
-      '<div class="sp-cell"><span class="spc-label">Report date</span><span class="spc-val">' + (r.reportDate ? U.prettyDate(r.reportDate) : 'invalid') + '</span><span class="spc-sub">' + esc(b.report || '') + '</span></div>' +
-      '<div class="sp-cell"><span class="spc-label">Fires on this date?</span><span class="spc-val">' + (r.fires ? pill('Yes', 'success', 'check') : pill('No', 'warning', 'pause')) + '</span><span class="spc-sub">' + esc(r.skipReason || 'no calendar exclusion') + '</span></div>' +
-      '</div>' +
-      '<div class="table-wrap mt-16"><table class="data"><thead><tr><th>Run date</th><th>Window from</th><th>Window to</th><th>Report date</th><th>Outcome</th><th>Note</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
-      '<div class="meta hint-row mt-16">' + icon('info', 13) + '<span>The next five calendar days from the sample date, resolved through the default block. Holidays come from the platform holiday calendar for ' + esc(C.TZ_COUNTRY[tz] || '—') + '.</span></div>' +
+      '<div class="table-wrap"><table class="data"><thead><tr>' +
+      '<th>Runs on</th><th>Covers transactions from</th><th>to</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<div class="meta hint-row mt-16">' + icon('info', 14) +
+      '<span>Bank holidays come from the platform calendar for ' + esc(C.TZ_COUNTRY[tz] || '—') + '.</span></div>' +
       '</div>';
   }
 
@@ -1125,129 +1284,349 @@ window.ConfigsUI = function (kit) {
     var rules = (b.rules || []).map(function (r, i) {
       var p = 'rules.' + i;
       return '<div class="cfg-block">' +
-        '<div class="cfg-block-head"><div class="row" style="gap:10px;align-items:center">' + icon('git-branch', 15) + '<strong>Override rule ' + (i + 1) + '</strong></div>' +
-        iconBtn('cfg-arr-del', 'trash-2', 'Delete rule', 'data-path="rules" data-idx="' + i + '"') + '</div>' +
-        '<div class="cfg-grid-2 mb-16">' +
-        fld('Match field', txt(p + '.match.field', (r.match || {}).field, { ph: 'e.g. merchant_category', list: 'dl-txn-cols' })) +
-        fld('Match value', txt(p + '.match.value', (r.match || {}).value, { ph: 'e.g. AIRLINE' })) +
-        '</div>' + schedBlock(r, p, true) + '</div>';
+        '<div class="cfg-block-head"><div class="row" style="gap:10px;align-items:center">' + icon('git-branch', 15) + '<strong>Exception ' + (i + 1) + '</strong></div>' +
+        iconBtn('cfg-arr-del', 'trash-2', 'Delete exception', 'data-path="rules" data-idx="' + i + '"') + '</div>' +
+        '<div class="ifthen-row mb-16"><span class="ifthen-kw">When</span>' +
+        txt(p + '.match.field', (r.match || {}).field, { ph: 'e.g. merchant_category', list: 'dl-txn-cols', cls: 'w-220' }) +
+        '<span class="ifthen-kw">is</span>' +
+        txt(p + '.match.value', (r.match || {}).value, { ph: 'e.g. AIRLINE', cls: 'w-160' }) +
+        '<span class="ifthen-kw">use this schedule instead</span></div>' +
+        schedBlock(r, p, true) + '</div>';
     }).join('');
 
-    return variantBar(stItem()) +
+    return taskHint() + variantBar(stItem()) +
       '<div class="cfg-grid-3">' +
-      fld('report_configs key', selIn('report', b.report, C.REPORTS, { refresh: 'preview' }),
-        'the key this schedule is stored under in settlement_generator.json') +
-      fld('Timezone', selIn('timezone', b.timezone, C.TIMEZONES, { refresh: 'preview' })) +
+      fld('Which report', selIn('report', b.report, C.REPORTS, { refresh: 'preview' })) +
+      fld('Time zone', selIn('timezone', b.timezone, C.TIMEZONES, { refresh: 'preview' })) +
       '</div>' +
-      '<div class="cfg-section-title mt-24">Default block</div>' +
-      '<div class="cfg-block">' + schedBlock(b['default'] || {}, 'default') + '</div>' +
-      '<div class="cfg-section-title mt-24">Rules <span class="meta">— overrides evaluated in order before the default block</span></div>' +
-      (rules || '<div class="meta mb-16">No override rules. The default block applies to every run.</div>') +
-      '<div class="mt-16">' + addBtn('Add override rule', 'cfg-arr-add', 'data-path="rules" data-tpl="schedrule"') + '</div>' +
+      '<div class="cfg-block mt-16">' + schedBlock(b['default'] || {}, 'default') + '</div>' +
       '<div class="mt-24">' + schedulePreviewHtml() + '</div>' +
+      '<div class="cfg-section-title mt-24">Exceptions <span class="meta">— applied before the schedule above when they match</span></div>' +
+      (rules || '<div class="meta mb-16">None. The schedule above applies to every run.</div>') +
+      '<div class="mt-16">' + addBtn('Add an exception', 'cfg-arr-add', 'data-path="rules" data-tpl="schedrule"') + '</div>' +
       dataList('dl-txn-cols', C.TXN_COLUMNS);
+  }
+
+  /* =======================================================================
+     5.5 · Settlement — Tab 2 "What's in the report?"
+     A two-column mapping in the same pattern as the network-file data mapping,
+     oriented to report columns, plus a sample of what the generated file would
+     look like. The mapping is abstract; three rows of output are not.
+     ======================================================================= */
+  function sampleValueFor(col) {
+    var n = String(col || '').toLowerCase();
+    if (/txn_id|transaction_id|id$/.test(n)) return ['TXN90114882', 'TXN90114883', 'TXN90114884'];
+    if (/arn/.test(n)) return ['74512345678901234567890', '74512345678901234567891', '74512345678901234567892'];
+    if (/date|time/.test(n)) return ['2026-07-28', '2026-07-28', '2026-07-29'];
+    if (/amount|gross|net|value/.test(n)) return ['12,450.00', '3,980.50', '87,200.00'];
+    if (/fee|interchange|mdr|commission|charge/.test(n)) return ['205.43', '65.68', '1,438.80'];
+    if (/name|merchant|legal/.test(n)) return ['Croma Retail', 'Reliance Digital', 'Tanishq'];
+    if (/mid|merchant_id/.test(n)) return ['MID884120', 'MID884121', 'MID884122'];
+    if (/mcc|category/.test(n)) return ['5732', '5732', '5944'];
+    if (/network|scheme/.test(n)) return ['MASTERCARD', 'VISA', 'RUPAY'];
+    if (/currency/.test(n)) return ['INR', 'INR', 'INR'];
+    if (/status|flag|indicator/.test(n)) return ['SETTLED', 'SETTLED', 'PENDING'];
+    return ['—', '—', '—'];
+  }
+
+  function sampleOutput(cols) {
+    if (!cols.length) return '';
+    var head = cols.map(function (c) {
+      return '<th>' + esc(c.alias || c.column) + '</th>';
+    }).join('');
+    var body = '';
+    for (var r = 0; r < 3; r++) {
+      body += '<tr>' + cols.map(function (c) {
+        return '<td class="mono">' + esc(sampleValueFor(c.column)[r]) + '</td>';
+      }).join('') + '</tr>';
+    }
+    return '<div class="cfg-section-title mt-24">What the file would look like</div>' +
+      '<div class="sample-out"><div class="table-wrap"><table class="data sample-out-table"><thead><tr>' + head + '</tr></thead>' +
+      '<tbody>' + body + '</tbody></table></div>' +
+      '<div class="meta mt-16">' + icon('info', 14) + ' Three illustrative rows with the column names this config produces.</div></div>';
   }
 
   function stContent() {
     var e = edit(), b = e.body;
-    var fetch = (b.json_fetch || []).map(function (g, i) {
-      var p = 'json_fetch.' + i;
-      return '<div class="cfg-block">' +
-        '<div class="cfg-block-head"><label class="field inline">Source ' + selIn(p + '.source', g.source, C.SOURCE_COLUMNS, { cls: 'w-220' }) + '</label>' +
-        iconBtn('cfg-arr-del', 'trash-2', 'Remove fetch group', 'data-path="json_fetch" data-idx="' + i + '"') + '</div>' +
-        '<div class="field"><span style="font-size:13px;color:var(--text-secondary);font-weight:500">Keys</span>' + tagList(p + '.keys', g.keys, 'Add key…') + '</div>' +
-        '</div>';
-    }).join('');
+    var cols = b['select'] || (b['select'] = []);
 
-    var cols = (b['select'] || []).map(function (c, i) {
+    // Two-column mapping: the report column on the left, where it comes from on
+    // the right. Drag to reorder — the order here is the column order in the file.
+    var rows = cols.map(function (c, i) {
       var known = C.TXN_COLUMNS.indexOf(c.column) >= 0;
-      return '<tr draggable="true" data-dnd="select" data-idx="' + i + '">' +
-        '<td class="grip">' + icon('grip-vertical', 14) + '</td>' +
-        '<td class="num idx">' + (i + 1) + '</td>' +
-        '<td>' + txt('select.' + i + '.column', c.column, { list: 'dl-txn-cols', cls: known ? '' : 'bad' }) +
-        (known ? '' : '<div class="inline-warn">' + icon('alert-triangle', 12) + 'Unknown transaction column</div>') + '</td>' +
-        '<td>' + txt('select.' + i + '.alias', c.alias, { ph: '— same as column —' }) + '</td>' +
-        '<td class="row-actions">' +
+      return '<div class="map-row report" draggable="true" data-dnd="select" data-idx="' + i + '">' +
+        '<span class="map-grip">' + icon('grip-vertical', 16) + '</span>' +
+        '<div class="map-left">' +
+        txt('select.' + i + '.alias', c.alias, { ph: c.column || 'Column name in the report' }) +
+        '</div>' +
+        '<div class="map-arrow">' + icon('arrow-left', 18) + '</div>' +
+        '<div class="map-right">' +
+        txt('select.' + i + '.column', c.column, { list: 'dl-txn-cols', cls: 'mono' + (known ? '' : ' bad') }) +
+        (known ? '' : '<div class="inline-warn">' + icon('alert-triangle', 13) + 'Not a column the platform knows</div>') +
+        '</div>' +
+        '<div class="map-detail">' +
         iconBtn('cfg-arr-move', 'chevron-up', 'Move up', 'data-path="select" data-idx="' + i + '" data-dir="-1"') +
         iconBtn('cfg-arr-move', 'chevron-down', 'Move down', 'data-path="select" data-idx="' + i + '" data-dir="1"') +
         iconBtn('cfg-arr-del', 'trash-2', 'Remove column', 'data-path="select" data-idx="' + i + '"') +
-        '</td></tr>';
+        '</div></div>';
     }).join('');
 
-    return '<div class="cfg-section-title">Eligibility flags</div>' +
-      tagList('eligibility_flags', b.eligibility_flags, 'Add flag, e.g. in_mpr') +
-      '<div class="cfg-section-title mt-24">JSON fetch</div>' +
-      (fetch || '<div class="meta mb-16">No JSON fetch groups.</div>') +
-      '<div class="mt-16">' + addBtn('Add fetch group', 'cfg-arr-add', 'data-path="json_fetch" data-tpl="fetch"') + '</div>' +
-      '<div class="cfg-section-title mt-24">Select — output columns <span class="meta">— row order defines the column order in the report</span></div>' +
-      '<div class="table-wrap"><table class="data cfg-field-table" data-dnd-table="select"><thead><tr><th></th><th class="num">#</th><th>Column</th><th>Alias</th><th></th></tr></thead><tbody>' +
-      (cols || '<tr><td colspan="5" class="meta" style="padding:18px">No output columns defined.</td></tr>') + '</tbody></table></div>' +
+    // Eligibility filters as plain rows.
+    var flags = (b.eligibility_flags || []).map(function (f, i) {
+      return '<div class="ifthen-row"><span class="ifthen-kw">Only include transactions where</span>' +
+        '<span class="ifthen-field mono">' + esc(f) + '</span>' +
+        '<span class="ifthen-kw">is true</span>' +
+        iconBtn('cfg-arr-del', 'trash-2', 'Remove condition', 'data-path="eligibility_flags" data-idx="' + i + '"') +
+        '</div>';
+    }).join('');
+
+    // JSON fetch groups stay — they are how nested source data is pulled in.
+    var fetch = (b.json_fetch || []).map(function (g, i) {
+      var p = 'json_fetch.' + i;
+      return '<div class="cfg-block">' +
+        '<div class="cfg-block-head"><label class="field inline">Pull extra data from ' + selIn(p + '.source', g.source, C.SOURCE_COLUMNS, { cls: 'w-220' }) + '</label>' +
+        iconBtn('cfg-arr-del', 'trash-2', 'Remove', 'data-path="json_fetch" data-idx="' + i + '"') + '</div>' +
+        '<div class="field"><span class="fld-cap">Keys to read</span>' + tagList(p + '.keys', g.keys, 'Add key…') + '</div>' +
+        '</div>';
+    }).join('');
+
+    return taskHint() +
+      '<div class="cfg-section-title">Columns in this report</div>' +
+      '<div class="meta mb-16">Drag to change the order columns appear in the file.</div>' +
+      '<div class="map-grid" data-dnd-table="select">' +
+      '<div class="map-head"><span></span><span>Column in the report</span><span></span><span>Comes from</span></div>' +
+      (rows || '<div class="meta" style="padding:14px">No columns yet.</div>') +
+      '</div>' +
       '<div class="mt-16">' + addBtn('Add column', 'cfg-arr-add', 'data-path="select" data-tpl="selcol"') + '</div>' +
+      sampleOutput(cols) +
+      '<div class="cfg-section-title mt-24">Which transactions are included</div>' +
+      '<div class="ifthen-list">' + (flags || '<div class="meta" style="padding:12px">Every settled transaction for this entity.</div>') + '</div>' +
+      '<div class="mt-16">' + tagList('eligibility_flags', [], 'Add a condition, e.g. in_mpr') + '</div>' +
+      '<div class="cfg-section-title mt-24">Extra source data</div>' +
+      (fetch || '<div class="meta mb-16">None.</div>') +
+      '<div class="mt-16">' + addBtn('Pull in more data', 'cfg-arr-add', 'data-path="json_fetch" data-tpl="fetch"') + '</div>' +
       dataList('dl-txn-cols', C.TXN_COLUMNS);
   }
 
-  function stFees() {
-    var e = edit(), b = e.body, rules = b.txn_rules || [];
-    var expanded = S.cfg.expandedRule;
-    var rows = rules.map(function (r, i) {
-      var calc = r.calculations || {}, logic = calc.logic || [];
-      var open = expanded === i;
-      var head = '<tr class="clickable' + (open ? ' open' : '') + '" data-action="cfg-fee-expand" data-idx="' + i + '">' +
-        '<td>' + icon(open ? 'chevron-down' : 'chevron-right', 14) + '</td>' +
-        '<td class="cell-main">' + esc(r.model || '—') + '</td>' +
-        '<td>' + esc(r.fee_mode || '—') + '</td>' +
-        '<td class="num">' + (r.priority == null ? '—' : r.priority) + '</td>' +
-        '<td class="nowrap">' + esc(r.starting_date || '—') + '</td>' +
-        '<td class="num">' + (r.conditions || []).length + '</td>' +
-        '<td class="num">' + logic.length + (calc.slab_based ? ' <span class="meta">slabs</span>' : ' <span class="meta">flat</span>') + '</td>' +
-        '<td class="row-actions">' + iconBtn('cfg-arr-del', 'trash-2', 'Delete rule', 'data-path="txn_rules" data-idx="' + i + '"') + '</td></tr>';
-      if (!open) return head;
+  /* =======================================================================
+     5.5 · Settlement — Tab 3 "Fee rules"
+     Every rule is a card, not a table row: what it applies to and what it
+     charges, both as plain statements. A calculator underneath makes the rules
+     testable without generating a report.
+     ======================================================================= */
+  var COND_WORD = {
+    equals: 'is', not_equals: 'is not', in: 'is one of', not_in: 'is not one of',
+    greater_than: 'is more than', less_than: 'is less than',
+    greater_than_equals: 'is at least', less_than_equals: 'is at most'
+  };
+  function condSentence(c) {
+    var word = COND_WORD[c.condition] || (c.condition || 'is');
+    return prettyKey(c.field) + ' ' + word + ' ' + (c.value === '' || c.value == null ? '—' : c.value);
+  }
+  // Config keys read as words. Falls back to the key with underscores removed,
+  // so a key nobody has labelled yet still reads better than raw.
+  var KEY_LABEL = {
+    merchant_category: 'Merchant category', card_type: 'Card type', network: 'Network',
+    txn_amount: 'Amount', amount: 'Amount', region: 'Region', txn_type: 'Transaction type',
+    payment_method: 'Payment method', currency: 'Currency', mcc: 'Merchant category code',
+    is_international: 'International', entry_mode: 'Entry mode'
+  };
+  function prettyKey(k) {
+    if (!k) return '—';
+    if (KEY_LABEL[k]) return KEY_LABEL[k];
+    return String(k).replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); });
+  }
+  var FEE_MODE_WORD = {
+    DEDUCT_FROM_SETTLEMENT: 'deducted from settlement',
+    PASS_THROUGH: 'passed through',
+    COLLECT_FROM_CARDHOLDER: 'collected from the cardholder',
+    INVOICE: 'invoiced'
+  };
+  // What a rule charges, as one sentence when it is flat.
+  function chargeSentence(r) {
+    var calc = r.calculations || {}, logic = calc.logic || [];
+    if (calc.slab_based && logic.length > 1) return null;      // needs the tier table
+    var l = logic[0];
+    if (!l) return 'Nothing — no calculation is configured.';
+    var parts = [];
+    if (l.percentage != null && +l.percentage !== 0) parts.push(Number(l.percentage).toFixed(2) + '% of the ' + prettyKey(l.field || 'amount').toLowerCase());
+    if (l.flat != null && +l.flat !== 0) parts.push('₹' + Number(l.flat).toFixed(2));
+    if (!parts.length) parts.push('0%');
+    return parts.join(' plus ');
+  }
+  // Overlap validation surfaced inline, in plain language.
+  function tierOverlaps(logic) {
+    var out = {};
+    for (var i = 1; i < logic.length; i++) {
+      var prev = logic[i - 1], cur = logic[i];
+      var prevMax = prev.max == null ? Infinity : +prev.max;
+      if (+cur.min < prevMax) {
+        out[i] = 'This tier overlaps the previous one between ₹' +
+          Number(cur.min).toLocaleString('en-IN') + ' and ₹' +
+          (prevMax === Infinity ? '∞' : Number(prevMax).toLocaleString('en-IN')) + '.';
+      }
+    }
+    return out;
+  }
 
-      var p = 'txn_rules.' + i;
-      var conds = (r.conditions || []).map(function (c, ci) {
+  function feeRuleCard(r, i) {
+    var p = 'txn_rules.' + i;
+    var calc = r.calculations || {}, logic = calc.logic || [];
+    var open = S.cfg.expandedRule === i;
+    var conds = (r.conditions || []);
+    var charge = chargeSentence(r);
+    var overlaps = tierOverlaps(logic);
+
+    var condRows = conds.length
+      ? conds.map(function (c) { return '<span class="fee-cond">' + esc(condSentence(c)) + '</span>'; }).join('')
+      : '<span class="fee-cond all">Every transaction</span>';
+
+    var tierTable = charge === null
+      ? '<div class="table-wrap"><table class="data cfg-sub-table fee-tiers"><thead><tr>' +
+      '<th class="num">From</th><th class="num">To</th><th class="num">Rate</th><th></th></tr></thead><tbody>' +
+      logic.map(function (l, li) {
+        return '<tr' + (overlaps[li] ? ' class="bad-row"' : '') + '>' +
+          '<td class="num">₹' + esc(Number(l.min || 0).toLocaleString('en-IN')) + '</td>' +
+          '<td class="num">' + (l.max == null ? 'no upper limit' : '₹' + esc(Number(l.max).toLocaleString('en-IN'))) + '</td>' +
+          '<td class="num">' + esc(Number(l.percentage || 0).toFixed(2)) + '%</td>' +
+          '<td>' + (overlaps[li] ? '<span class="inline-warn">' + icon('alert-triangle', 14) + esc(overlaps[li]) + '</span>' : '') + '</td></tr>';
+      }).join('') + '</tbody></table></div>'
+      : '';
+
+    var editor = open
+      ? '<div class="fee-editor">' +
+      '<div class="cfg-grid-4">' +
+      fld('Rule name', txt(p + '.model', r.model)) +
+      fld('How the fee is taken', selIn(p + '.fee_mode', r.fee_mode, Object.keys(FEE_MODE_WORD).map(function (k) { return [k, FEE_MODE_WORD[k].replace(/^./, function (c) { return c.toUpperCase(); })]; }))) +
+      fld('Priority', txt(p + '.priority', r.priority, { type: 'number', cast: 'int', cls: 'num' }), 'Lower numbers are checked first') +
+      fld('Effective from', txt(p + '.starting_date', r.starting_date, { type: 'date' })) +
+      '</div>' +
+      '<div class="cfg-section-title sm mt-24">When it applies</div>' +
+      '<table class="data cfg-sub-table"><thead><tr><th>Field</th><th>Condition</th><th>Value</th><th></th></tr></thead><tbody>' +
+      (conds.map(function (c, ci) {
         return '<tr><td>' + txt(p + '.conditions.' + ci + '.field', c.field, { list: 'dl-txn-cols' }) + '</td>' +
-          '<td>' + selIn(p + '.conditions.' + ci + '.condition', c.condition, C.CONDITIONS, { cls: 'w-100' }) + '</td>' +
+          '<td>' + selIn(p + '.conditions.' + ci + '.condition', c.condition, C.CONDITIONS.map(function (k) { return [k, COND_WORD[k] || k]; }), { cls: 'w-140' }) + '</td>' +
           '<td>' + txt(p + '.conditions.' + ci + '.value', c.value) + '</td>' +
           '<td class="row-actions">' + iconBtn('cfg-arr-del', 'trash-2', 'Remove condition', 'data-path="' + p + '.conditions" data-idx="' + ci + '"') + '</td></tr>';
-      }).join('');
-      var calcs = logic.map(function (l, li) {
+      }).join('') || '<tr><td colspan="4" class="meta" style="padding:12px">No conditions — this rule matches every transaction.</td></tr>') +
+      '</tbody></table>' +
+      '<div class="mt-16">' + addBtn('Add condition', 'cfg-arr-add', 'data-path="' + p + '.conditions" data-tpl="cond"') + '</div>' +
+      '<div class="cfg-section-title sm mt-24">What it charges</div>' +
+      '<div class="row" style="gap:16px;align-items:center;margin-bottom:12px">' +
+      kit.opsToggle('cfgc-set', calc.slab_based, 'Charge different rates by amount', ' data-path="' + esc(p + '.calculations.slab_based') + '" data-cast="bool" data-refresh="body"') +
+      '<label class="field inline">Fee type ' + selIn(p + '.calculations.fee_type', calc.fee_type,
+        [['PERCENTAGE', 'A percentage'], ['FLAT', 'A flat amount'], ['PERCENTAGE_PLUS_FLAT', 'A percentage plus a flat amount']], { cls: 'w-260' }) + '</label>' +
+      '</div>' +
+      '<table class="data cfg-sub-table"><thead><tr><th class="num">From amount</th><th class="num">To amount</th><th>Applied to</th><th class="num">Rate %</th><th></th></tr></thead><tbody>' +
+      (logic.map(function (l, li) {
         return '<tr><td class="num">' + txt(p + '.calculations.logic.' + li + '.min', l.min, { type: 'number', cast: 'number', cls: 'num w-100' }) + '</td>' +
-          '<td class="num">' + txt(p + '.calculations.logic.' + li + '.max', l.max, { type: 'number', cast: 'nullable-number', cls: 'num w-100', ph: '∞' }) + '</td>' +
+          '<td class="num">' + txt(p + '.calculations.logic.' + li + '.max', l.max, { type: 'number', cast: 'nullable-number', cls: 'num w-100', ph: 'no limit' }) + '</td>' +
           '<td>' + txt(p + '.calculations.logic.' + li + '.field', l.field, { list: 'dl-txn-cols' }) + '</td>' +
           '<td class="num">' + txt(p + '.calculations.logic.' + li + '.percentage', l.percentage, { type: 'number', cast: 'number', cls: 'num w-100' }) + '</td>' +
-          '<td class="row-actions">' + iconBtn('cfg-arr-del', 'trash-2', 'Remove slab', 'data-path="' + p + '.calculations.logic" data-idx="' + li + '"') + '</td></tr>';
-      }).join('');
+          '<td class="row-actions">' + iconBtn('cfg-arr-del', 'trash-2', 'Remove tier', 'data-path="' + p + '.calculations.logic" data-idx="' + li + '"') + '</td></tr>';
+      }).join('') || '<tr><td colspan="5" class="meta" style="padding:12px">No calculation rows.</td></tr>') +
+      '</tbody></table>' +
+      '<div class="mt-16">' + addBtn('Add a tier', 'cfg-arr-add', 'data-path="' + p + '.calculations.logic" data-tpl="calc"') + '</div>' +
+      '</div>'
+      : '';
 
-      return head + '<tr class="fee-expand"><td colspan="8"><div class="fee-detail">' +
-        '<div class="cfg-grid-4">' +
-        fld('Model', txt(p + '.model', r.model)) +
-        fld('Fee mode', selIn(p + '.fee_mode', r.fee_mode, ['DEDUCT_FROM_SETTLEMENT', 'PASS_THROUGH', 'COLLECT_FROM_CARDHOLDER', 'INVOICE'])) +
-        fld('Priority', txt(p + '.priority', r.priority, { type: 'number', cast: 'int', cls: 'num' })) +
-        fld('Starting date', txt(p + '.starting_date', r.starting_date, { type: 'date' })) +
-        '</div>' +
-        '<div class="cfg-section-title sm">Conditions</div>' +
-        '<table class="data cfg-sub-table"><thead><tr><th>Field</th><th>Condition</th><th>Value</th><th></th></tr></thead><tbody>' +
-        (conds || '<tr><td colspan="4" class="meta" style="padding:12px">No conditions — this rule matches every transaction.</td></tr>') + '</tbody></table>' +
-        '<div class="mt-16">' + addBtn('Add condition', 'cfg-arr-add', 'data-path="' + p + '.conditions" data-tpl="cond"') + '</div>' +
-        '<div class="cfg-section-title sm mt-24">Calculations</div>' +
-        '<div class="row" style="gap:16px;align-items:center;margin-bottom:12px">' +
-        toggle(p + '.calculations.slab_based', calc.slab_based, 'Slab-based', { refresh: 'body' }) +
-        '<label class="field inline">Fee type ' + selIn(p + '.calculations.fee_type', calc.fee_type, ['PERCENTAGE', 'FLAT', 'PERCENTAGE_PLUS_FLAT'], { cls: 'w-220' }) + '</label>' +
-        '</div>' +
-        '<table class="data cfg-sub-table"><thead><tr><th class="num">Min</th><th class="num">Max</th><th>Field</th><th class="num">Percentage</th><th></th></tr></thead><tbody>' +
-        (calcs || '<tr><td colspan="5" class="meta" style="padding:12px">No calculation rows.</td></tr>') + '</tbody></table>' +
-        '<div class="mt-16">' + addBtn('Add slab', 'cfg-arr-add', 'data-path="' + p + '.calculations.logic" data-tpl="calc"') + '</div>' +
-        '</div></td></tr>';
-    }).join('');
+    return '<div class="fee-card' + (open ? ' open' : '') + '">' +
+      '<div class="fee-card-head">' +
+      '<div class="fee-card-title">' + esc(r.model || 'Unnamed rule') + '</div>' +
+      '<span class="meta">Priority <span class="num">' + (r.priority == null ? '—' : r.priority) + '</span></span>' +
+      '<span class="meta">From ' + esc(r.starting_date || '—') + '</span>' +
+      '<span class="fee-card-spacer"></span>' +
+      '<button class="btn btn-sm btn-secondary" data-action="cfg-fee-expand" data-idx="' + i + '">' +
+      icon(open ? 'chevron-up' : 'pencil', 16) + (open ? 'Done' : 'Edit') + '</button>' +
+      iconBtn('cfg-arr-del', 'trash-2', 'Delete rule', 'data-path="txn_rules" data-idx="' + i + '"') +
+      '</div>' +
+      '<div class="fee-card-body">' +
+      '<div class="fee-block"><span class="fee-block-label">When it applies</span><div class="fee-conds">' + condRows + '</div></div>' +
+      '<div class="fee-block"><span class="fee-block-label">What it charges</span>' +
+      (charge === null ? tierTable : '<div class="fee-charge">' + esc(charge) + '</div>') +
+      '<div class="meta">' + esc((FEE_MODE_WORD[r.fee_mode] || r.fee_mode || '').replace(/^./, function (c) { return c.toUpperCase(); })) + '</div>' +
+      '</div></div>' +
+      editor + '</div>';
+  }
 
+  /* The fee calculator (Part 5.5) — enter an amount, pick attributes, see which
+     rule matches and what it charges. Mocked against the rules on screen: it
+     applies the same priority-then-conditions logic the engine does. */
+  function matchRule(rules, ctx) {
+    var ordered = rules.slice().sort(function (a, b) { return (a.priority == null ? 999 : a.priority) - (b.priority == null ? 999 : b.priority); });
+    for (var i = 0; i < ordered.length; i++) {
+      var r = ordered[i], ok = true;
+      (r.conditions || []).forEach(function (c) {
+        var v = ctx[c.field];
+        if (v === undefined) { ok = false; return; }
+        var want = String(c.value == null ? '' : c.value);
+        var cond = c.condition;
+        if (cond === 'equals') { if (String(v).toLowerCase() !== want.toLowerCase()) ok = false; }
+        else if (cond === 'not_equals') { if (String(v).toLowerCase() === want.toLowerCase()) ok = false; }
+        else if (cond === 'in' || cond === 'not_in') {
+          var list = want.split(/[,|]/).map(function (x) { return x.trim().toLowerCase(); });
+          var hit = list.indexOf(String(v).toLowerCase()) >= 0;
+          if (cond === 'in' ? !hit : hit) ok = false;
+        }
+        else if (cond === 'greater_than') { if (!(+v > +want)) ok = false; }
+        else if (cond === 'less_than') { if (!(+v < +want)) ok = false; }
+        else if (cond === 'greater_than_equals') { if (!(+v >= +want)) ok = false; }
+        else if (cond === 'less_than_equals') { if (!(+v <= +want)) ok = false; }
+      });
+      if (ok) return r;
+    }
+    return null;
+  }
+  function feeCalculator(rules) {
+    var fc = S.cfg.feeCalc;
+    var ctx = {
+      txn_amount: fc.amount, amount: fc.amount, network: fc.network,
+      card_type: fc.card, payment_method: fc.card, currency: 'INR'
+    };
+    var hit = matchRule(rules, ctx);
+    var result;
+    if (!hit) {
+      result = '<div class="calc-result none">' + icon('help-circle', 18) +
+        '<span>No rule matches these attributes — nothing would be charged.</span></div>';
+    } else {
+      var logic = (hit.calculations || {}).logic || [];
+      var tier = logic.filter(function (l) {
+        return fc.amount >= (+l.min || 0) && (l.max == null || fc.amount <= +l.max);
+      })[0] || logic[0];
+      var pctv = tier ? +tier.percentage || 0 : 0;
+      var flat = tier && tier.flat ? +tier.flat : 0;
+      var fee = (fc.amount * pctv / 100) + flat;
+      result = '<div class="calc-result">' + icon('check-circle', 18) +
+        '<div><div class="calc-rule">Matches <strong>' + esc(hit.model || 'rule') + '</strong>' +
+        (tier && logic.length > 1 ? ' · tier ₹' + Number(tier.min || 0).toLocaleString('en-IN') +
+          (tier.max == null ? ' and above' : '–₹' + Number(tier.max).toLocaleString('en-IN')) : '') + '</div>' +
+        '<div class="calc-fee num">₹' + fee.toFixed(2) + '</div>' +
+        '<div class="meta">' + pctv.toFixed(2) + '% of ₹' + Number(fc.amount).toLocaleString('en-IN') +
+        (flat ? ' plus ₹' + flat.toFixed(2) : '') + ' · ' +
+        esc(FEE_MODE_WORD[hit.fee_mode] || hit.fee_mode || '') + '</div></div></div>';
+    }
+    return '<div class="fee-calc">' +
+      '<div class="fee-calc-head">' + icon('calculator', 18) + '<strong>Fee calculator</strong>' +
+      '<span class="meta">Check what a transaction would be charged, without generating a report.</span></div>' +
+      '<div class="fee-calc-row">' +
+      '<label class="field inline">Amount (₹)<input class="input num w-160" type="number" value="' + fc.amount + '" data-action="cfgi-calc-amount" /></label>' +
+      '<label class="field inline">Network' + selIn('__calc.network', fc.network, ['Visa', 'Mastercard', 'RuPay'], { cls: 'w-160' }).replace('data-action="cfgc-set"', 'data-action="cfgc-calc-network"') + '</label>' +
+      '<label class="field inline">Card type' + selIn('__calc.card', fc.card, ['Credit', 'Debit', 'Prepaid'], { cls: 'w-160' }).replace('data-action="cfgc-set"', 'data-action="cfgc-calc-card"') + '</label>' +
+      '</div>' + result + '</div>';
+  }
+
+  function stFees() {
+    var e = edit(), b = e.body, rules = b.txn_rules || (b.txn_rules = []);
     var item = stItem();
-    return feeBar(item) +
-      (item ? '<div class="callout info mb-16">' + icon('info', 18) + '<div class="callout-body">Fee rules are configured per <strong>entity</strong> in <code>fee_configs/fees.json</code>, not per report — this same set applies to every ' + esc((C.tenantByKey[item.tenantId] || {}).name || item.tenantId) + ' report. Editing here changes it for all of them.</div></div>' : '') +
-      '<div class="cfg-section-title">Transaction fee rules</div>' +
-      '<div class="table-wrap"><table class="data fee-table"><thead><tr><th></th><th>Model</th><th>Fee mode</th><th class="num">Priority</th><th>Starting date</th><th class="num"># conditions</th><th class="num"># calculations</th><th></th></tr></thead><tbody>' +
-      (rows || '<tr><td colspan="8" class="meta" style="padding:18px">No fee rules defined.</td></tr>') + '</tbody></table></div>' +
-      '<div class="mt-16">' + addBtn('Add fee rule', 'cfg-arr-add', 'data-path="txn_rules" data-tpl="feerule"') + '</div>' +
-      '<div class="callout info mt-24">' + icon('info', 18) + '<div class="callout-body">Priorities must be unique per config, slab ranges must not overlap, and percentages must fall within 0–100. Violations appear in the Validation panel below and block submission.</div></div>' +
+    return taskHint() + feeBar(item) +
+      (item ? '<div class="callout info mb-16">' + icon('info', 18) + '<div class="callout-body">These rules apply to every ' +
+        esc((C.tenantByKey[item.tenantId] || {}).name || item.tenantId) + ' report, not just this one.</div></div>' : '') +
+      '<div class="cfg-section-title">Fee rules</div>' +
+      '<div class="fee-cards">' +
+      (rules.map(feeRuleCard).join('') || '<div class="meta" style="padding:14px">No fee rules yet.</div>') +
+      '</div>' +
+      '<div class="mt-16">' + addBtn('Add a fee rule', 'cfg-arr-add', 'data-path="txn_rules" data-tpl="feerule"') + '</div>' +
+      '<div class="mt-24">' + feeCalculator(rules) + '</div>' +
       dataList('dl-txn-cols', C.TXN_COLUMNS);
   }
 
@@ -1262,6 +1641,18 @@ window.ConfigsUI = function (kit) {
     return '<span class="tip fmt-chip" data-tip="' + esc(c.blurb + '  —  ' + c.grounding) + '">' + icon(c.icon, 12) + esc(c.label) + '</span>';
   }
 
+  // Show what a filename pattern resolves to today, so it can be eyeballed
+  // against a real file listing.
+  function expandPattern(pat) {
+    var d = U.fromYmd(D.TODAY);
+    function p2(n) { return (n < 10 ? '0' : '') + n; }
+    return String(pat)
+      .replace(/%Y/g, String(d.getUTCFullYear()))
+      .replace(/%m/g, p2(d.getUTCMonth() + 1))
+      .replace(/%d/g, p2(d.getUTCDate()))
+      .replace(/%H/g, '22').replace(/%M/g, '30');
+  }
+
   function ipPipeline() {
     var e = edit(), b = e.body;
     var ref = b.layout_ref ? C.byId[b.layout_ref] : null;
@@ -1272,10 +1663,19 @@ window.ConfigsUI = function (kit) {
     var secBad = ref && secField && refNames.indexOf(secField) < 0;
     var mismatch = ref && b.source_format && b.source_format !== refFmt;
 
+    // Part 5.4 — "If [field] is [value] → treat as [record type]". A dropdown
+    // per part, no JSON, and the same bound paths as before.
     var secRules = ((b.sectioning || {}).rules || []).map(function (r, i) {
-      return '<tr><td>' + txt('sectioning.rules.' + i + '.match', r.match, { cls: 'mono w-120' }) + '</td>' +
-        '<td>' + txt('sectioning.rules.' + i + '.bucket', r.bucket, { cls: 'mono' }) + '</td>' +
-        '<td class="row-actions">' + iconBtn('cfg-arr-del', 'trash-2', 'Remove rule', 'data-path="sectioning.rules" data-idx="' + i + '"') + '</td></tr>';
+      return '<div class="ifthen-row">' +
+        '<span class="ifthen-kw">If</span>' +
+        '<span class="ifthen-field mono">' + esc((b.sectioning || {}).field || 'the sectioning field') + '</span>' +
+        '<span class="ifthen-kw">is</span>' +
+        txt('sectioning.rules.' + i + '.match', r.match, { cls: 'mono w-120' }) +
+        '<span class="ifthen-arrow">' + icon('arrow-right', 16) + '</span>' +
+        '<span class="ifthen-kw">treat as</span>' +
+        txt('sectioning.rules.' + i + '.bucket', r.bucket, { cls: 'mono w-160' }) +
+        iconBtn('cfg-arr-del', 'trash-2', 'Remove rule', 'data-path="sectioning.rules" data-idx="' + i + '"') +
+        '</div>';
     }).join('');
 
     var agg = b.aggregation || {};
@@ -1310,9 +1710,20 @@ window.ConfigsUI = function (kit) {
       fld('Pipeline kind', selIn('pipeline_kind', b.pipeline_kind, ['clearing', 'acknowledgment', 'chargeback', 'settlement', 'aggregator'])) +
       '</div>' +
 
-      '<div class="cfg-section-title mt-24">Ack filenames</div>' +
-      tagList('ack_filenames', b.ack_filenames, 'Add filename pattern, e.g. VISA_ACK_%Y%m%d.txt') +
-      '<div class="meta hint-row mt-16">' + icon('info', 13) + '<span>Patterns accept the date tokens %Y, %m, %d, %H and %M. A pattern without a date token only ever matches one literal filename.</span></div>' +
+      // Part 5.4 — a tag list of filename patterns, each with an example of
+      // what it actually matches. A pattern nobody can read is a pattern nobody
+      // can check.
+      '<div class="cfg-section-title mt-24">Expected file names</div>' +
+      tagList('ack_filenames', b.ack_filenames, 'Add a pattern, e.g. VISA_ACK_%Y%m%d.txt') +
+      ((b.ack_filenames || []).length
+        ? '<div class="fname-examples">' + (b.ack_filenames || []).map(function (pat) {
+          return '<div class="fname-row"><code class="mono">' + esc(pat) + '</code>' +
+            icon('arrow-right', 14) +
+            '<span class="meta">matches <code class="mono">' + esc(expandPattern(pat)) + '</code></span></div>';
+        }).join('') + '</div>'
+        : '') +
+      '<div class="meta hint-row mt-16">' + icon('info', 13) +
+      '<span>%Y year · %m month · %d day · %H hour · %M minute. A pattern with no date token matches one literal name.</span></div>' +
 
       '<div class="cfg-section-title mt-24">Source format &amp; layout reference</div>' +
       '<div class="cfg-block">' +
@@ -1324,7 +1735,7 @@ window.ConfigsUI = function (kit) {
       (ref ? '<button class="btn btn-secondary btn-sm" data-action="cfg-drawer" data-id="' + ref.configId + '">' + icon('panel-right-open', 15) + 'View layout</button>' : '') +
       '</div>' +
       (mismatch
-        ? '<div class="inline-warn big">' + icon('x-circle', 14) + 'source_format is "' + esc(b.source_format) + '" but ' + esc(ref.name) + ' is "' + esc(refFmt) + '". Positions, record length and the byte map only apply to fixed_width sources.</div>'
+        ? '<div class="inline-warn big">' + icon('x-circle', 14) + 'This config expects a "' + esc(b.source_format) + '" file but ' + esc(ref.name) + ' is "' + esc(refFmt) + '". Character positions only apply to fixed-width files.</div>'
         : '') +
       (b.layout_ref && !ref
         ? '<div class="inline-warn big">' + icon('x-circle', 14) + 'layout_ref "' + esc(b.layout_ref) + '" does not resolve to an existing layout config.</div>'
@@ -1336,17 +1747,17 @@ window.ConfigsUI = function (kit) {
       structure +
       '</div>' +
 
-      '<div class="cfg-section-title mt-24">Sectioning</div>' +
+      '<div class="cfg-section-title mt-24">How records are sorted</div>' +
       '<div class="cfg-block">' +
-      '<label class="field" style="max-width:420px">Sectioning field ' +
+      '<label class="field" style="max-width:420px">Which field decides the record type? ' +
       (ref
         ? selIn('sectioning.field', secField, (secBad ? [[secField, secField + '  (not in layout)']] : []).concat(refNames.map(function (n) { return [n, n]; })), { refresh: 'body' })
         : txt('sectioning.field', secField)) +
       '</label>' +
       (secBad ? '<div class="inline-warn big">' + icon('x-circle', 14) + 'This field does not exist in ' + esc(ref.name) + ' — the pipeline would fail to section incoming records.</div>' : '') +
-      '<table class="data cfg-sub-table mt-16"><thead><tr><th>Match</th><th>Bucket</th><th></th></tr></thead><tbody>' +
-      (secRules || '<tr><td colspan="3" class="meta" style="padding:12px">No sectioning rules.</td></tr>') + '</tbody></table>' +
-      '<div class="mt-16">' + addBtn('Add sectioning rule', 'cfg-arr-add', 'data-path="sectioning.rules" data-tpl="secrule"') + '</div>' +
+      '<div class="ifthen-list mt-16">' +
+      (secRules || '<div class="meta" style="padding:12px">No rules — every record is treated the same way.</div>') + '</div>' +
+      '<div class="mt-16">' + addBtn('Add a rule', 'cfg-arr-add', 'data-path="sectioning.rules" data-tpl="secrule"') + '</div>' +
       '</div>' +
 
       '<div class="cfg-section-title mt-24">Aggregation</div>' +
@@ -1359,7 +1770,7 @@ window.ConfigsUI = function (kit) {
         fld('Emit', txt('aggregation.emit', agg.emit)) +
         '</div>' : '<div class="meta">Aggregation is off — records are emitted individually.</div>') +
       '</div>' +
-      '<div class="callout info mt-24">' + icon('info', 18) + '<div class="callout-body">The long tail of aggregation options lives in <strong>Raw</strong> mode; the fields above are the ones ops changes routinely.</div></div>';
+      '<div class="callout info mt-24">' + icon('info', 18) + '<div class="callout-body">The long tail of aggregation options lives in <strong>Advanced</strong> mode.</div></div>';
   }
 
   function ipParser() {
@@ -1418,12 +1829,12 @@ window.ConfigsUI = function (kit) {
               '<td>' + txt(fp + '.name', f.name, { cls: 'mono' }) + '</td>' +
               '<td class="num">' + txt(fp + '.start', f.start, { type: 'number', cast: 'int', cls: 'num w-70' }) + '</td>' +
               '<td class="num">' + txt(fp + '.length', f.length, { type: 'number', cast: 'int', cls: 'num w-70' }) + '</td>' +
-              '<td>' + txt(fp + '.type', f.type, { cls: 'w-90' }) + '</td>' +
+              '<td>' + selIn(fp + '.type', f.type, TYPE_LABEL, { cls: 'w-180' }) + '</td>' +
               '<td>' + txt(fp + '.note', f.note, { ph: '—' }) + '</td>' +
               '<td class="row-actions">' + iconBtn('cfg-arr-del', 'trash-2', 'Remove field', 'data-path="record_types.' + k + '.fields" data-idx="' + i + '"') + '</td></tr>';
           }).join('');
-          fieldsBlock = '<div class="cfg-section-title sm mt-24">Field windows <span class="meta">— byte positions inside this record</span></div>' +
-            '<div class="table-wrap"><table class="data cfg-sub-table"><thead><tr><th class="num">#</th><th>Field</th><th class="num">Start</th><th class="num">Length</th><th>Type</th><th>Note</th><th></th></tr></thead><tbody>' +
+          fieldsBlock = '<div class="cfg-section-title sm mt-24">Where each field sits <span class="meta">— character positions inside this record</span></div>' +
+            '<div class="table-wrap"><table class="data cfg-sub-table"><thead><tr><th class="num">#</th><th>Field</th><th class="num">Starts at</th><th class="num">Length</th><th>Content type</th><th>Notes</th><th></th></tr></thead><tbody>' +
             frows2 + '</tbody></table></div>' +
             '<div class="mt-16">' + addBtn('Add field window', 'cfg-arr-add', 'data-path="record_types.' + k + '.fields" data-tpl="ipfield"') + '</div>';
         } else {
@@ -1489,13 +1900,106 @@ window.ConfigsUI = function (kit) {
           '</div>'
           : '<div class="meta mb-16">' + esc(pcaps.label) + ' sources are addressed by element or column name — there is nothing positional to configure.</div>');
 
-    return head +
+    var cfg = current();
+    return taskHint() +
+      parsingIssuesPanel(cfg) + parseAddForm(cfg) +
+      head +
       '<div class="cfg-section-title mt-24">Record types</div>' +
       (groups || '<div class="meta mb-16">No record types defined.</div>') +
       '<div class="mt-16 row" style="gap:8px;align-items:center">' +
       '<input class="input w-220" id="newRtName" placeholder="New record type, e.g. detail" />' +
       addBtn('Add record type', 'cfg-map-add', 'data-path="record_types" data-sel="newRtName" data-tpl="parserrt"') +
+      '</div>' +
+      '<div class="cfg-section-title mt-24">Check it against a real file</div>' +
+      sampleTestPanel(cfg);
+  }
+
+  /* =======================================================================
+     5.4 · Incoming parsing — lead with the problem
+     The most common reason someone opens this screen is that a field is not
+     being read. So the screen opens with exactly that: the fields recent files
+     carried that this config does not recognise, each one click from being
+     added with everything the platform already knows pre-filled.
+     ======================================================================= */
+  function parsingIssuesPanel(cfg) {
+    var issues = C.parsingIssues(cfg).filter(function (x) { return !S.cfg.parsedFixed[cfg.configId + ':' + x.field]; });
+    if (!issues.length) {
+      return '<div class="parse-ok">' + icon('check-circle', 18) +
+        '<span>Every field in recent files is recognised by this configuration.</span></div>';
+    }
+    var rows = issues.map(function (x) {
+      return '<div class="parse-row">' +
+        icon('alert-triangle', 16) +
+        '<span class="parse-field mono">' + esc(x.field) + '</span>' +
+        '<span class="parse-seen meta">seen in <span class="num">' + x.files + '</span> file' + (x.files === 1 ? '' : 's') + ' since ' + esc(x.since) + '</span>' +
+        '<button class="btn btn-sm btn-secondary" data-action="cfg-parse-add" data-field="' + esc(x.field) + '">' +
+        'Add this field' + icon('arrow-right', 16) + '</button>' +
+        '</div>';
+    }).join('');
+    return '<div class="parse-panel">' +
+      '<div class="parse-head"><strong>Parsing issues</strong>' +
+      '<span class="meta"><span class="num">' + issues.length + '</span> unrecognised field' + (issues.length === 1 ? '' : 's') + '</span></div>' +
+      rows + '</div>';
+  }
+
+  // The pre-filled editor a "Add this field →" opens: the name as seen, the
+  // window inferred from the file, and a suggested content type.
+  function parseAddForm(cfg) {
+    var g = S.cfg.parseForm;
+    if (!g || g.configId !== cfg.configId) return '';
+    return '<div class="gap-form">' +
+      '<div class="gap-form-head">' + icon('plus-circle', 18) +
+      '<strong>Add <span class="mono">' + esc(g.field) + '</span></strong>' +
+      '<span class="meta">Pre-filled from what recent files carried — confirm or adjust.</span>' +
+      '<button class="icon-btn xs" data-action="cfg-parse-cancel" title="Cancel" aria-label="Cancel">' + icon('x', 14) + '</button></div>' +
+      '<div class="cfg-grid-4">' +
+      fld('Field name as seen', '<input class="input mono" id="paName" value="' + esc(g.field) + '" />') +
+      fld('Starts at character', '<input class="input num" id="paStart" type="number" value="' + g.start + '" />') +
+      fld('Length (characters)', '<input class="input num" id="paLen" type="number" value="' + g.length + '" />') +
+      fld('Content type', '<select class="input" id="paType">' +
+        TYPE_LABEL.map(function (t) { return '<option value="' + t[0] + '"' + (g.type === t[0] ? ' selected' : '') + '>' + t[1] + '</option>'; }).join('') + '</select>') +
+      '</div>' +
+      '<div class="cfg-grid-2 mt-16">' +
+      fld('Which record type?', '<select class="input" id="paRt">' +
+        Object.keys(edit().body.record_types || {}).map(function (k) { return '<option value="' + esc(k) + '">' + esc(k) + '</option>'; }).join('') + '</select>') +
+      fld('Notes', '<input class="input" id="paNote" value="' + esc(g.note || '') + '" />') +
+      '</div>' +
+      '<div class="row mt-16" style="gap:10px;justify-content:flex-end">' +
+      '<button class="btn btn-secondary" data-action="cfg-parse-cancel">Cancel</button>' +
+      '<button class="btn btn-primary" data-action="cfg-parse-confirm">' + icon('plus', 18) + 'Add field</button>' +
+      '</div></div>';
+  }
+
+  /* "Test with a sample file" (Part 5.4). No real parsing — the upload is
+     accepted and each declared field is shown with a plausible extracted
+     value, with anything that extracted nothing flagged. */
+  function sampleTestPanel(cfg) {
+    var t = S.cfg.sampleTest;
+    var head = '<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">' +
+      '<button class="btn btn-secondary" data-action="cfg-sample-pick">' + icon('upload', 18) + 'Test with a sample file</button>' +
+      '<input type="file" id="cfgSampleFile" class="cfg-hidden-file" data-action="cfg-sample-file" aria-label="Sample file" />' +
+      (t ? '<span class="meta">Tested <span class="mono">' + esc(t.name) + '</span></span>' +
+        '<button class="btn btn-sm btn-ghost" data-action="cfg-sample-clear">Clear</button>' : '') +
       '</div>';
+    if (!t || t.configId !== cfg.configId) return head;
+    var rows = t.rows.map(function (r) {
+      return '<tr class="' + (r.value === null ? 'sample-empty' : '') + '">' +
+        '<td class="mono">' + esc(r.field) + '</td>' +
+        '<td class="num">' + r.start + '</td><td class="num">' + r.length + '</td>' +
+        '<td>' + (r.value === null
+          ? '<span class="inline-warn">' + icon('alert-triangle', 14) + 'nothing extracted</span>'
+          : '<code class="mono">' + esc(r.value) + '</code>') + '</td></tr>';
+    }).join('');
+    var bad = t.rows.filter(function (r) { return r.value === null; }).length;
+    return head +
+      '<div class="sample-result mt-16">' +
+      '<div class="' + (bad ? 'map-warn' : 'map-ok') + '">' + icon(bad ? 'alert-triangle' : 'check-circle', 18) +
+      '<span>' + (bad
+        ? '<strong><span class="num">' + bad + '</span> field' + (bad === 1 ? '' : 's') + ' extracted nothing</strong> from this file.'
+        : 'Every declared field extracted a value.') + '</span></div>' +
+      '<div class="table-wrap mt-16"><table class="data cfg-sub-table"><thead><tr>' +
+      '<th>Field</th><th class="num">Starts at</th><th class="num">Length</th><th>Value extracted</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
   }
 
   function ipPreprocessor() {
@@ -1692,10 +2196,17 @@ window.ConfigsUI = function (kit) {
       }
     }
     var f = C.familyById[fam];
+    var SUB = {
+      'network-file': 'Define the files we send to card networks, field by field.',
+      settlement: 'Define what acquirer reports contain, when they run, and what they charge.',
+      'incoming-parsing': 'Define how the files we receive from networks are read.'
+    };
     setView(
       '<div class="page-head cfg-head">' +
-      '<div><h1 class="page-title">' + esc(f.label) + '</h1><div class="subtitle">' + esc(f.blurb) + '</div></div>' +
-      roleBar() + '</div>' +
+      '<div><a class="rej-back" data-route="#/dashboard/ops/configs">' + icon('arrow-left', 15) + 'Platform Configs</a>' +
+      '<h1 class="page-title">' + esc(f.label) + '</h1>' +
+      '<div class="subtitle">' + esc(SUB[fam] || f.blurb) + '</div></div>' +
+      '<div class="head-actions">' + roleBar() + '</div></div>' +
       '<div class="cfg-split' + (S.cfg.listCollapsed ? ' collapsed' : '') + '" id="cfgSplit">' +
       (S.cfg.listCollapsed
         ? '<div class="cfg-rail"><button class="icon-btn" data-action="cfg-toggle-list" title="Expand list" aria-label="Expand config list">' + icon('chevrons-right', 16) + '</button><span class="rail-label">' + esc(f.short) + ' configs</span></div>'
@@ -1710,6 +2221,119 @@ window.ConfigsUI = function (kit) {
     mount();
   }
 
+  /* =======================================================================
+     5.1 · PLATFORM CONFIGS LANDING — task-based entry points
+     -----------------------------------------------------------------------
+     The config list is no longer the landing view. It answers "which record am
+     I looking for?", which is not the question anyone arrives with. These cards
+     answer "what do you want to do?" and carry the intent into the editor. The
+     full filterable list is still here, one click down, under Browse all
+     configurations — nothing has been removed.
+     ======================================================================= */
+  var TASK_GROUPS = [
+    {
+      key: 'network', title: 'Network files', blurb: 'What we send to card networks', icon: 'upload',
+      tasks: [
+        { id: 'add-field', label: 'Add a field to a file', desc: 'Declare a new field and where it sits in the record.', fam: 'network-file', tab: 'layout' },
+        { id: 'move-field', label: "Change a field's position or length", desc: 'Adjust where a field starts and how long it is.', fam: 'network-file', tab: 'layout' },
+        { id: 'map-data', label: 'Change how data maps into a file', desc: 'Point a field at a different source value.', fam: 'network-file', tab: 'transform' },
+        { id: 'view-layout', label: "View a file's layout", desc: 'See every field in position order.', fam: 'network-file', tab: 'layout' }
+      ]
+    },
+    {
+      key: 'incoming', title: 'Incoming files', blurb: 'What we receive from networks', icon: 'download',
+      tasks: [
+        { id: 'fix-parse', label: "Fix a field that isn't being read", desc: 'Add a field the files carry but the config does not recognise.', fam: 'incoming-parsing', tab: 'parser' },
+        { id: 'new-incoming', label: 'Add a new file type we receive', desc: 'Set up parsing for a file the platform does not read yet.', fam: 'incoming-parsing', tab: 'pipeline' },
+        { id: 'interpret', label: 'Change how a field is interpreted', desc: 'Adjust a field&rsquo;s content type or length.', fam: 'incoming-parsing', tab: 'parser' },
+        { id: 'view-read', label: 'View how a file is read', desc: 'See the layout the parser expects.', fam: 'incoming-parsing', tab: 'parser' }
+      ]
+    },
+    {
+      key: 'settlement', title: 'Settlement reports', blurb: 'What we send to acquirers', icon: 'file-spreadsheet',
+      tasks: [
+        { id: 'report-content', label: "Change what's in a report", desc: 'Add, remove or reorder the columns.', fam: 'settlement', tab: 'content' },
+        { id: 'report-when', label: 'Change when a report runs', desc: 'Adjust the window it covers and the time it is generated.', fam: 'settlement', tab: 'schedule' },
+        { id: 'fee-rules', label: 'Change fee rules', desc: 'Adjust what is charged, and when each rule applies.', fam: 'settlement', tab: 'fees' },
+        { id: 'view-report', label: "View a report's contents", desc: 'See the columns and a sample of the output.', fam: 'settlement', tab: 'content' }
+      ]
+    }
+  ];
+  var TASK_BY_ID = {};
+  TASK_GROUPS.forEach(function (g) { g.tasks.forEach(function (t) { t.group = g.key; TASK_BY_ID[t.id] = t; }); });
+
+  function taskCard(t) {
+    return '<button class="task-card" data-action="cfg-task" data-task="' + t.id + '">' +
+      '<span class="task-card-body">' +
+      '<span class="task-card-title">' + t.label + '</span>' +
+      '<span class="task-card-desc">' + t.desc + '</span></span>' +
+      icon('chevron-right', 18) + '</button>';
+  }
+
+  function browseSection() {
+    var fam = S.cfg.browseFam || 'network-file';
+    var open = S.cfg.browseOpen;
+    var tabs = [['network-file', 'Network file'], ['settlement', 'Settlement'], ['incoming-parsing', 'Incoming parsing']]
+      .map(function (f) {
+        return '<button class="tab' + (fam === f[0] ? ' active' : '') + '" data-action="cfg-browse-fam" data-fam="' + f[0] + '">' +
+          esc(f[1]) + '<span class="count num">' + (f[0] === 'settlement' ? C.settlementItems().length : C.byFamily(f[0]).length) + '</span></button>';
+      }).join('');
+    return '<div class="cfg-browse">' +
+      '<button class="cfg-browse-head" data-action="cfg-browse" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+      icon(open ? 'chevron-down' : 'chevron-right', 18) +
+      '<span>Browse all configurations</span>' +
+      '<span class="meta"><span class="num">' + C.configs.length + '</span> configs across three families</span></button>' +
+      (open
+        ? '<div class="cfg-browse-body"><div class="tabs">' + tabs + '</div>' + listPane(fam) + '</div>'
+        : '') + '</div>';
+  }
+
+  function pendingBanner() {
+    var n = pendingCount();
+    if (!n) return '';
+    return '<div class="callout info mb-16" data-route="#/dashboard/ops/configs/approvals" style="cursor:pointer">' +
+      icon('clock', 20) + '<div class="callout-body"><strong><span class="num">' + n + '</span> change' + (n === 1 ? '' : 's') +
+      ' waiting for approval.</strong></div>' + icon('chevron-right', 18) + '</div>';
+  }
+
+  function renderLanding() {
+    S.cfg.family = S.cfg.family || 'network-file';
+    var groups = TASK_GROUPS.map(function (g) {
+      return '<div class="task-group">' +
+        '<div class="task-group-head">' + icon(g.icon, 18) +
+        '<span class="task-group-title">' + esc(g.title) + '</span>' +
+        '<span class="meta">' + esc(g.blurb) + '</span></div>' +
+        '<div class="task-grid">' + g.tasks.map(taskCard).join('') + '</div>' +
+        '</div>';
+    }).join('');
+    setView(
+      pageHead('Platform Configs', 'Change how files are built, read and reported. Every change needs approval.',
+        roleBar()) +
+      pendingBanner() +
+      '<div class="task-groups">' + groups + '</div>' +
+      browseSection()
+    );
+  }
+
+  /* A one-line reminder of what the user came here to do, carried from the
+     task card into the editor. It never blocks anything. */
+  function taskHint() {
+    var t = TASK_BY_ID[S.cfg.task];
+    if (!t) return '';
+    var extra = {
+      'add-field': 'Click an unexplained gap in the ruler to add a field there, or use Add field below.',
+      'move-field': 'Edit “Starts at” and “Length” in the table, or use Fix positions automatically.',
+      'map-data': 'Each file field is paired with the data it comes from. Unmapped fields are highlighted.',
+      'fix-parse': 'Unrecognised fields from recent files are listed at the top — one click adds any of them.',
+      'report-when': 'Change a control and read Next 5 runs — no offset arithmetic needed.',
+      'fee-rules': 'Each rule states its conditions and charge in plain language. Test one with the calculator.'
+    }[t.id] || '';
+    return '<div class="cfg-task-hint">' + icon('target', 16) +
+      '<span><strong>' + t.label + '</strong>' + (extra ? ' — ' + extra : '') + '</span>' +
+      '<button class="icon-btn xs" data-action="cfg-task-clear" title="Dismiss" aria-label="Dismiss">' + icon('x', 14) + '</button>' +
+      '</div>';
+  }
+
   /* ---- Post-render wiring (raw editor scroll sync + row drag) ------------ */
   function mount() {
     var ta = el('cfgRawTa'), hl = el('cfgRawHl');
@@ -1717,28 +2341,52 @@ window.ConfigsUI = function (kit) {
       ta.dataset.bound = '1';
       ta.addEventListener('scroll', function () { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; });
     }
+    /* Part 5.3 — two-way hover linking. A ruler segment and its table row carry
+       the same data-fieldkey; hovering either lights both. */
+    var hv = el('view');
+    if (hv && !hv.dataset.hoverBound) {
+      hv.dataset.hoverBound = '1';
+      var lit = [];
+      function clear() { lit.forEach(function (n) { n.classList.remove('fk-lit'); }); lit = []; }
+      hv.addEventListener('mouseover', function (ev) {
+        var n = ev.target.closest && ev.target.closest('[data-fieldkey]');
+        if (!n) return;
+        var k = n.getAttribute('data-fieldkey');
+        clear();
+        Array.prototype.forEach.call(hv.querySelectorAll('[data-fieldkey="' + k + '"]'), function (x) {
+          x.classList.add('fk-lit'); lit.push(x);
+        });
+      });
+      hv.addEventListener('mouseout', function (ev) {
+        var n = ev.target.closest && ev.target.closest('[data-fieldkey]');
+        if (n) clear();
+      });
+    }
+
     var view = el('view');
     if (view && !view.dataset.dndBound) {
       view.dataset.dndBound = '1';
       var dragIdx = null, dragPath = null;
       view.addEventListener('dragstart', function (ev) {
-        var tr = ev.target.closest && ev.target.closest('tr[data-dnd]');
+        var tr = ev.target.closest && ev.target.closest('[data-dnd]');
         if (!tr) return;
         dragIdx = +tr.getAttribute('data-idx');
-        dragPath = tr.closest('table').getAttribute('data-dnd-table');
+        var host = tr.closest('[data-dnd-table]');
+        dragPath = host ? host.getAttribute('data-dnd-table') : null;
+        if (dragPath == null) return;
         tr.classList.add('dragging');
         if (ev.dataTransfer) { ev.dataTransfer.effectAllowed = 'move'; ev.dataTransfer.setData('text/plain', String(dragIdx)); }
       });
       view.addEventListener('dragover', function (ev) {
-        var tr = ev.target.closest && ev.target.closest('tr[data-dnd]');
+        var tr = ev.target.closest && ev.target.closest('[data-dnd]');
         if (tr && dragPath != null) { ev.preventDefault(); tr.classList.add('drop-target'); }
       });
       view.addEventListener('dragleave', function (ev) {
-        var tr = ev.target.closest && ev.target.closest('tr[data-dnd]');
+        var tr = ev.target.closest && ev.target.closest('[data-dnd]');
         if (tr) tr.classList.remove('drop-target');
       });
       view.addEventListener('drop', function (ev) {
-        var tr = ev.target.closest && ev.target.closest('tr[data-dnd]');
+        var tr = ev.target.closest && ev.target.closest('[data-dnd]');
         if (!tr || dragPath == null) return;
         ev.preventDefault();
         var to = +tr.getAttribute('data-idx');
@@ -1784,7 +2432,7 @@ window.ConfigsUI = function (kit) {
     // Only fixed-width layouts have a byte map to redraw.
     if (!F.isFixed(e.body)) return renderValidation();
     (e.body.record_types || []).forEach(function (rt, i) {
-      put('bmw-' + i, X.byteMapHtml(e.body.record_length, rt.fields, { title: 'Byte map · record type ' + esc(rt.record_type || '?') }));
+      put('bmw-' + i, X.byteMapHtml(e.body.record_length, rt.fields, { interactive: true, rt: i }));
     });
     renderValidation();
   }
@@ -2000,6 +2648,146 @@ window.ConfigsUI = function (kit) {
     'cfgc-list-facet': function (t) { S.cfg.filters[S.cfg.family].facet = t.value; renderFamily(S.cfg.family); },
     'cfgc-list-state': function (t) { S.cfg.filters[S.cfg.family].state = t.value; renderFamily(S.cfg.family); },
     'cfg-toggle-list': function () { S.cfg.listCollapsed = !S.cfg.listCollapsed; renderFamily(S.cfg.family); },
+    /* ---- Task-based landing (Part 5.1) ---- */
+    'cfg-task': function (t) {
+      var task = TASK_BY_ID[t.getAttribute('data-task')];
+      if (!task) return;
+      S.cfg.task = task.id;
+      S.cfg.tab[task.fam] = task.tab;
+      if (task.id === 'new-incoming') { S.cfg.family = task.fam; ACTIONS['cfg-new'](); return; }
+      go(famRoute(task.fam) + '?task=' + task.id);
+    },
+    'cfg-task-clear': function () { S.cfg.task = null; renderFamily(S.cfg.family); },
+    'cfg-browse': function () {
+      S.cfg.browseOpen = !S.cfg.browseOpen;
+      if (S.opsChild) renderFamily(S.cfg.family); else renderLanding();
+    },
+    'cfg-browse-fam': function (t) { S.cfg.browseFam = t.getAttribute('data-fam'); renderLanding(); },
+
+    /* ---- Layout ruler (Part 5.3) ----
+       Clicking an unexplained gap opens the add-field form pre-filled with that
+       gap's start position and length. */
+    'cfg-gap': function (t) {
+      S.cfg.gapForm = {
+        rt: parseInt(t.getAttribute('data-rt'), 10),
+        start: parseInt(t.getAttribute('data-start'), 10),
+        len: parseInt(t.getAttribute('data-len'), 10)
+      };
+      renderBody();
+      var n = el('gapName'); if (n) n.focus();
+    },
+    'cfg-gap-cancel': function () { S.cfg.gapForm = null; renderBody(); },
+    'cfg-unused': function () { S.cfg.unusedOpen = !S.cfg.unusedOpen; renderBody(); },
+    /* ---- Fee calculator (Part 5.5) ---- */
+    'cfgi-calc-amount': function (t) {
+      S.cfg.feeCalc.amount = parseFloat(t.value) || 0;
+      renderBody();
+      var i = el('view').querySelector('[data-action="cfgi-calc-amount"]');
+      if (i) { i.focus(); }
+    },
+    'cfgc-calc-network': function (t) { S.cfg.feeCalc.network = t.value; renderBody(); },
+    'cfgc-calc-card': function (t) { S.cfg.feeCalc.card = t.value; renderBody(); },
+
+    /* ---- Parsing issues (Part 5.4) ----
+       One click turns "a field isn't parsing" into a confirmation: the name as
+       seen, the inferred window and a suggested content type are already in. */
+    'cfg-parse-add': function (t) {
+      var cfg = current(); if (!cfg) return;
+      var name = t.getAttribute('data-field');
+      var hit = C.parsingIssues(cfg).filter(function (x) { return x.field === name; })[0];
+      if (!hit) return;
+      S.cfg.parseForm = {
+        configId: cfg.configId, field: hit.field, start: hit.start,
+        length: hit.length, type: hit.type, note: hit.note
+      };
+      renderBody();
+      var n = el('paName'); if (n) n.focus();
+    },
+    'cfg-parse-cancel': function () { S.cfg.parseForm = null; renderBody(); },
+    'cfg-parse-confirm': function () {
+      var e = edit(), cfg = current(); if (!e || !cfg) return;
+      var v = function (id) { var n = el(id); return n ? n.value : ''; };
+      var name = (v('paName') || '').trim();
+      var rtKey = v('paRt');
+      var rts = e.body.record_types || (e.body.record_types = {});
+      var rt = rts[rtKey];
+      if (!name) { toast('The field needs a name', 'info'); return; }
+      if (!rt) { toast('Pick a record type to add it to', 'info'); return; }
+      rt.fields = rt.fields || [];
+      rt.fields.push({
+        name: name, start: parseInt(v('paStart'), 10) || 1,
+        length: parseInt(v('paLen'), 10) || 1, type: v('paType') || 'AN', note: v('paNote') || ''
+      });
+      rt.fields.sort(function (a, b) { return (+a.start || 0) - (+b.start || 0); });
+      S.cfg.parsedFixed[cfg.configId + ':' + (S.cfg.parseForm || {}).field] = true;
+      S.cfg.parseForm = null;
+      e.dirty = true; e.raw = null; e.rawErr = null;
+      renderBody();
+      toast(name + ' added — submit for approval to make it live', 'success');
+    },
+
+    /* ---- Test with a sample file (Part 5.4) — mocked, per Part 7 ---- */
+    'cfg-sample-pick': function () { var n = el('cfgSampleFile'); if (n) n.click(); },
+    'cfg-sample-clear': function () { S.cfg.sampleTest = null; renderBody(); },
+    'cfg-sample-file': function (t) {
+      var cfg = current(); var e = edit(); if (!cfg || !e) return;
+      var name = (t.files && t.files[0] && t.files[0].name) || 'sample.txt';
+      // Plausible extracted values, deterministic per field so a re-render is
+      // stable. No real parsing happens — Part 7 says not to build it.
+      var rows = [];
+      Object.keys(e.body.record_types || {}).forEach(function (k) {
+        ((e.body.record_types[k] || {}).fields || []).forEach(function (f) {
+          var seed = 0;
+          for (var i = 0; i < String(f.name).length; i++) seed = (seed * 31 + String(f.name).charCodeAt(i)) % 9973;
+          var len = Math.max(1, +f.length || 1);
+          var val;
+          if (seed % 11 === 0) val = null;                       // extracted nothing
+          else if (f.type === 'N') val = String(seed).padStart(len, '0').slice(0, len);
+          else val = (String(f.name).toUpperCase().replace(/[^A-Z0-9]/g, '') + '000000').slice(0, len);
+          rows.push({ field: f.name, start: f.start, length: f.length, value: val });
+        });
+      });
+      S.cfg.sampleTest = { configId: cfg.configId, name: name, rows: rows };
+      renderBody();
+      toast('Parsed ' + name + ' against this configuration', 'success');
+    },
+    // Map a highlighted unmapped field straight from the warning row.
+    'cfg-map-quick': function (t) {
+      var e = edit(); if (!e) return;
+      var name = t.getAttribute('data-name');
+      var tf = e.body.transform || (e.body.transform = {});
+      var fm = tf.field_mappings || (tf.field_mappings = {});
+      if (!fm[name]) fm[name] = { source: '', transform: 'passthrough', params: {} };
+      e.dirty = true; e.raw = null; e.rawErr = null;
+      renderBody();
+    },
+    'cfg-gap-add': function (t) {
+      var e = edit(); if (!e) return;
+      var i = parseInt(t.getAttribute('data-rt'), 10);
+      var rt = (e.body.record_types || [])[i]; if (!rt) return;
+      var v = function (id) { var n = el(id); return n ? n.value : ''; };
+      var name = (v('gapName') || '').trim();
+      if (!name) { toast('Give the field a name first', 'info'); var n0 = el('gapName'); if (n0) n0.focus(); return; }
+      var start = parseInt(v('gapStart'), 10), len = parseInt(v('gapLen'), 10);
+      if (!(start > 0) || !(len > 0)) { toast('Start position and length must both be positive', 'info'); return; }
+      rt.fields = rt.fields || [];
+      rt.fields.push({ name: name, start: start, length: len, type: v('gapType') || 'AN', note: v('gapNote') || '' });
+      // Position order is the order the record is read in, so keep the table in it.
+      rt.fields.sort(function (a, b) { return (+a.start || 0) - (+b.start || 0); });
+      e.dirty = true; e.raw = null; e.rawErr = null;
+      S.cfg.gapForm = null;
+      renderBody();
+      toast('Added ' + name + ' at characters ' + start + '–' + (start + len - 1), 'success');
+    },
+    'cfg-autopack-run': function (t) {
+      var e = edit(); if (!e) return;
+      var i = parseInt(t.getAttribute('data-rt'), 10);
+      var rt = (e.body.record_types || [])[i]; if (!rt) return;
+      X.autoPack(rt.fields || []);
+      e.dirty = true; e.raw = null; e.rawErr = null;
+      renderBody();
+      toast('Start positions recalculated from the lengths', 'success');
+    },
     'cfg-new': function () {
       var fam = S.cfg.family;
       var item = fam === 'settlement' ? stItem() : null;
@@ -2281,8 +3069,19 @@ window.ConfigsUI = function (kit) {
       kit.renderSidebar();
       return rest[1] ? api.viewApprovalDetail(rest[1]) : api.viewApprovals();
     }
+    // Part 5.1 — the landing is the task cards, not a config list.
+    if (!head) {
+      S.opsChild = null; S.cfg.task = null;
+      kit.renderSidebar();
+      return renderLanding();
+    }
     var fam = BY_SEG[head] || 'network-file';
     S.opsChild = CHILD[fam];
+    // A task card carries its intent in the query string.
+    if (S.query && S.query.task && TASK_BY_ID[S.query.task]) {
+      S.cfg.task = S.query.task;
+      S.cfg.tab[fam] = TASK_BY_ID[S.query.task].tab;
+    }
     kit.renderSidebar();
     return renderFamily(fam, rest[1]);
   }

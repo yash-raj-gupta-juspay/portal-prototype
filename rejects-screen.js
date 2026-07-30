@@ -30,7 +30,9 @@ window.RejectsUI = function (kit) {
   var S = window.AppState;
   var icon = kit.icon, esc = kit.esc, pill = kit.pill, cardBox = kit.cardBox, emptyState = kit.emptyState,
     setView = kit.setView, toast = kit.toast, el = kit.el, go = kit.go, num = kit.num, fmt = kit.fmt,
-    pct = kit.pct, tenantTag = kit.tenantTag;
+    pct = kit.pct, tenantTag = kit.tenantTag,
+    pageHead = kit.pageHead, kpiCard = kit.kpiCard, tableCard = kit.tableCard,
+    opsFilterRow = kit.opsFilterRow, sidePanel = kit.sidePanel;
 
   var ROUTE = '#/dashboard/ops/rejects';
   var WHO = R.CURRENT_USER;
@@ -38,6 +40,7 @@ window.RejectsUI = function (kit) {
   S.rej = {
     // --- overview filters ---
     tenants: {},                  // tid → true; empty object means "all"
+    bq: '',                       // overview search (batch id / tenant / file name)
     network: 'all', family: 'all', reason: 'all',
     dateMode: 'all', dateOn: '', dateFrom: '', dateTo: '',
     sort: { key: 'default', dir: 'desc' },
@@ -46,7 +49,7 @@ window.RejectsUI = function (kit) {
     // Staging rejects carry a second, read-only view of the whole file, because
     // the replacement file will contain all of it (§C.5). Incoming rejects have
     // no such tab — the rest of that cycle already cleared.
-    tab: 'rejects',
+    tab: 'rejects', detailsOpen: false, fgroups: {},
     // --- correction editor ---
     editing: null, editFrom: null, draft: null, navOrder: null,
     // §C.6 — the declared correction path. Null until the analyst chooses.
@@ -56,7 +59,7 @@ window.RejectsUI = function (kit) {
     // irdCards holds per-strategy expand overrides; absent means "follow the
     // recommendation". irdApplied records which strategy staged the current
     // draft IRD, so Save can attach the reasoning note it generated.
-    irdCards: {}, irdAttrs: false, irdHistory: false, irdApplied: null,
+    irdCards: {}, irdHistory: false, irdManualOpen: false, irdApplied: null,
     // --- overlays ---
     modal: null
   };
@@ -82,15 +85,19 @@ window.RejectsUI = function (kit) {
       ? pill('Staging', 'warning', 'file-x')
       : pill('Incoming', 'neutral', 'download');
   }
-  function irdTag() { return '<span class="rej-ird-tag" title="Mastercard IRD reject — resolved through the recommendation panel">IRD</span>'; }
+  function irdTag() { return '<span class="rej-ird-tag" title="Mastercard IRD reject">IRD</span>'; }
   function manualTag(tag) {
     if (!tag) return '';
     return '<span class="rej-manual-tag" title="Recorded by hand by ' + esc(tag.by) + ' on ' + esc(tag.at) + '">' +
       icon('hand', 11) + esc(tag.label) + '</span>';
   }
+  /* Part 4.3 — the human-readable reason leads; the code is muted subtext
+     beneath it. Someone reading a network spec knows what "Invalid IRD for this
+     transaction type" means before they know what 0221 means. */
   function reasonCell(t) {
-    return '<div class="reason-cell"><span class="mono reason-code">' + esc(t.reasonCode) + '</span>' +
-      esc(R.reasonText(t.reasonCode)) + (R.isIrd(t.reasonCode) ? irdTag() : '') + '</div>';
+    return '<div class="reason-cell"><div class="reason-text">' + esc(R.reasonText(t.reasonCode)) +
+      (R.isIrd(t.reasonCode) ? irdTag() : '') + '</div>' +
+      '<div class="reason-code mono">' + esc(t.reasonCode) + '</div></div>';
   }
   function arnCell(arn) { return '<span class="rej-arn mono">' + esc(arn) + '</span>'; }
   function moneyOf(t) { return fmt(t.amount, 2, t.currency); }
@@ -148,6 +155,11 @@ window.RejectsUI = function (kit) {
       if (F.family !== 'all' && b.family !== F.family) return false;
       if (!dateInRange(b.cycleDate)) return false;
       if (F.reason !== 'all' && !b.txns.some(function (t) { return t.reasonCode === F.reason; })) return false;
+      if (F.bq) {
+        var q = F.bq.toLowerCase();
+        var hay = (b.id + ' ' + b.tenantName + ' ' + b.rejectFile + ' ' + b.clearingFile).toLowerCase();
+        if (hay.indexOf(q) < 0) return false;
+      }
       return true;
     });
   }
@@ -183,119 +195,124 @@ window.RejectsUI = function (kit) {
       esc(label) + icon(on ? (F.sort.dir === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevrons-up-down', 13) + '</th>';
   }
 
-  // Four counts (§C.1). IRD rejects lost their card — they stay legible as a tag
-  // on the rows that carry them, which is where the analyst acts on them.
+  /* Part 4.2 — four KPI cards with accent icon tiles. IRD rejects have no card
+     of their own; they stay legible as a tag on the rows that carry them. */
   function summaryStrip(list) {
     var s = R.summary(list);
-    return '<div class="stat-row rej-stats">' +
-      '<div class="stat-card"><span class="sc-label">Total open rejects</span><span class="sc-value num">' + s.open + '</span>' +
-      '<span class="sc-sub">everything not yet cleared, across ' + list.length + ' batch' + (list.length === 1 ? '' : 'es') + '</span></div>' +
-
-      '<div class="stat-card"><span class="sc-label">Staging rejects</span><span class="sc-value num">' + s.staging + '</span>' +
-      '<span class="sc-sub">' + (s.stagingBlocking
-        ? '<strong class="rej-warn-text"><span class="num">' + s.stagingBlocking + '</span> blocking an unsubmitted file</strong>'
-        : 'no file currently blocked') + '</span></div>' +
-
-      '<div class="stat-card"><span class="sc-label">Incoming rejects</span><span class="sc-value num">' + s.incoming + '</span>' +
-      '<span class="sc-sub">file staged, transactions rejected later</span></div>' +
-
-      '<div class="stat-card' + (s.reRejected ? ' danger' : '') + '"><span class="sc-label">Re-rejected</span>' +
-      '<span class="sc-value num' + (s.reRejected ? ' rej-danger-text' : '') + '">' + s.reRejected + '</span>' +
-      '<span class="sc-sub">' + (s.reRejected ? 'rejected again after resubmission — work these first' : 'nothing has come back twice') + '</span></div>' +
+    return '<div class="kpi-row mb-16">' +
+      kpiCard({
+        tile: 'orange', icon: 'file-warning', label: 'Open rejects', value: num(s.open),
+        sub: 'Across ' + list.length + ' batch' + (list.length === 1 ? '' : 'es')
+      }) +
+      kpiCard({
+        tile: 'red', icon: 'file-x', label: 'Staging', value: num(s.staging),
+        sub: s.stagingBlocking
+          ? '<strong class="rej-warn-text"><span class="num">' + s.stagingBlocking + '</span> blocking an unsubmitted file</strong>'
+          : 'No file currently blocked'
+      }) +
+      kpiCard({
+        tile: 'blue', icon: 'download', label: 'Incoming', value: num(s.incoming),
+        sub: 'File staged, rejected later'
+      }) +
+      kpiCard({
+        tile: 'purple', icon: 'rotate-ccw', label: 'Re-rejected', value: num(s.reRejected),
+        sub: s.reRejected ? 'Came back after resubmission — work these first' : 'Nothing has come back twice'
+      }) +
       '</div>';
   }
 
+  /* Part 3.3 — one filter-row shape: search, then four categorical filters,
+     then the preset, then the resolved date range, then refresh. Anything set
+     shows as a removable chip beneath. */
+  function activeChips() {
+    var out = [];
+    Object.keys(F.tenants).forEach(function (tid) {
+      out.push({ label: 'Tenant: ' + ((O.tenantById[tid] || {}).name || tid), action: 'rej-tenant', data: ' data-id="' + tid + '"' });
+    });
+    if (F.network !== 'all') out.push({ label: 'Network: ' + F.network, action: 'rej-clear-network' });
+    if (F.family !== 'all') out.push({ label: 'Type: ' + (F.family === 'staging' ? 'Staging' : 'Incoming'), action: 'rej-clear-family' });
+    if (F.reason !== 'all') out.push({ label: 'Reason: ' + R.reasonText(F.reason), action: 'rej-clear-reason' });
+    if (F.dateMode !== 'all') out.push({ label: 'Cycle date: ' + dateLabel(), action: 'rej-clear-date' });
+    return out;
+  }
+  function dateLabel() {
+    if (F.dateMode === 'on') return F.dateOn ? U.prettyDate(F.dateOn) : 'a specific date';
+    if (F.dateMode === 'range') return (F.dateFrom ? U.prettyDate(F.dateFrom) : '…') + ' – ' + (F.dateTo ? U.prettyDate(F.dateTo) : '…');
+    if (F.dateMode === 'all') return 'Any cycle date';
+    if (F.dateMode === '1') return U.prettyDate(D.TODAY);
+    return U.prettyDate(U.addDays(D.TODAY, -(parseInt(F.dateMode, 10) - 1))) + ' – ' + U.prettyDate(D.TODAY);
+  }
   function filterRow() {
-    var tenantChips = '<div class="rej-tenant-chips">' +
-      '<button class="rej-chip' + (!tenantFilterActive() ? ' on' : '') + '" data-action="rej-tenant-all">All tenants</button>' +
-      O.tenants.map(function (t) {
-        return '<button class="rej-chip' + (F.tenants[t.id] ? ' on' : '') + '" data-action="rej-tenant" data-id="' + t.id + '">' +
-          '<span class="tenant-dot" style="background:' + t.color + '"></span>' + esc(t.name) + '</button>';
-      }).join('') + '</div>';
-
-    var presets = [['all', 'All'], ['1', 'Today'], ['7', 'Last 7 days'], ['30', 'Last 30 days']].map(function (p) {
-      return '<button class="rej-chip' + (F.dateMode === p[0] ? ' on' : '') + '" data-action="rej-date-preset" data-mode="' + p[0] + '">' + p[1] + '</button>';
-    }).join('') +
-      '<button class="rej-chip' + (F.dateMode === 'on' ? ' on' : '') + '" data-action="rej-date-preset" data-mode="on">Specific date</button>' +
-      '<button class="rej-chip' + (F.dateMode === 'range' ? ' on' : '') + '" data-action="rej-date-preset" data-mode="range">Custom range</button>';
-
-    var dateInputs = F.dateMode === 'on'
-      ? '<label class="field inline">On <input type="date" class="input w-160" value="' + esc(F.dateOn) + '" data-action="rej-c-date-on" /></label>'
-      : (F.dateMode === 'range'
-        ? '<label class="field inline">From <input type="date" class="input w-160" value="' + esc(F.dateFrom) + '" data-action="rej-c-date-from" /></label>' +
-        '<label class="field inline">To <input type="date" class="input w-160" value="' + esc(F.dateTo) + '" data-action="rej-c-date-to" /></label>'
-        : '');
-
-    var reasonOpts = R.reasonCodesPresent().map(function (c) {
-      return '<option value="' + esc(c) + '"' + (F.reason === c ? ' selected' : '') + '>' + esc(c) + ' — ' + esc(R.reasonText(c)) + '</option>';
-    }).join('');
-
-    return '<div class="rej-filters">' +
-      '<div class="rej-filter-line"><span class="rej-filter-key">Tenant</span>' + tenantChips + '</div>' +
-      '<div class="rej-filter-line">' +
-      '<label class="field inline">Network <select class="input w-160" data-action="rej-c-network">' +
-      ['all', 'Visa', 'Mastercard', 'RuPay'].map(function (n) {
-        return '<option value="' + n + '"' + (F.network === n ? ' selected' : '') + '>' + (n === 'all' ? 'All networks' : n) + '</option>';
-      }).join('') + '</select></label>' +
-      '<label class="field inline">Reject family <select class="input w-160" data-action="rej-c-family">' +
-      '<option value="all"' + (F.family === 'all' ? ' selected' : '') + '>All families</option>' +
-      '<option value="staging"' + (F.family === 'staging' ? ' selected' : '') + '>Staging</option>' +
-      '<option value="incoming"' + (F.family === 'incoming' ? ' selected' : '') + '>Incoming</option>' +
-      '</select></label>' +
-      '<label class="field inline">Reason code <select class="input w-320" data-action="rej-c-reason">' +
-      '<option value="all"' + (F.reason === 'all' ? ' selected' : '') + '>All reason codes</option>' + reasonOpts + '</select></label>' +
-      '</div>' +
-      '<div class="rej-filter-line"><span class="rej-filter-key">Cycle date</span>' +
-      '<div class="rej-tenant-chips">' + presets + '</div>' + dateInputs +
-      '<button class="btn btn-ghost btn-sm" style="margin-left:auto" data-action="rej-reset">' + icon('rotate-ccw', 14) + 'Reset filters</button>' +
-      '</div>' +
-      '</div>';
+    var tenantVal = Object.keys(F.tenants)[0] || 'all';
+    var reasonOpts = [['all', 'All reasons']].concat(R.reasonCodesPresent().map(function (c) {
+      return [c, R.reasonText(c) + ' (' + c + ')'];
+    }));
+    var dateBox;
+    if (F.dateMode === 'on') {
+      dateBox = '<input type="date" value="' + esc(F.dateOn) + '" data-action="rej-c-date-on" aria-label="Cycle date" />';
+    } else if (F.dateMode === 'range') {
+      dateBox = '<input type="date" value="' + esc(F.dateFrom) + '" data-action="rej-c-date-from" aria-label="From" />' +
+        '<span class="meta">–</span>' +
+        '<input type="date" value="' + esc(F.dateTo) + '" data-action="rej-c-date-to" aria-label="To" />';
+    } else {
+      dateBox = '<span>' + esc(dateLabel()) + '</span>';
+    }
+    return opsFilterRow({
+      search: { placeholder: 'Search batch, tenant or file name', action: 'rej-i-bq', value: F.bq || '' },
+      filters: [
+        { action: 'rej-c-tenant-one', value: tenantVal, label: 'Tenant', options: [['all', 'All tenants']].concat(O.tenants.map(function (t) { return [t.id, t.name]; })) },
+        { action: 'rej-c-network', value: F.network, label: 'Network', options: [['all', 'All networks'], 'Visa', 'Mastercard', 'RuPay'] },
+        { action: 'rej-c-family', value: F.family, label: 'Type', options: [['all', 'Staging and incoming'], ['staging', 'Staging'], ['incoming', 'Incoming']] },
+        { action: 'rej-c-reason', value: F.reason, label: 'Reason code', options: reasonOpts }
+      ],
+      preset: {
+        action: 'rej-c-preset', value: F.dateMode,
+        options: [['all', 'All dates'], ['1', 'Today'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['on', 'Specific date'], ['range', 'Custom range']]
+      },
+      dateRange: dateBox + icon('chevron-down', 16),
+      refresh: 'rej-refresh',
+      chips: activeChips()
+    });
   }
 
+  /* Part 4.2 — Tenant · Network · Type · Cycle date · Rejects · Value ·
+     Received. Every column here is something a batch is chosen by. */
   function batchTable(list) {
     if (!list.length) {
-      return emptyState('check-circle', 'No reject batches match these filters',
-        'Widen the date range or clear the tenant, network and reason-code filters to see the full 30-day window.');
+      return '<div class="card">' + emptyState('check-circle', 'No reject batches match these filters',
+        'Widen the date range or clear the tenant, network and reason filters.',
+        '<button class="btn btn-secondary" data-action="rej-reset">' + icon('rotate-ccw', 18) + 'Clear filters</button>') + '</div>';
     }
     var rows = sortedBatches(list).map(function (b) {
       var c = R.batchCounts(b);
-      var rate = R.batchRate(b);
       return '<tr class="clickable' + (R.isBlocking(b) ? ' rej-row-blocking' : '') + '" data-route="' + ROUTE + '/' + b.id + '">' +
         '<td>' + tenantTag(b.tenantId) + '</td>' +
         '<td>' + netBadge(b.network) + '</td>' +
-        '<td>' + familyPill(b.family) + (R.isBlocking(b) ? '<div class="cell-sub rej-warn-text">blocks the cycle</div>' : '') + '</td>' +
+        '<td>' + familyPill(b.family) + (R.isBlocking(b) ? '<div class="cell-sub rej-warn-text">Blocks the cycle</div>' : '') + '</td>' +
         '<td class="nowrap"><div class="cell-main num">' + U.prettyDate(b.cycleDate) + '</div>' +
         '<div class="cell-sub">' + esc(b.cycleDow) + '</div></td>' +
-        '<td class="nowrap cell-sub num">' + esc(b.receivedAt) + '</td>' +
-        '<td class="num">' + num(b.fileTxns) + '</td>' +
-        '<td class="num"><div class="cell-main">' + b.txns.length + '</div>' +
-        '<div class="cell-sub num">' + pct(rate, 3) + ' of file</div></td>' +
+        '<td class="num"><div class="cell-main">' + num(b.txns.length) + '</div>' +
+        '<div class="cell-sub num">' + (c.re_rejected ? c.re_rejected + ' re-rejected · ' : '') + R.batchOpen(b) + ' open</div></td>' +
         '<td class="num nowrap">' + fmt(R.batchValue(b), 2, b.currency) + '</td>' +
-        '<td><div class="cell-main">' + esc(R.batchProgressText(b)) + '</div>' +
-        '<div class="cell-sub">' + (c.re_rejected ? '<span class="rej-danger-text"><span class="num">' + c.re_rejected + '</span> re-rejected · </span>' : '') +
-        '<span class="num">' + R.batchOpen(b) + '</span> open</div></td>' +
+        '<td class="nowrap cell-sub num">' + esc(b.receivedAt) + '</td>' +
         '<td class="nowrap"><span class="rej-open-link">Open' + icon('arrow-right', 14) + '</span></td>' +
         '</tr>';
     }).join('');
 
-    return '<div class="table-wrap"><table class="data rej-batches"><thead><tr>' +
-      sortTh('Tenant', 'tenant') + sortTh('Network', 'network') + sortTh('Family', 'family') +
-      sortTh('Cycle date', 'cycle') + sortTh('Received at', 'received') +
-      sortTh('Transactions in file', 'filetxns', 'num') + sortTh('Rejects', 'rejects', 'num') +
-      sortTh('Reject value', 'value', 'num') + sortTh('Status', 'status') +
-      '<th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    return tableCard('<table class="data rej-batches"><thead><tr>' +
+      sortTh('Tenant', 'tenant') + sortTh('Network', 'network') + sortTh('Type', 'family') +
+      sortTh('Cycle date', 'cycle') + sortTh('Rejects', 'rejects', 'num') +
+      sortTh('Value', 'value', 'num') + sortTh('Received', 'received') +
+      '<th></th></tr></thead><tbody>' + rows + '</tbody></table>');
   }
 
   function viewOverview() {
     var list = filteredBatches();
     setView(
-      '<div class="page-head">' +
-      '<div><h1 class="page-title">Rejects</h1>' +
-      '<div class="subtitle">Transactions rejected by card networks — at clearing file staging, or in a subsequent incoming cycle. ' +
-      'Correct the underlying transaction data and regenerate the clearing file for resubmission.</div></div>' +
-      '</div>' +
+      pageHead('Rejects', 'Transactions the card networks refused. Fix them, then regenerate the file.') +
       summaryStrip(list) +
-      '<div class="card">' + filterRow() + batchTable(list) + '</div>'
+      filterRow() +
+      '<div class="mt-16">' + batchTable(list) + '</div>'
     );
   }
 
@@ -342,14 +359,18 @@ window.RejectsUI = function (kit) {
       esc(label) + icon(on ? (F.txnSort.dir === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevrons-up-down', 13) + '</th>';
   }
 
+  /* Part 4.3 — ARN · Merchant · Amount · Reason · Status · Fix →.
+     Transaction date rides with the ARN and the assignee with the status, so
+     neither is lost and neither costs a column. */
   function txnTable(b) {
     var list = visibleTxns(b);
     if (!list.length) {
-      return emptyState('search-x', 'No transactions match',
+      return '<div class="card">' + emptyState('search-x', 'No transactions match',
         F.q ? 'No ARN in this batch contains “' + esc(F.q) + '”. Clear the search to see all ' + openTxnCount(b) + '.'
           : (b.family === 'incoming' && clearedHidden(b)
-            ? 'Every reject in this batch has cleared. Cleared transactions are not listed here.'
-            : 'This batch has no rejected transactions.'));
+            ? 'Every reject in this batch has cleared.'
+            : 'This batch has no rejected transactions.'),
+        F.q ? '<button class="btn btn-secondary" data-action="rej-clear-q">' + icon('rotate-ccw', 18) + 'Clear search</button>' : '') + '</div>';
     }
     var allSel = list.every(function (t) { return F.sel[t.id]; });
     var rows = list.map(function (t) {
@@ -358,34 +379,33 @@ window.RejectsUI = function (kit) {
         (t.status === 'awaiting_config' ? ' rej-row-awaiting' : '') + '">' +
         '<td class="pick-cell sticky-pick" onclick="event.stopPropagation()">' +
         '<input type="checkbox"' + (F.sel[t.id] ? ' checked' : '') + ' data-action="rej-c-pick" data-id="' + t.id + '" aria-label="Select ' + esc(t.arn) + '" /></td>' +
-        '<td class="sticky-arn">' + arnCell(t.arn) + '</td>' +
+        '<td class="sticky-arn">' + arnCell(t.arn) +
+        '<div class="cell-sub num">' + U.prettyDate(t.txnDate) + ' · ' + esc(t.txnTime) + ' IST</div></td>' +
         '<td><div class="cell-main">' + esc(t.merchant) + '</div><div class="cell-sub mono">' + esc(t.mid) + '</div></td>' +
         '<td class="num nowrap">' + moneyOf(t) + '</td>' +
-        '<td class="nowrap"><div class="num">' + U.prettyDate(t.txnDate) + '</div><div class="cell-sub num">' + esc(t.txnTime) + ' IST</div></td>' +
         '<td>' + reasonCell(t) + '</td>' +
         '<td>' + statusPill(t) + manualTag(t.manualTag) +
         (t.status === 'awaiting_config' && t.configRequest
           ? '<div class="cell-sub rej-cfg-line">' + icon('settings', 12) +
-          esc(t.configRequest.familyLabel || 'Config or code change') + '</div>' : '') + '</td>' +
-        '<td class="cell-sub">' + (t.assignee ? esc(t.assignee) : '—') + '</td>' +
-        '<td class="nowrap">' +
+          esc(t.configRequest.familyLabel || 'Config or code change') + '</div>' : '') +
+        '<div class="cell-sub">' + (t.assignee ? 'Assigned to ' + esc(t.assignee) : 'Unassigned') + '</div></td>' +
+        '<td class="nowrap rej-row-actions">' +
         // A transaction blocked on a config change has one action worth taking
         // from the table: the re-derive that unblocks it once the config lands.
         (t.status === 'awaiting_config'
           ? '<button class="btn btn-sm btn-secondary" data-action="rej-rederive" data-id="' + t.id + '" ' +
-          'title="Recompute this transaction from the corrected config">' + icon('refresh-cw', 14) + 'Config updated — re-derive</button>' +
-          '<button class="btn btn-sm btn-ghost" data-action="rej-edit" data-id="' + t.id + '">' + icon('pencil', 14) + 'Edit</button>'
-          : '<button class="btn btn-sm btn-secondary" data-action="rej-edit" data-id="' + t.id + '">' + icon('pencil', 14) + 'Edit</button>') +
-        '<button class="btn btn-sm btn-ghost" data-action="rej-history" data-id="' + t.id + '">' + icon('history', 14) + 'History</button>' +
+          'title="Recompute this transaction from the corrected config">' + icon('refresh-cw', 16) + 'Re-derive</button>'
+          : '') +
+        '<button class="rej-fix-link" data-action="rej-edit" data-id="' + t.id + '">Fix' + icon('arrow-right', 15) + '</button>' +
+        '<button class="btn btn-sm btn-ghost" data-action="rej-history" data-id="' + t.id + '" title="Correction history">' + icon('history', 16) + '</button>' +
         '</td></tr>';
     }).join('');
 
-    return '<div class="table-wrap rej-txn-wrap"><table class="data rej-txns"><thead><tr>' +
+    return '<div class="table-card"><div class="table-wrap rej-txn-wrap"><table class="data rej-txns"><thead><tr>' +
       '<th class="pick-cell sticky-pick"><input type="checkbox"' + (allSel ? ' checked' : '') + ' data-action="rej-c-pick-all" aria-label="Select all" /></th>' +
       txnSortTh('ARN', 'arn', 'sticky-arn') + txnSortTh('Merchant', 'merchant') + txnSortTh('Amount', 'amount', 'num') +
-      txnSortTh('Transaction date', 'date') + txnSortTh('Reason code', 'reason') + txnSortTh('Status', 'status') +
-      txnSortTh('Assigned to', 'assignee') + '<th>Actions</th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      txnSortTh('Reason', 'reason') + txnSortTh('Status', 'status') + '<th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
   }
   // How many rows this batch's working table holds — the rejects, minus the
   // cleared ones an incoming batch no longer lists.
@@ -413,45 +433,70 @@ window.RejectsUI = function (kit) {
     }).join('');
 
     return '<div class="rej-file-note">' + icon('info', 15) +
-      '<span>Read-only. Showing <span class="num">' + s.shown + '</span> of <span class="num">' + num(s.total) +
-      '</span> transactions — every reject in this batch (<span class="num">' + s.rejects + '</span>), then a sample of the untouched remainder. ' +
-      'The replacement file carries all <span class="num">' + num(s.total) + '</span>.</span></div>' +
-      '<div class="table-wrap rej-txn-wrap"><table class="data rej-txns"><thead><tr>' +
+      '<span>Read-only · showing <span class="num">' + s.shown + '</span> of <span class="num">' + num(s.total) +
+      '</span>. The replacement file carries all <span class="num">' + num(s.total) + '</span>.</span></div>' +
+      '<div class="table-card"><div class="table-wrap rej-txn-wrap"><table class="data rej-txns"><thead><tr>' +
       '<th class="sticky-arn">ARN</th><th>Merchant</th><th class="num">Amount</th>' +
-      '<th>Transaction date</th><th>Reason code</th><th>In replacement file</th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      '<th>Transaction date</th><th>Reason</th><th>In replacement file</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
   }
 
-  function cycleContext(b) {
+  /* Part 4.3 — a compact stat row, not KPI cards: this is secondary
+     information. Four inline stats separated by vertical rules. */
+  function statRow(b) {
+    var corrected = R.correctedTxns(b).length;
+    var still = R.batchOpen(b);
+    function cell(label, value, cls) {
+      return '<div class="rej-stat"><span class="rej-stat-label">' + esc(label) + '</span>' +
+        '<span class="rej-stat-value num ' + (cls || '') + '">' + value + '</span></div>';
+    }
+    return '<div class="rej-statrow">' +
+      cell('Transactions in file', num(b.fileTxns)) +
+      cell('Rejected', num(b.txns.length), 'rej-danger-text') +
+      cell('Fixed', num(corrected), corrected ? 'rej-good-text' : '') +
+      cell('Still to fix', num(still), still ? 'rej-warn-text' : 'rej-good-text') +
+      '</div>';
+  }
+
+  /* Everything the old cycle-context card carried that the stat row does not,
+     kept behind one disclosure so no detail is lost (Part 6). */
+  function cycleDetails(b) {
     var rejCount = b.txns.length, rejValue = R.batchValue(b);
     var accCount = b.family === 'staging' ? 0 : b.fileTxns - rejCount;
     var accValue = b.family === 'staging' ? 0 : Math.round((b.fileValue - rejValue) * 100) / 100;
-    function cell(label, value, sub, cls) {
+    function row(label, value, sub) {
       return '<div class="ctx-cell"><span class="ctx-label">' + esc(label) + '</span>' +
-        '<span class="ctx-value num ' + (cls || '') + '">' + value + '</span>' +
+        '<span class="ctx-value num">' + value + '</span>' +
         (sub ? '<span class="ctx-sub num">' + sub + '</span>' : '') + '</div>';
     }
-    return cardBox('Cycle context',
-      '<div class="ctx-grid">' +
-      cell('Transaction cohort', U.prettyDate(b.cohortFrom) + ' → ' + U.prettyDate(b.cohortTo), U.dow(b.cycleDate) + ' cycle') +
-      cell('Transactions in file', num(b.fileTxns), 'original clearing file') +
-      cell('Total value in file', fmt(b.fileValue, 2, b.currency), '') +
-      cell('Rejected', num(rejCount), fmt(rejValue, 2, b.currency) + ' · ' + pct(R.batchRate(b), 3), 'rej-danger-text') +
-      cell('Accepted', num(accCount), b.family === 'staging' ? 'nothing cleared — file refused' : fmt(accValue, 2, b.currency),
-        b.family === 'staging' ? 'rej-danger-text' : 'rej-good-text') +
-      '</div>' +
-      '<div class="rej-file-line">' + icon('file-text', 16) +
-      '<span>Original clearing file</span><code class="mono">' + esc(b.clearingFile) + '</code>' +
-      '<span class="meta num">' + esc(b.clearingFileSize) + '</span>' +
-      '<button class="btn btn-sm btn-secondary" data-action="rej-dl-clearing">' + icon('download', 14) + 'Download</button></div>');
+    var open = F.detailsOpen;
+    return '<div class="rej-details">' +
+      '<button class="rej-details-head" data-action="rej-details" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+      icon(open ? 'chevron-down' : 'chevron-right', 16) + 'Cycle and file details</button>' +
+      (open
+        ? '<div class="rej-details-body"><div class="ctx-grid">' +
+        row('Transaction cohort', U.prettyDate(b.cohortFrom) + ' → ' + U.prettyDate(b.cohortTo), U.dow(b.cycleDate) + ' cycle') +
+        row('Total value in file', fmt(b.fileValue, 2, b.currency), '') +
+        row('Rejected value', fmt(rejValue, 2, b.currency), pct(R.batchRate(b), 3) + ' of file') +
+        row('Accepted', num(accCount), b.family === 'staging' ? 'nothing cleared — file refused' : fmt(accValue, 2, b.currency)) +
+        '</div>' +
+        '<div class="rej-file-line">' + icon('file-text', 16) +
+        '<span>Original clearing file</span><code class="mono">' + esc(b.clearingFile) + '</code>' +
+        '<span class="meta num">' + esc(b.clearingFileSize) + '</span>' +
+        '<button class="btn btn-sm btn-secondary" data-action="rej-dl-clearing">' + icon('download', 16) + 'Download</button></div>' +
+        '<div class="rej-file-line">' + icon('file-warning', 16) +
+        '<span>Reject file</span><code class="mono">' + esc(b.rejectFile) + '</code>' +
+        '<span class="meta num">' + esc(b.rejectFileSize) + ' · received ' + esc(b.receivedAt) + '</span>' +
+        '<button class="btn btn-sm btn-secondary" data-action="rej-dl-reject">' + icon('download', 16) + 'Download</button></div>' +
+        '</div>'
+        : '') + '</div>';
   }
 
   function generatedHistory(b) {
     var model = R.regenModel(b);
     if (!b.generated.length) {
-      return cardBox('Generated clearing files',
-        '<div class="meta">No clearing file has been generated for this batch yet. ' +
-        'Correct at least one transaction, then use <strong>' + esc(model.action) + '</strong> above.</div>');
+      return cardBox('Generated files',
+        '<div class="meta">None yet. Fix at least one transaction, then use <strong>' + esc(model.action) + '</strong> above.</div>');
     }
     var rows = b.generated.map(function (g, i) {
       var outKind = g.outcome === 'Accepted' ? 'success' : (g.outcome === 'Re-rejected' ? 'danger' : 'neutral');
@@ -478,8 +523,8 @@ window.RejectsUI = function (kit) {
         '<td><button class="btn btn-sm btn-ghost" data-action="rej-dl-generated" data-idx="' + i + '">' + icon('download', 14) + 'Download</button></td>' +
         '</tr>';
     }).join('');
-    return cardBox('Generated clearing files',
-      '<div class="meta mb-16">Append-only. Every file generated for this batch stays on the record with who produced it, how it was delivered and what the network did with it — corrections are never overwritten.</div>' +
+    return cardBox('Generated files',
+      '<div class="meta mb-16">Append-only — every file generated for this batch stays on the record.</div>' +
       '<div class="table-wrap"><table class="data"><thead><tr>' +
       '<th class="sticky-arn">File name</th><th>Type</th><th>Generated at</th><th>Generated by</th><th class="num">Transactions</th>' +
       '<th class="num">Value</th><th>Delivery</th><th>Outcome</th><th></th>' +
@@ -499,7 +544,7 @@ window.RejectsUI = function (kit) {
   function viewBatch() {
     var b = currentBatch();
     if (!b) {
-      setView('<div class="page-head"><div><h1 class="page-title">Rejects</h1></div></div>' +
+      setView(pageHead('Rejects', 'Transactions the card networks refused.') +
         '<div class="card">' + emptyState('file-warning', 'Reject batch not found',
           'That batch id is not in the last 30 days of reject files.',
           '<button class="btn btn-secondary" data-route="' + ROUTE + '">Back to Rejects</button>') + '</div>');
@@ -510,72 +555,48 @@ window.RejectsUI = function (kit) {
     var awaiting = R.awaitingConfigTxns(b);
     var reconCycleId = 'ops-cyc-' + b.tenantId + '-' + b.cycleDate;
 
-    var head =
-      '<div class="page-head rej-batch-head">' +
-      '<div>' +
+    /* Part 4.1 — one line, not a paragraph. The distinction between full
+       replacement and supplementary regeneration is carried by this sentence
+       plus the action button label; no banner needs to explain it. */
+    var statusLine = b.family === 'staging'
+      ? '<div class="rej-statusline danger">' + icon('alert-triangle', 18) +
+      '<span>File rejected — nothing cleared. Fix the flagged transactions and resubmit the whole file.</span></div>'
+      : '<div class="rej-statusline info">' + icon('info', 18) +
+      '<span>Rest of the file cleared. Fix these transactions and resubmit just them.</span>' +
+      '<a class="rej-statusline-link" data-route="#/dashboard/ops/reconciliation?reconTenant=' + b.tenantId + '&reconCycle=' + reconCycleId + '">' +
+      'View this cycle&rsquo;s reconciliation' + icon('arrow-right', 14) + '</a></div>';
+
+    var head = pageHead(
+      tenantTag(b.tenantId) + ' <span class="rej-title-sep">·</span> ' + netBadge(b.network) +
+      ' <span class="rej-title-sep">·</span> <span class="num">' + U.prettyDate(b.cycleDate) + '</span>',
       '<a class="rej-back" data-route="' + ROUTE + '">' + icon('arrow-left', 15) + 'All rejects</a>' +
-      '<h1 class="page-title">' + esc(b.id) + ' · ' + (b.family === 'staging' ? 'Staging reject' : 'Incoming reject') + '</h1>' +
-      '<div class="rej-head-meta">' + tenantTag(b.tenantId) + netBadge(b.network) + familyPill(b.family) +
-      '<span class="meta num">Cycle ' + U.prettyDate(b.cycleDate) + ' · ' + esc(b.cycleDow) + '</span></div>' +
-      '<div class="rej-file-line rej-file-line-head">' + icon('file-warning', 16) +
-      '<span>Reject file</span><code class="mono">' + esc(b.rejectFile) + '</code>' +
-      '<span class="meta num">' + esc(b.rejectFileSize) + ' · received ' + esc(b.receivedAt) + '</span>' +
-      '<button class="btn btn-sm btn-secondary" data-action="rej-dl-reject">' + icon('download', 14) + 'Download</button></div>' +
-      '</div>' +
-      '<div class="head-actions rej-head-actions">' +
-      // §C.5 — the action says which file it produces. The two are not
-      // interchangeable, and a single generic label is how the wrong one gets
-      // sent.
+      '<span class="rej-head-id mono">' + esc(b.id) + '</span>' + familyPill(b.family),
+      // One primary action: the file this batch exists to produce.
+      '<button class="btn btn-secondary" data-action="rej-export">' + icon('table', 18) + 'Export rejects</button>' +
       '<button class="btn btn-primary" data-action="rej-gen-open"' + (corrected.length ? '' : ' disabled') +
       ' title="' + (corrected.length
         ? (model.key === 'replacement'
           ? 'Generate a complete replacement file — all ' + num(b.fileTxns) + ' transactions, with ' + corrected.length + ' correction(s) applied in place'
           : 'Generate a supplementary file containing the ' + corrected.length + ' corrected reject(s)')
-        : 'Correct at least one transaction first') + '">' +
-      icon('file-plus', 16) + esc(model.action) + (corrected.length ? ' <span class="num">(' + corrected.length + ')</span>' : '') + '</button>' +
-      '<button class="btn btn-secondary" data-action="rej-export">' + icon('table', 16) + 'Export rejects</button>' +
-      '</div></div>';
+        : 'Fix at least one transaction first') + '">' +
+      icon('file-plus', 18) + esc(model.action) + (corrected.length ? ' <span class="num">(' + corrected.length + ')</span>' : '') + '</button>');
 
-    /* §C.5 — which regeneration model applies, stated before anything else on
-       the page. It sits alongside the staging blocking banner rather than
-       replacing it: one says the cycle is stuck, the other says what the file
-       you are about to produce will contain. */
-    var modelBanner = '<div class="rej-model rej-model-' + model.key + '">' +
-      icon(model.key === 'replacement' ? 'files' : 'file-plus', 20) +
-      '<div class="rej-model-body"><strong>' + esc(model.banner) + '</strong>' +
-      '<div class="rej-model-detail">' + (model.key === 'replacement'
-        ? 'Regeneration produces one file containing all <span class="num">' + num(b.fileTxns) +
-        '</span> transactions from <code class="mono">' + esc(b.clearingFile) + '</code>, with the corrections applied in place. ' +
-        'It supersedes the original — it is not a delta appended to it.'
-        : 'Regeneration produces a small file containing only the corrected rejects. ' +
-        'The <span class="num">' + num(Math.max(0, b.fileTxns - b.txns.length)) + '</span> transactions that already cleared are not resubmitted.') +
-      '</div></div>' +
-      '<span class="rej-model-tag">' + esc(model.tag) + '</span></div>';
-
-    var banner = b.family === 'staging'
-      ? '<div class="callout danger rej-banner">' + icon('alert-octagon', 20) +
-      '<div class="callout-body"><strong>Clearing file was not staged. No transactions from this cycle have cleared.</strong>' +
-      '<div style="margin-top:4px">' + esc(b.network) + ' refused <code class="mono">' + esc(b.clearingFile) + '</code> at submission — ' +
-      'all <span class="num">' + num(b.fileTxns) + '</span> transactions are still unsettled, not just the <span class="num">' + b.txns.length + '</span> flagged below. ' +
-      'This batch blocks the whole cycle and should be worked ahead of incoming rejects.</div></div></div>'
-      : '<div class="rej-xref">' + icon('git-compare', 15) +
-      '<span>The file staged; only these transactions were rejected downstream. Incoming rejects move settlement math — ' +
-      'the reconciliation view’s rejections section and this batch are two views of the same events.</span>' +
-      '<a data-route="#/dashboard/ops/reconciliation?reconTenant=' + b.tenantId + '&reconCycle=' + reconCycleId + '">' +
-      'View this cycle’s reconciliation' + icon('arrow-right', 14) + '</a></div>';
+    var awaitingLine = awaiting.length
+      ? '<div class="rej-statusline warn">' + icon('settings', 18) +
+      '<span><span class="num">' + awaiting.length + '</span> transaction' + (awaiting.length === 1 ? '' : 's') +
+      ' waiting on a config fix — not counted as ready to regenerate.</span></div>'
+      : '';
 
     var hidden = clearedHidden(b);
     var toolbar = '<div class="rej-toolbar">' +
-      '<label class="rej-search">' + icon('search', 15) +
+      '<label class="ops-search">' + icon('search', 18) +
       '<input class="input" type="text" placeholder="Search by ARN" value="' + esc(F.q) + '" data-action="rej-i-q" aria-label="Search by ARN" />' +
       '</label>' +
-      '<span class="meta">Sorted with re-rejected and new first. Click any column to re-sort.' +
-      (hidden ? ' <span class="num">' + hidden + '</span> cleared transaction' + (hidden === 1 ? '' : 's') +
-        ' are not listed — this table is what still needs work.' : '') + '</span>' +
+      (hidden ? '<span class="meta"><span class="num">' + hidden + '</span> cleared transaction' + (hidden === 1 ? '' : 's') + ' not listed</span>' : '') +
       '</div>';
 
-    // §C.5 — a staging reject gets a second, read-only view of the whole file.
-    // An incoming reject does not: the rest of that cycle already cleared.
+    // §C.5 — a staging reject keeps its second, read-only view of the whole
+    // file. An incoming reject does not: the rest of that cycle already cleared.
     var tabbed = b.family === 'staging';
     var tab = tabbed ? (F.tab === 'file' ? 'file' : 'rejects') : 'rejects';
     var tabs = tabbed
@@ -587,27 +608,14 @@ window.RejectsUI = function (kit) {
       '</div>'
       : '';
 
-    var awaitingBanner = awaiting.length
-      ? '<div class="callout warn rej-awaiting-banner">' + icon('settings', 18) +
-      '<div class="callout-body"><strong><span class="num">' + awaiting.length + '</span> transaction' +
-      (awaiting.length === 1 ? ' is' : 's are') + ' awaiting a config fix.</strong> ' +
-      'They are being worked, but not here — the derivation that produced their values has to change first. ' +
-      'They are excluded from the <span class="num">' + corrected.length + '</span> ready to regenerate until someone re-derives them.</div></div>'
-      : '';
-
     var body = tab === 'file'
-      ? '<div class="card mt-24">' +
-      '<div class="card-head"><div class="card-title">All transactions in file <span class="meta num">(' + num(b.fileTxns) + ')</span></div></div>' +
-      tabs + fileTable(b) + '</div>'
-      : '<div class="card mt-24">' +
-      '<div class="card-head"><div class="card-title">Rejected transactions <span class="meta num">(' + openTxnCount(b) + ')</span></div></div>' +
-      tabs + toolbar + bulkBar(b) +
-      '<div id="rej-txn-mount">' + txnTable(b) + '</div>' +
-      '</div>';
+      ? '<div class="mt-24">' + tabs + fileTable(b) + '</div>'
+      : '<div class="mt-24">' + tabs + toolbar + bulkBar(b) +
+      '<div id="rej-txn-mount">' + txnTable(b) + '</div></div>';
 
     setView(
-      head + modelBanner + banner + awaitingBanner +
-      '<div class="mt-24">' + cycleContext(b) + '</div>' +
+      head + statusLine + awaitingLine +
+      statRow(b) + cycleDetails(b) +
       body +
       '<div class="mt-24">' + generatedHistory(b) + '</div>' +
       (F.editing ? editorPanel() : '') +
@@ -642,9 +650,9 @@ window.RejectsUI = function (kit) {
     });
   }
 
-  /* §C.6 — the reason code is a hint now, not a gate. It marks the field it
-     points at and says so; every field on the record stays editable, because
-     the analyst has already declared that this is a transaction-data fix. */
+  /* Part 4.4 — the flagged field is pulled to the top of the list and marked;
+     every other field follows, grouped under collapsible headings. The reason
+     code is still a hint, not a gate: everything stays editable. */
   function fieldRow(t, key, hinted) {
     var def = R.FIELDS[key] || { label: key };
     var cur = t.fields[key] == null ? '' : String(t.fields[key]);
@@ -660,41 +668,46 @@ window.RejectsUI = function (kit) {
         'data-action="rej-i-field" data-field="' + key + '" aria-label="' + esc(def.label) + '" />';
     }
     return '<div class="rej-field' + (changed ? ' changed' : '') + (hinted ? ' hinted' : '') + '">' +
-      '<div class="rej-field-label">' + esc(def.label) +
-      (hinted ? '<span class="rej-field-hint-dot" title="Reason code ' + esc(t.reasonCode) + ' relates to this field">' +
-        icon('target', 11) + 'reason ' + esc(t.reasonCode) + '</span>' : '') +
+      '<div class="rej-field-label">' +
+      (hinted ? '<span class="rej-flag-dot" aria-hidden="true"></span>' : '') + esc(def.label) +
+      (hinted ? '<span class="rej-flag-suffix">(flagged by the reject reason)</span>' : '') +
       (changed ? '<span class="rej-changed-dot" title="Edited">' + icon('circle', 10) + 'edited</span>' : '') + '</div>' +
       '<div class="rej-field-current"><span class="rej-field-key">current</span>' +
       '<span class="' + (def.mono ? 'mono ' : '') + 'num">' + (cur === '' ? '<em class="rej-empty">empty</em>' : esc(cur)) + '</span></div>' +
       '<div class="rej-field-input">' + input + '</div>' +
-      (hinted ? '<div class="rej-field-hint">' + icon('corner-down-right', 12) +
-        'Reason code ' + esc(t.reasonCode) + ' relates to this field — a hint, not a restriction. Every field here is editable.</div>' : '') +
       (def.help ? '<div class="rej-field-help">' + esc(def.help) + '</div>' : '') +
       '</div>';
   }
 
-  /* The full entity record, grouped. The reason code's fields are marked in
-     place rather than lifted to the top: a wrong MCC and a wrong acceptor city
-     read as one record, and pulling two fields out of it made the other
-     twenty look like somewhere you should not go. */
+  function groupOpen(name) { return F.fgroups[name] !== false; }
+
   function fieldEditor(t) {
     var rel = R.relevantFields(t.reasonCode);
-    return '<div class="rej-field-groups">' + R.groupedFields().map(function (g) {
-      var marked = g.fields.filter(function (k) { return rel.indexOf(k) >= 0; }).length;
-      return '<div class="rej-fgroup">' +
-        '<div class="rej-fgroup-head"><span class="rej-fgroup-name">' + esc(g.group) + '</span>' +
-        (marked ? '<span class="rej-fgroup-flag">' + icon('target', 11) + '<span class="num">' + marked + '</span> flagged by reason ' + esc(t.reasonCode) + '</span>' : '') +
-        (g.note ? '<span class="rej-fgroup-note">' + esc(g.note) + '</span>' : '') + '</div>' +
-        g.fields.map(function (k) { return fieldRow(t, k, rel.indexOf(k) >= 0); }).join('') +
+    var out = '';
+    if (rel.length) {
+      out += '<div class="rej-fgroup flagged"><div class="rej-fgroup-head">' +
+        '<span class="rej-fgroup-name">' + (rel.length === 1 ? 'Flagged field' : 'Flagged fields') + '</span></div>' +
+        rel.map(function (k) { return fieldRow(t, k, true); }).join('') + '</div>';
+    }
+    out += R.groupedFields().map(function (g) {
+      var keys = g.fields.filter(function (k) { return rel.indexOf(k) < 0; });
+      if (!keys.length) return '';
+      var open = groupOpen(g.group);
+      return '<div class="rej-fgroup' + (open ? ' open' : '') + '">' +
+        '<button class="rej-fgroup-head" data-action="rej-fgroup" data-group="' + esc(g.group) + '" aria-expanded="' + (open ? 'true' : 'false') + '">' +
+        icon(open ? 'chevron-down' : 'chevron-right', 15) +
+        '<span class="rej-fgroup-name">' + esc(g.group) + '</span>' +
+        '<span class="meta"><span class="num">' + keys.length + '</span> field' + (keys.length === 1 ? '' : 's') + '</span></button>' +
+        (open ? keys.map(function (k) { return fieldRow(t, k, false); }).join('') : '') +
         '</div>';
-    }).join('') + '</div>';
+    }).join('');
+    return '<div class="rej-field-groups">' + out + '</div>';
   }
 
-  /* ---- The config-or-code path (§C.6) ------------------------------------
-     Nothing here edits the transaction, because the transaction is not what is
-     wrong. What it collects is the description of the change, where it belongs
-     and a way to get there — then it parks the reject in a state that says
-     exactly that. */
+  /* ---- Step 2b · the rule fix (Part 4.4) ---------------------------------
+     One question, an optional destination, a way to get there, and the action
+     that parks the reject in the state that says so. Nothing here edits the
+     transaction, because the transaction is not what is wrong. */
   function configPathPanel(t) {
     var famOpts = R.CONFIG_FAMILIES.map(function (f) {
       return '<option value="' + f.key + '"' + (F.cfgFamily === f.key ? ' selected' : '') + '>' + esc(f.label) + '</option>';
@@ -704,12 +717,9 @@ window.RejectsUI = function (kit) {
     var already = t.status === 'awaiting_config' && t.configRequest;
 
     return '<div class="rej-cfg-panel">' +
-      '<div class="rej-cfg-head">' + icon('settings', 16) + '<strong>Update config or code</strong>' +
-      '<span class="meta">This fix cannot be completed here. It changes how the value is derived, so it affects more than this transaction.</span></div>' +
-
       (already
-        ? '<div class="rej-cfg-existing">' + icon('clock', 15) +
-        '<div><strong>Already marked as awaiting a config fix</strong> by ' + esc(t.configRequest.by) +
+        ? '<div class="rej-cfg-existing">' + icon('clock', 16) +
+        '<div><strong>Already waiting on a config fix</strong> — raised by ' + esc(t.configRequest.by) +
         ' on <span class="num">' + esc(t.configRequest.at) + '</span>' +
         (t.configRequest.familyLabel ? ' · ' + esc(t.configRequest.familyLabel) : '') +
         '<div class="rej-cfg-existing-note">' + esc(t.configRequest.note) + '</div></div></div>'
@@ -717,55 +727,48 @@ window.RejectsUI = function (kit) {
 
       '<label class="field rej-cfg-note">What needs to change? <span class="req">required</span>' +
       '<textarea class="input" rows="3" data-action="rej-i-cfg-note" ' +
-      'placeholder="e.g. The MCC mapping for this acquirer BIN still points at the 2024 ISO 18245 table — 5732 is being emitted as 9732 for every consumer-electronics merchant on this tenant.">' +
+      'placeholder="e.g. The MCC mapping for this acquirer BIN still points at the 2024 ISO 18245 table — 5732 is being emitted as 9732.">' +
       esc(F.cfgNote) + '</textarea></label>' +
 
       '<div class="rej-cfg-row">' +
-      '<label class="field inline">Where does the fix belong? <span class="meta">optional</span>' +
+      '<label class="field inline">Which configuration? <span class="meta">optional</span>' +
       '<select class="input w-260" data-action="rej-c-cfg-family">' +
       '<option value=""' + (F.cfgFamily ? '' : ' selected') + '>Not sure yet</option>' + famOpts +
       '<option value="code"' + (F.cfgFamily === 'code' ? ' selected' : '') + '>A code change — not a config</option>' +
       '</select></label>' +
       (F.cfgFamily === 'code'
-        ? '<span class="meta rej-cfg-code">' + icon('git-branch', 13) + 'Raise this with platform engineering — there is no config surface for it.</span>'
-        : '<a class="rej-cfg-link" data-route="' + route + '">Open Platform Configs' + icon('arrow-right', 14) + '</a>') +
+        ? '<span class="meta rej-cfg-code">' + icon('git-branch', 14) + 'Raise with platform engineering — there is no config surface for it.</span>'
+        : '<a class="rej-cfg-link" data-route="' + route + '">Open Platform Configs' + icon('arrow-right', 15) + '</a>') +
       '</div>' +
 
       '<div class="rej-cfg-foot">' +
-      '<div class="meta">' + icon('info', 13) +
-      '<span>Marking this moves the transaction to <strong>Awaiting config fix</strong>. It stays open, stays counted, and is excluded from ' +
-      'the ready-to-regenerate set until the config lands and you re-derive it.</span></div>' +
       '<button class="btn btn-primary" id="rej-cfg-mark" data-action="rej-mark-config"' + (F.cfgNote.trim() ? '' : ' disabled') + '>' +
-      icon('settings', 15) + 'Mark as awaiting config change</button>' +
+      icon('settings', 16) + 'Mark as waiting on config</button>' +
       '</div></div>';
   }
 
-  /* Step 1 of the editor: what kind of fix is this? Nothing below appears
-     until it is answered, because the answer decides what "below" is. */
+  /* Step 1 of the fix panel: what kind of fix is this? Two cards, two lines
+     each. Selecting one reveals its content below. */
   function pathCards(t) {
     var cards = ['data', 'config'].map(function (k) {
       var p = R.PATHS[k];
       var on = F.path === k;
       return '<button class="rej-path-card' + (on ? ' on' : '') + '" data-action="rej-path" data-path="' + k + '" ' +
-        'aria-pressed="' + (on ? 'true' : 'false') + '">' +
-        '<span class="rej-path-top">' + icon(p.icon, 16) + '<span class="rej-path-title">' + esc(p.label) + '</span>' +
-        (on ? '<span class="rej-path-check">' + icon('check', 14) + '</span>' : '') + '</span>' +
-        '<span class="rej-path-blurb">' + esc(p.blurb) + '</span>' +
+        'role="radio" aria-checked="' + (on ? 'true' : 'false') + '">' +
+        '<span class="rej-path-radio">' + icon(on ? 'circle-dot' : 'circle', 20) + '</span>' +
+        '<span class="rej-path-body">' +
+        '<span class="rej-path-title">' + esc(p.label) + '</span>' +
+        '<span class="rej-path-blurb">' + esc(p.blurb) + '</span></span>' +
         '</button>';
     }).join('');
-    return '<div class="cfg-section-title mt-24">Choose correction path ' +
-      '<span class="meta">— recorded on the correction and kept in attempt history</span></div>' +
-      '<div class="rej-path-cards">' + cards + '</div>' +
-      (F.path
-        ? '<div class="rej-path-long">' + icon(R.PATHS[F.path].icon, 13) + esc(R.PATHS[F.path].long) + '</div>'
-        : '<div class="rej-path-prompt">' + icon('help-circle', 15) +
-        '<span>Pick one to continue. A value that is wrong only here is a transaction-data fix; a value that is wrong because of how it was derived is a config or code fix, and correcting it here would only mask it until the next cycle.</span></div>');
+    return '<div class="sp-section-head">What kind of fix is this?</div>' +
+      '<div class="rej-path-cards" role="radiogroup" aria-label="Kind of fix">' + cards + '</div>';
   }
 
   function diffBlock(t) {
     var changes = draftChanges(t);
     if (!changes.length) {
-      return '<div class="meta">Nothing changed yet. A correction needs at least one edited field — nothing is saved silently.</div>';
+      return '<div class="meta">Nothing changed yet — a fix needs at least one edited field.</div>';
     }
     return '<div class="rej-diff">' + changes.map(function (c) {
       var def = R.FIELDS[c.field] || { label: c.field };
@@ -796,13 +799,6 @@ window.RejectsUI = function (kit) {
      ======================================================================= */
   function ladderOn(t) { return R.hasIrdLadder(t); }
 
-  var LADDER_DIGIT = ['①', '②', '③', '④'];
-  var STATE_PILL = {
-    open: ['Available', 'neutral', 'circle-dot'],
-    exhausted: ['Exhausted', 'neutral', 'ban'],
-    na: ['Not applicable', 'neutral', 'minus']
-  };
-
   function rateSpan(rate) { return '<span class="num">' + Number(rate).toFixed(2) + '%</span>'; }
   function feeSpan(paise, cur) { return '<span class="num">' + esc(R.money(paise, cur)) + '</span>'; }
   function deltaSpan(paise, cur) {
@@ -822,214 +818,100 @@ window.RejectsUI = function (kit) {
     return F.draft && F.draft.ird != null ? String(F.draft.ird) : String(t.fields.ird);
   }
 
-  /* ---- Ladder position indicator (Part 3.3) ------------------------------ */
-  function ladderRail(res) {
-    var steps = res.strategies.map(function (s, i) {
-      var cls = s.recommended ? 'current' : s.state;
-      if (s.n === 4) cls += ' fallback';
-      var title = s.n + ' · ' + s.name + ' — ' +
-        (s.recommended ? 'the step to try next' : (s.state === 'na' ? 'not applicable to this transaction'
-          : (s.state === 'exhausted' ? 'every option tried and rejected' : 'available, not needed yet')));
-      return '<span class="rej-lad-step">' +
-        '<span class="rej-lad-node ' + cls + '" title="' + esc(title) + '">' + LADDER_DIGIT[i] + '</span>' +
-        '<span class="rej-lad-caret">' + (s.recommended ? '▲' : '') + '</span></span>';
-    });
-    var rail = '';
-    steps.forEach(function (s, i) {
-      if (i) rail += '<span class="rej-lad-link' + (res.strategies[i - 1].state === 'exhausted' ? ' spent' : '') + '"></span>';
-      rail += s;
-    });
-
-    var caption;
-    if (!res.recommended) {
-      caption = 'Every strategy is exhausted or not applicable. Derive the IRD by hand below.';
-    } else if (res.recommended.n === 4) {
-      caption = 'Every precise strategy is exhausted or not applicable — only the broader fallback is left, and it costs more.';
-    } else {
-      // How much runway is left, and — when there is none — why. A ladder that
-      // is short because two rungs never applied is a different situation from
-      // one that is short because they were spent, and reads as a surprise
-      // unless the caption says which.
-      var below = res.strategies.filter(function (s) { return s.n > res.recommended.n && s.n < 4; });
-      var left = below.filter(function (s) { return s.state === 'open'; }).length;
-      var lead = 'At strategy ' + res.recommended.n + ' · ';
-      if (left) {
-        caption = lead + (left === 1 ? '1 more precise step' : left + ' more precise steps') + ' before the costly fallback.';
-      } else if (below.length && below.every(function (s) { return s.state === 'na'; })) {
-        caption = lead + 'strateg' + (below.length > 1 ? 'ies ' : 'y ') +
-          below.map(function (s) { return s.n; }).join(' and ') +
-          ' do' + (below.length > 1 ? '' : 'es') + ' not apply to this transaction, so the only step after this one is the costly fallback.';
-      } else {
-        caption = lead + 'the last precise step — everything below it is exhausted or does not apply.';
-      }
-    }
-    return '<div class="rej-lad"><div class="rej-lad-rail">' + rail + '</div>' +
-      '<div class="rej-lad-caption">' + esc(caption) + '</div></div>';
+  /* ---- Plain-language explanation per strategy (Part 4.5) -----------------
+     One line each, no strategy jargon. The user is choosing between four ways
+     of deriving a replacement, not reading about a ladder. */
+  function optionLine(s, o) {
+    if (s.n === 1) return 'From the corrected product ID in the reject file';
+    if (s.n === 2) return 'Next product ID for this card range (priority ' + o.priority + ' of ' + s.options.length + ')';
+    if (s.n === 3) return 'Next matching IRD for the same details (' + o.rank + ' of ' + s.options.length + ')';
+    return 'Broader IRD — fewer conditions, more likely accepted';
+  }
+  // Why a strategy cannot be used here, in one line and in plain language.
+  function unavailableLine(s) {
+    if (s.n === 1) return 'Not available — the reject file didn’t include a corrected product ID';
+    if (s.n === 2) return 'Not available — this card range maps to a single product ID';
+    if (s.n === 3) return 'Not available — only one IRD matches these details';
+    return 'Not available for this transaction';
+  }
+  // Which attempt burned a given IRD, so an already-tried card can say so.
+  function triedOnAttempt(res, ird) {
+    var hit = (res.ctx.log || []).filter(function (r) { return r.ird === ird; })[0];
+    if (hit) return hit.attempt;
+    var idx = res.ctx.rejected.indexOf(ird);
+    return idx >= 0 ? idx + 1 : null;
   }
 
-  /* ---- Shared candidate readout at the foot of every strategy card ------- */
-  function candidateRow(t, s, res) {
+  /* ---- The four option cards (Part 4.5) -----------------------------------
+     All four render at once, selectable by radio. No accordion, no ladder, no
+     "next strategy" progression that hides the others: the analyst chooses,
+     and the cost of each choice is visible without expanding anything. */
+  function irdOptionCard(t, s, res, anchorFee) {
     var cur = t.currency;
-    if (s.state === 'na') {
-      return '<div class="rej-res-none">' + icon('minus-circle', 15) +
-        '<span><strong>Not applicable.</strong> ' + esc(s.na) + '</span></div>';
+    var staged = stagedIrd(t);
+
+    // What this card offers: the untried option if there is one, otherwise the
+    // one that was tried, so an exhausted strategy still shows its value.
+    var o = s.next || s.options[0] || null;
+    var disabled = false, reason = '';
+    if (!s.available) { disabled = true; reason = unavailableLine(s); o = null; }
+    else if (!s.next) {
+      disabled = true;
+      var att = o ? triedOnAttempt(res, o.ird) : null;
+      reason = 'Already tried — rejected' + (att ? ' on attempt ' + att : '') + '';
     }
-    if (s.state === 'exhausted') {
-      return '<div class="rej-res-none">' + icon('ban', 15) +
-        '<span><strong>Exhausted.</strong> Every option this strategy had has been submitted and rejected for this transaction.</span></div>';
-    }
-    var o = s.next;
-    var applied = stagedIrd(t) === o.ird;
-    var delta = res.best ? o.fee - res.best.fee : 0;
-    var confKind = s.n === 1 ? 'success' : (s.n === 2 ? 'info' : (s.n === 3 ? 'neutral' : 'warning'));
-    return '<div class="rej-cand' + (s.n === 4 ? ' warn' : '') + '">' +
-      '<div class="rej-cand-head">' + resKey('Candidate IRD') + irdBig(o.ird) +
-      pill(s.confidence, confKind, s.n === 4 ? 'alert-triangle' : 'gauge') +
-      (applied ? '<span class="rej-res-applied">' + icon('check', 13) + 'Applied to the IRD field</span>' : '') +
-      '</div>' +
-      '<div class="rej-cand-nums">' +
-      '<span>' + resKey('Rate') + rateSpan(o.rate) + '</span>' +
-      '<span>' + resKey('Fee on this txn') + feeSpan(o.fee, cur) + '</span>' +
-      '<span>' + resKey('vs best') + deltaSpan(delta, cur) + '</span>' +
-      '</div>' +
-      '<button class="btn btn-sm ' + (s.n === 4 ? 'btn-secondary rej-btn-warn' : 'btn-primary') + '" ' +
-      'data-action="rej-res-apply" data-n="' + s.n + '"' + (applied ? ' disabled' : '') + '>' +
-      icon(applied ? 'check' : 'corner-down-right', 14) + (applied ? 'Applied' : 'Apply this IRD') + '</button>' +
-      '</div>';
-  }
 
-  // Option rows shared by strategies 2 and 3 — priority list and ranked
-  // candidate list are the same table with a different first column.
-  function optionTable(t, s, headLabel, keyOf) {
-    var cur = t.currency, staged = stagedIrd(t);
-    var nextIrd = s.next ? s.next.ird : null;
-    var rows = s.options.map(function (o) {
-      var isNext = !o.tried && o.ird === nextIrd;
-      var cls = o.tried ? 'tried' : (isNext ? 'next' : '');
-      var state = o.tried
-        ? '<span class="rej-opt-state tried">' + icon('x', 12) + 'tried, rejected</span>'
-        : (staged === o.ird ? '<span class="rej-opt-state applied">' + icon('check', 12) + 'applied</span>'
-          : (isNext ? '<span class="rej-opt-state next">' + icon('arrow-right', 12) + 'suggested next</span>'
-            : '<span class="rej-opt-state">untried</span>'));
-      return '<tr class="' + cls + '">' +
-        '<td class="num">' + esc(String(keyOf(o))) + '</td>' +
-        (o.gcms != null ? '<td class="mono num">' + esc(o.gcms) + '</td>' : '') +
-        '<td><span class="mono num rej-opt-ird">' + esc(o.ird) + '</span></td>' +
-        '<td class="num">' + Number(o.rate).toFixed(2) + '%</td>' +
-        '<td class="num">' + esc(R.money(o.fee, cur)) + '</td>' +
-        '<td>' + state + '</td></tr>';
-    }).join('');
-    return '<table class="data rej-opt-table"><thead><tr>' +
-      '<th>' + esc(headLabel) + '</th>' +
-      (s.options[0] && s.options[0].gcms != null ? '<th>Product ID</th>' : '') +
-      '<th>IRD</th><th class="num">Rate</th><th class="num">Fee</th><th>State</th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table>';
-  }
+    var selected = !disabled && o && staged === o.ird;
+    var cls = 'ird-card' + (disabled ? ' disabled' : '') + (selected ? ' selected' : '') +
+      (s.recommended ? ' recommended' : '') + (s.n === 4 ? ' fallback' : '');
 
-  function strategyBody(t, s, res) {
-    var c = res.ctx, cur = t.currency, body = '';
-    body += '<div class="rej-res-lede">' + esc(s.lede) + '</div>';
-    body += '<div class="rej-res-why">' + icon('corner-down-right', 13) + '<span>' + esc(s.why) + '</span></div>';
+    var head = '<span class="ird-radio">' + icon(selected ? 'circle-dot' : 'circle', 20) + '</span>' +
+      '<span class="ird-value mono">' + esc(o ? o.ird : '—') + '</span>' +
+      '<span class="ird-nums">' +
+      (o ? '<span class="num ird-rate">' + Number(o.rate).toFixed(2) + '%</span>' +
+        '<span class="num ird-fee">' + esc(R.money(o.fee, cur)) + '</span>' : '') +
+      '</span>';
 
-    if (s.n === 1) {
-      body += '<div class="rej-gcms-pair">' +
-        '<div class="rej-gcms">' + resKey('Submitted') + '<span class="mono num">' + esc(c.submittedGcms) + '</span></div>' +
-        '<span class="rej-gcms-arrow">' + icon('arrow-right', 16) + '</span>' +
-        '<div class="rej-gcms corrected">' + resKey('Corrected by Mastercard') +
-        '<span class="mono num">' + esc(c.correctedGcms || '—') + '</span></div>' +
-        '</div>';
-      if (s.available) {
-        body += '<div class="rej-res-chips">' + resKey('Filters used in the derivation') + chips(c.filters) + '</div>';
-        // Strategy 1 has a single option and no table to carry it, so an
-        // exhausted card would otherwise never say what it actually tried.
-        var o1 = s.options[0];
-        if (o1.tried) {
-          body += '<div class="rej-res-line">' + resKey('Derived IRD') +
-            '<span class="mono num rej-opt-ird struck">' + esc(o1.ird) + '</span>' +
-            '<span class="num">' + Number(o1.rate).toFixed(2) + '%</span>' +
-            '<span class="num">' + esc(R.money(o1.fee, cur)) + '</span>' +
-            '<span class="rej-opt-state tried">' + icon('x', 12) + 'tried, rejected</span></div>';
-        }
-      }
-    } else if (s.n === 2) {
-      body += '<div class="rej-res-line">' + resKey('Account range') +
-        '<span class="mono">' + esc(c.panRange) + '</span></div>';
-      body += optionTable(t, s, 'Priority', function (o) { return o.priority; });
-    } else if (s.n === 3) {
-      body += '<div class="rej-res-chips">' + resKey('Filter set in play') + chips(c.filters) + '</div>';
-      body += optionTable(t, s, 'Rank', function (o) { return o.rank; });
+    var lines = '';
+    if (disabled) {
+      lines += '<div class="ird-why muted">' + esc(reason) + '</div>';
     } else {
-      var o4 = s.options[0];
-      body += '<div class="rej-res-chips">' + resKey('Matches on') + chips(c.broadMatched) + '</div>';
-      body += '<div class="rej-res-chips">' + resKey('Drops') + chips(c.broadDropped, 'dropped') + '</div>';
-      body += '<div class="rej-cost">' + icon('alert-triangle', 18) +
-        '<div><div class="rej-cost-amt num">' + esc(R.money(s.delta, cur)) + ' more on this transaction</div>' +
-        '<div class="rej-cost-sub">IRD <code class="mono">' + esc(o4.ird) + '</code> at <span class="num">' + Number(o4.rate).toFixed(2) + '%</span> ' +
-        'against <code class="mono">' + esc(s.bestPrecise.ird) + '</code> at <span class="num">' + Number(s.bestPrecise.rate).toFixed(2) + '%</span> — ' +
-        'the best precise candidate' + (s.bestPrecise.tried ? ' this transaction has (already tried and rejected, shown for the rate comparison only)' : '') + '. ' +
-        'Fee <span class="num">' + esc(R.money(o4.fee, cur)) + '</span> against <span class="num">' + esc(R.money(s.bestPrecise.fee, cur)) + '</span>.</div></div></div>';
-      body += '<div class="rej-res-warnline">' + icon('info', 13) +
-        '<span>Higher interchange rate. Use when precise candidates are exhausted.</span></div>';
-    }
-    return body + candidateRow(t, s, res);
-  }
-
-  function strategyCard(t, s, res) {
-    var open = F.irdCards[s.n] != null ? F.irdCards[s.n] : !!s.recommended;
-    var pillDef = s.recommended ? ['Recommended', 'success', 'target'] : STATE_PILL[s.state];
-    var cls = 'rej-scard s-' + s.state + (s.recommended ? ' recommended' : '') + (s.n === 4 ? ' fallback' : '') + (open ? ' open' : '');
-    var peek = s.next
-      ? '<span class="rej-scard-peek mono num" title="Candidate IRD">' + esc(s.next.ird) + '</span>' +
-      '<span class="rej-scard-rate num">' + Number(s.next.rate).toFixed(2) + '%</span>'
-      : '<span class="rej-scard-peek muted">—</span>';
-    return '<div class="' + cls + '">' +
-      '<div class="rej-scard-head" data-action="rej-res-card" data-n="' + s.n + '" role="button" tabindex="0" ' +
-      'aria-expanded="' + (open ? 'true' : 'false') + '">' +
-      '<span class="rej-scard-n num">' + s.n + '</span>' +
-      '<span class="rej-scard-name">' + esc(s.name) + '</span>' +
-      pill(pillDef[0], pillDef[1], pillDef[2]) +
-      '<span class="rej-scard-spacer"></span>' + peek +
-      icon(open ? 'chevron-up' : 'chevron-down', 16) +
-      '</div>' +
-      (open ? '<div class="rej-scard-body">' + strategyBody(t, s, res) + '</div>' : '') +
-      '</div>';
-  }
-
-  /* ---- Fee comparison table (Part 3.4) -----------------------------------
-     A decision surface, not a summary: every row is directly applicable, so an
-     analyst who already knows what they are looking at never has to expand a
-     card to act. */
-  function feeTable(t, res) {
-    var cur = t.currency, staged = stagedIrd(t);
-    var rows = res.strategies.map(function (s) {
-      var label = '<span class="num">' + s.n + '</span> · ' + esc(s.name);
-      if (!s.next) {
-        var why = s.state === 'na' ? 'not applicable' : 'exhausted';
-        return '<tr class="out"><td>' + label + '</td>' +
-          '<td class="mono">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td>' +
-          '<td><span class="meta">' + why + '</span></td></tr>';
+      lines += '<div class="ird-why">' + esc(optionLine(s, o)) + '</div>';
+      // The recommended card carries the attributes the derivation matched on.
+      // This line is why the separate attributes card is gone, so it has to
+      // carry everything that card did: the filter set, the account range and
+      // the product ID the network corrected (Part 4.5 + Part 6).
+      if (s.recommended) {
+        var c = res.ctx;
+        var attrs = c.filters.slice();
+        attrs.push('Card range ' + c.panRange);
+        attrs.push(c.correctedGcms
+          ? 'Product ID ' + c.submittedGcms + ' corrected to ' + c.correctedGcms
+          : 'Product ID ' + c.submittedGcms + ' (no correction supplied)');
+        lines += '<div class="ird-matches">Matches: ' + esc(attrs.join(' · ')) + '</div>';
+        lines += '<div class="ird-rec">' + icon('check', 14) + 'Recommended</div>';
       }
-      var o = s.next;
-      var delta = res.best ? o.fee - res.best.fee : 0;
-      var applied = staged === o.ird;
-      return '<tr class="' + (s.recommended ? 'rec' : '') + (s.n === 4 ? ' fallback' : '') + '">' +
-        '<td>' + label + (s.recommended ? '<span class="rej-fee-rec">recommended</span>' : '') + '</td>' +
-        '<td><span class="mono num rej-opt-ird">' + esc(o.ird) + '</span></td>' +
-        '<td class="num">' + Number(o.rate).toFixed(2) + '%</td>' +
-        '<td class="num">' + esc(R.money(o.fee, cur)) + '</td>' +
-        '<td class="num">' + (delta === 0 ? '—' : (delta > 0 ? '+' : '') + esc(R.money(delta, cur))) + '</td>' +
-        '<td><button class="btn btn-sm ' + (applied ? 'btn-secondary' : (s.n === 4 ? 'btn-secondary rej-btn-warn' : 'btn-primary')) + '" ' +
-        'data-action="rej-res-apply" data-n="' + s.n + '"' + (applied ? ' disabled' : '') + '>' +
-        (applied ? 'Applied' : 'Apply') + '</button></td></tr>';
-    }).join('');
-    return '<div class="rej-res-sec">' + resKey('Fee comparison') +
-      '<span class="meta">— every candidate on this transaction. Apply straight from a row.</span></div>' +
-      '<table class="data rej-fee-table"><thead><tr>' +
-      '<th>Strategy</th><th>Candidate IRD</th><th class="num">Rate</th><th class="num">Fee on this txn</th><th class="num">vs best</th><th></th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table>' +
-      '<div class="meta mt-8">“vs best” is measured against ' +
-      (res.best ? '<code class="mono">' + esc(res.best.ird) + '</code>, the cheapest candidate an analyst can pick right now.' : 'nothing — no candidate is left to pick.') +
-      '</div>';
+    }
+
+    // Fee delta against the recommended option, on every card but that one.
+    if (!disabled && o && anchorFee != null && !s.recommended) {
+      var delta = o.fee - anchorFee;
+      if (s.n === 4) {
+        lines += '<div class="ird-delta warn">' + icon('alert-triangle', 14) +
+          '<span>' + (delta > 0 ? '+' : '') + esc(R.money(delta, cur)) + ' vs recommended · higher rate</span></div>';
+      } else if (delta > 0) {
+        lines += '<div class="ird-delta">+' + esc(R.money(delta, cur)) + ' vs recommended</div>';
+      } else if (delta < 0) {
+        lines += '<div class="ird-delta cheaper">' + esc(R.money(delta, cur)) + ' vs recommended · cheaper</div>';
+      } else {
+        lines += '<div class="ird-delta">Same fee as recommended</div>';
+      }
+    }
+
+    return '<div class="' + cls + '"' +
+      (disabled ? '' : ' data-action="rej-res-apply" data-n="' + s.n + '" role="radio" tabindex="0" aria-checked="' + (selected ? 'true' : 'false') + '"') +
+      (disabled ? ' aria-disabled="true"' : '') + '>' +
+      '<div class="ird-card-head">' + head + '</div>' + lines + '</div>';
   }
 
   /* ---- Attempt history (Part 4) — append-only ---------------------------- */
@@ -1041,7 +923,7 @@ window.RejectsUI = function (kit) {
         '<td><span class="mono num rej-opt-ird">' + esc(r.ird) + '</span></td>' +
         '<td>' + esc(r.strategyLabel) + '</td><td>' + esc(r.by) + '</td>' +
         '<td class="num">' + esc(r.at) + '</td>' +
-        '<td>' + (r.outcome === 'Rejected' ? pill('Rejected', 'danger', 'x') : pill('Pending', 'warning', 'clock')) + '</td></tr>';
+        '<td>' + (r.outcome === 'Rejected' ? pill('Rejected', 'danger', 'x-circle') : pill('Pending', 'warning', 'clock')) + '</td></tr>';
     }).join('');
     if (staged) {
       rows += '<tr class="staged"><td class="num">' + (c.log.length + 1) + '</td>' +
@@ -1055,7 +937,7 @@ window.RejectsUI = function (kit) {
         esc(c.rejected[0]) + '</code> and was rejected.</div>';
     }
     return '<table class="data rej-attempt-table"><thead><tr>' +
-      '<th>Attempt</th><th>IRD applied</th><th>Strategy used</th><th>Applied by</th><th>Applied at</th><th>Outcome</th>' +
+      '<th>Attempt</th><th>IRD applied</th><th>Derived by</th><th>Applied by</th><th>Applied at</th><th>Outcome</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>' +
       '<div class="meta mt-8">Append-only — a correction adds a row, it never rewrites one.</div>';
   }
@@ -1068,78 +950,52 @@ window.RejectsUI = function (kit) {
       (open ? '<div class="rej-res-fold-body">' + body + '</div>' : '') + '</div>';
   }
 
+  /* ---- IRD resolution (Part 4.5) -----------------------------------------
+     Four strategies, four cards, one list. The ladder position indicator, the
+     separate fee comparison table and the transaction-attributes card are all
+     gone: the cards carry rate, fee, delta and the matched attributes inline,
+     which is what those three surfaces existed to say. */
   function irdResolutionPanel(t) {
     var res = R.resolveIrd(t);
     if (!res) return '';
-    var c = res.ctx, b = currentBatch(), a = t.attrs;
+    var c = res.ctx;
     var submitted = c.rejected[c.rejected.length - 1];
-    var earlier = c.rejected.slice(0, -1);
+    var anchorFee = res.recommended && res.recommended.next ? res.recommended.next.fee : null;
 
-    var head = '<div class="rej-res-head">' +
-      '<div class="rej-res-title">' + icon('git-merge', 17) + '<strong>IRD Resolution</strong>' +
-      '<span class="rej-res-attempt">Attempt <span class="num">' + t.attempts + '</span></span></div>' +
-      '<div class="meta">' + esc(b.network) + ' staging reject · <span class="mono">' + esc(t.reasonCode) + '</span> ' +
-      esc(R.reasonText(t.reasonCode)) + '</div></div>';
+    var head = '<div class="ird-head">' +
+      '<div class="sp-section-head">Choose a replacement IRD</div>' +
+      '<div class="meta">Rejected value: <span class="mono">' + esc(submitted) + '</span>. Four ways to derive a replacement.</div>' +
+      '</div>';
 
-    var strip = '<div class="rej-res-strip">' +
-      '<span class="rej-res-strip-cell">' + resKey('Submitted IRD') + irdBig(submitted, 'rej-ird-bad') + '</span>' +
-      '<span class="rej-res-strip-cell">' + resKey('ARN') + arnCell(t.arn) + '</span>' +
-      (earlier.length
-        ? '<span class="rej-res-strip-cell wide">' + resKey('Also tried and rejected') +
-        earlier.map(function (code) {
-          return '<span class="rej-ird-dead mono" title="Submitted on an earlier attempt and rejected — excluded from every strategy below">' +
-            esc(code) + icon('x', 12) + '</span>';
-        }).join('') + '</span>'
-        : '') +
-      '</div>' +
-      (c.rejected.length > 1
-        ? '<div class="rej-res-excl">' + icon('shield', 13) +
-        '<span>All <span class="num">' + c.rejected.length + '</span> rejected IRDs are excluded from every strategy below, ' +
-        'whichever derivation path would produce them.</span></div>'
-        : '');
-
-    var attrsBody = '<div class="rej-attr-grid">' +
-      [['MCC', R.mccLabel(a.mcc) + ' · ' + a.mcc], ['Region', a.region], ['Card type', a.card],
-      ['POS entry mode', a.entry + ' · ' + R.entryLabel(a.entry)], ['Contactless', a.contactless],
-      ['PAN range', c.panRange], ['Submitted GCMS product ID', c.submittedGcms],
-      ['Corrected GCMS product ID', c.correctedGcms || 'not supplied in the reject summary']]
-        .map(function (p) {
-          return '<div class="rej-attr"><span class="rej-res-k">' + esc(p[0]) + '</span>' +
-            '<span class="rej-attr-v mono num">' + esc(p[1]) + '</span></div>';
-        }).join('') + '</div>';
-
-    var cards = '<div class="rej-scards">' + res.strategies.map(function (s) {
-      return strategyCard(t, s, res);
-    }).join('') + '</div>';
-
-    var burnedList = c.rejected.join(', ');
-    var manual = '<div class="rej-res-sec">' + resKey('Manual IRD entry') +
-      '<span class="meta">— last resort, when every strategy above is wrong</span></div>' +
-      '<div class="rej-ird-manual-row">' +
-      '<label class="field">IRD value<input class="input mono w-100" type="text" placeholder="e.g. YB" maxlength="3" ' +
-      'value="' + esc(F.irdManual) + '" data-action="rej-i-ird-manual" /></label>' +
-      '<label class="field" style="flex:1">Derivation note <span class="req">required</span>' +
-      '<input class="input" type="text" placeholder="e.g. Derived against MC interchange manual 2025-Q4 §4.3 — merchant is in the petrol programme, which the account range does not carry." ' +
-      'value="' + esc(F.irdNote) + '" data-action="rej-i-ird-note" /></label>' +
-      '<button class="btn btn-secondary" id="rej-ird-manual-btn" data-action="rej-ird-manual"' +
-      (F.irdManual.trim() && F.irdNote.trim() ? '' : ' disabled') + '>' + icon('pencil', 15) + 'Use this IRD</button>' +
-      '</div>' +
-      '<div class="meta mt-8">A manually entered IRD is tagged as such on the transaction and its note goes into the ' +
-      'correction history. <code class="mono">' + esc(burnedList) + '</code> ' + (c.rejected.length > 1 ? 'have' : 'has') +
-      ' already been rejected for this transaction and cannot be re-entered.</div>';
+    var cards = '<div class="ird-cards" role="radiogroup" aria-label="Replacement IRD">' +
+      res.strategies.map(function (s) { return irdOptionCard(t, s, res, anchorFee); }).join('') +
+      '</div>';
 
     var dead = res.dead
       ? '<div class="callout warn">' + icon('alert-triangle', 18) +
-      '<div class="callout-body">Every strategy on the ladder is exhausted or not applicable for this transaction. ' +
-      'Derive the IRD by hand against the Mastercard interchange manual and enter it below with a note.</div></div>'
+      '<div class="callout-body">Every derivation is exhausted or does not apply. Enter the IRD by hand below.</div></div>'
       : '';
 
-    return '<div class="rej-res-panel">' + head + strip +
-      fold('rej-res-attrs', 'rej-res-attrs', F.irdAttrs, 'Transaction attributes',
-        '— the filter inputs the derivation runs on', attrsBody) +
-      ladderRail(res) + dead + cards + feeTable(t, res) + manual +
-      fold('rej-res-history', 'rej-res-history', F.irdHistory, 'Attempt history',
-        '— every IRD tried on this transaction', attemptHistory(t, res)) +
+    var burnedList = c.rejected.join(', ');
+    var manualBody =
+      '<div class="rej-ird-manual-row">' +
+      '<label class="field">IRD value<input class="input mono w-100" type="text" placeholder="e.g. YB" maxlength="3" ' +
+      'value="' + esc(F.irdManual) + '" data-action="rej-i-ird-manual" /></label>' +
+      '<label class="field" style="flex:1">Why this value? <span class="req">required</span>' +
+      '<input class="input" type="text" placeholder="e.g. Merchant is in the petrol programme, which the account range does not carry — MC interchange manual 2025-Q4 §4.3." ' +
+      'value="' + esc(F.irdNote) + '" data-action="rej-i-ird-note" /></label>' +
+      '<button class="btn btn-secondary" id="rej-ird-manual-btn" data-action="rej-ird-manual"' +
+      (F.irdManual.trim() && F.irdNote.trim() ? '' : ' disabled') + '>' + icon('pencil', 16) + 'Use this IRD</button>' +
+      '</div>' +
+      '<div class="meta mt-8">Tagged as manually entered, with the note kept in the correction history. ' +
+      '<code class="mono">' + esc(burnedList) + '</code> ' + (c.rejected.length > 1 ? 'have' : 'has') +
+      ' already been rejected here and cannot be re-entered.</div>';
+
+    return '<div class="rej-res-panel">' + head + dead + cards +
+      fold('rej-res-manual', 'rej-res-manual', F.irdManualOpen, 'Enter a different IRD', '', manualBody) +
+      (t.attempts > 1
+        ? fold('rej-res-history', 'rej-res-history', F.irdHistory, 'Previous attempts', '', attemptHistory(t, res))
+        : '') +
       '</div>';
   }
 
@@ -1226,6 +1082,9 @@ window.RejectsUI = function (kit) {
       '</div>';
   }
 
+  /* Part 4.4 — the fix panel. Eyebrow header, scrolling body, pinned footer
+     (Part 2.4). Step 1 is the path choice; everything below it depends on the
+     answer, because the answer decides what "below" is. */
   function editorPanel() {
     var t = editingTxn();
     if (!t) return '';
@@ -1233,35 +1092,32 @@ window.RejectsUI = function (kit) {
     var list = editableList();
     var idx = editIndex();
     var changes = draftChanges(t);
-    var rel = R.relevantFields(t.reasonCode);
     var raw = R.rawMessage(t);
 
     /* A transaction already parked on a config change opens straight onto the
-       action that unblocks it. The block is the whole reason the state exists:
-       "nobody has looked at this" and "this is waiting on someone else" are
-       different problems and must not look alike. */
+       action that unblocks it: "nobody has looked at this" and "this is waiting
+       on someone else" are different problems and must not look alike. */
     var awaitingBlock = t.status === 'awaiting_config' && t.configRequest
       ? '<div class="rej-awaiting-box">' + icon('settings', 18) +
       '<div class="rej-awaiting-body">' +
-      '<strong>Awaiting a config fix' + (t.configRequest.familyLabel ? ' · ' + esc(t.configRequest.familyLabel) : '') + '</strong>' +
+      '<strong>Waiting on a config fix' + (t.configRequest.familyLabel ? ' · ' + esc(t.configRequest.familyLabel) : '') + '</strong>' +
       '<div class="rej-awaiting-note">' + esc(t.configRequest.note) + '</div>' +
-      '<div class="meta">Raised by ' + esc(t.configRequest.by) + ' on <span class="num">' + esc(t.configRequest.at) + '</span>. ' +
-      'Excluded from the ready-to-regenerate count until it is re-derived.</div></div>' +
+      '<div class="meta">Raised by ' + esc(t.configRequest.by) + ' on <span class="num">' + esc(t.configRequest.at) + '</span>.</div></div>' +
       '<div class="rej-awaiting-actions">' +
       '<a class="rej-cfg-link" data-route="' + esc((R.configFamily(t.configRequest.family) || {}).route || '#/dashboard/ops/configs') + '">' +
-      'Open Platform Configs' + icon('arrow-right', 14) + '</a>' +
+      'Open Platform Configs' + icon('arrow-right', 15) + '</a>' +
       '<button class="btn btn-primary btn-sm" data-action="rej-rederive" data-id="' + t.id + '">' +
-      icon('refresh-cw', 15) + 'Config updated — re-derive</button>' +
+      icon('refresh-cw', 16) + 'Config updated — re-derive</button>' +
       '</div></div>'
       : '';
 
     var attemptBlock = t.attempts > 1
       ? '<div class="rej-attempt-box">' + icon('rotate-ccw', 16) +
-      '<div><strong>Attempt <span class="num">' + t.attempts + '</span></strong> — this transaction has been corrected and rejected again.' +
+      '<div><strong>Attempt <span class="num">' + t.attempts + '</span></strong> — fixed once already, and rejected again.' +
       '<div class="rej-attempt-log">' + t.attemptLog.map(function (a) {
         return '<div class="rej-attempt-line">Attempt <span class="num">' + a.attempt + '</span> · ' +
           (a.ird ? 'IRD <code class="mono">' + esc(a.ird) + '</code> · ' : '') +
-          'previously corrected <span class="num">' + esc(a.correctedAt) + '</span> by ' + esc(a.by) +
+          'fixed <span class="num">' + esc(a.correctedAt) + '</span> by ' + esc(a.by) +
           ' · rejected again <span class="num">' + esc(a.rejectedAt) + '</span></div>';
       }).join('') + '</div></div></div>'
       : '';
@@ -1273,45 +1129,37 @@ window.RejectsUI = function (kit) {
       '<div class="ctx-cell"><span class="ctx-label">Transaction date</span><span class="ctx-value num">' + U.prettyDate(t.txnDate) + '</span><span class="ctx-sub num">' + esc(t.txnTime) + ' IST</span></div>' +
       '</div>' +
       '<div class="rej-reason-box">' +
-      '<span class="mono reason-code">' + esc(t.reasonCode) + '</span>' +
       '<strong>' + esc(R.reasonText(t.reasonCode)) + '</strong>' +
+      '<span class="mono reason-code">' + esc(t.reasonCode) + '</span>' +
       (R.isIrd(t.reasonCode) ? irdTag() : '') +
-      '<span class="meta">' + esc(b.network) + ' · ' + (b.family === 'staging' ? 'staging reject' : 'incoming reject') + '</span>' +
       '</div>' +
       (raw ? '<div class="rej-raw"><span class="rej-ird-sub">Network reject message</span><code class="mono">' + esc(raw) + '</code></div>' : '');
 
-    /* §C.6 / §C.7 — the editable half of the panel depends entirely on the
-       declared path. The IRD ladder and the recommendation panel live inside
-       the transaction-data path, because applying an IRD is a transaction-data
-       fix; when the fix is to the derivation logic itself, both are hidden —
-       recommending a value for a field you have just said is derived wrongly
-       would be the wrong tool at the wrong moment. */
+    /* The IRD cards and the recommendation panel live inside the data path,
+       because applying an IRD is a transaction-data fix. When the fix is to the
+       derivation logic itself both are hidden — recommending a value for a
+       field you have just said is derived wrongly is the wrong tool. */
     var workspace = '';
     if (F.path === 'data') {
       workspace =
         (ladderOn(t) ? irdResolutionPanel(t) : '') +
-        '<div class="cfg-section-title mt-24">Transaction record ' +
-        '<span class="meta">— every field editable; reason ' + esc(t.reasonCode) +
-        (rel.length ? ' flags ' + rel.length + ' of them' : ' flags none of them') + '</span></div>' +
-        // A Mastercard staging IRD reject resolves through the ladder above; the
-        // single-answer recommendation panel would be a second, weaker Apply
-        // surface for the same field. Every other IRD reject keeps it.
         (R.isIrd(t.reasonCode) && !ladderOn(t) ? irdPanel(t) : '') +
+        '<div class="sp-section-head">Transaction record</div>' +
         fieldEditor(t) +
-        '<div class="cfg-section-title mt-24">Change summary <span class="meta">— reviewed before anything is written</span></div>' +
+        '<div class="sp-section-head">Change summary</div>' +
         '<div id="rej-diff">' + diffBlock(t) + '</div>';
     } else if (F.path === 'config') {
       workspace = configPathPanel(t);
     }
 
     var historyBlock = t.history.length
-      ? '<div class="cfg-section-title mt-24">Correction history <span class="meta">— append-only</span></div>' +
+      ? '<div class="sp-section-head">Correction history <span class="meta">— append-only</span></div>' +
       '<div class="rej-history">' + t.history.map(function (h) {
         return '<div class="rej-history-entry">' +
           '<div class="rej-history-head"><span class="num">' + esc(h.at) + '</span> · ' + esc(h.by) +
           (h.path ? '<span class="rej-path-tag">' + icon(R.PATHS[h.path] ? R.PATHS[h.path].icon : 'pencil', 11) +
             esc(R.pathLabel(h.path) || h.path) + '</span>' : '') +
-          (h.kind === 'config_request' ? pill('awaiting config fix', 'warning', 'settings') : '') +
+          (h.kind === 'config_request' ? pill('waiting on config', 'warning', 'settings') : '') +
           (h.kind === 'rederive' ? pill('re-derived', 'info', 'refresh-cw') : '') +
           (h.kind === 'wont_fix' ? pill("won't fix", 'neutral', 'ban') : '') + '</div>' +
           (h.configFamily ? '<div class="rej-history-fam">' + icon('settings', 11) + esc(h.configFamily) + '</div>' : '') +
@@ -1328,36 +1176,32 @@ window.RejectsUI = function (kit) {
     var canSave = F.path === 'data' && changes.length > 0;
     var nextTarget = nextUncorrected();
 
-    return '<div class="overlay" data-action="rej-cancel">' +
-      '<div class="side-panel wide rej-panel" onclick="event.stopPropagation()">' +
-      '<div class="modal-head rej-panel-head">' +
-      '<div><div class="section-title">Correct transaction</div>' +
-      '<div class="meta">' + esc(b.id) + ' · ' + esc(b.tenantName) + ' · ' + esc(b.network) + ' · transaction <span class="num">' + (idx + 1) + '</span> of <span class="num">' + list.length + '</span></div></div>' +
-      '<div class="rej-panel-nav">' +
-      '<button class="icon-btn" data-action="rej-prev"' + (idx <= 0 ? ' disabled' : '') + ' aria-label="Previous transaction" title="Previous transaction">' + icon('chevron-left', 16) + '</button>' +
-      '<button class="icon-btn" data-action="rej-next"' + (idx < 0 || idx >= list.length - 1 ? ' disabled' : '') + ' aria-label="Next transaction" title="Next transaction">' + icon('chevron-right', 16) + '</button>' +
-      '<button class="icon-btn" data-action="rej-cancel" aria-label="Close">' + icon('x', 16) + '</button>' +
-      '</div></div>' +
-
-      '<div class="rej-panel-status">' + statusPill(t) + manualTag(t.manualTag) +
-      '<span class="meta">' + esc(lc(t.status).note) + '</span>' +
-      '<span class="meta" style="margin-left:auto">Assigned to ' + (t.assignee ? esc(t.assignee) : '—') + '</span></div>' +
-
-      attemptBlock + ctx + awaitingBlock + pathCards(t) + workspace + historyBlock +
-
-      '<div class="rej-panel-foot">' +
-      '<button class="btn btn-danger btn-sm" data-action="rej-wontfix-open">' + icon('ban', 15) + "Mark as won't fix" + '</button>' +
-      '<span style="flex:1"></span>' +
-      '<button class="btn btn-secondary" data-action="rej-cancel">Cancel</button>' +
-      (F.path === 'config' ? '' :
-        '<button class="btn btn-secondary" id="rej-save-next" data-action="rej-save-next"' + (canSave && nextTarget ? '' : ' disabled') +
-        ' title="' + (nextTarget ? 'Save and open the next uncorrected transaction' : 'No uncorrected transaction left in this batch') + '">' +
-        icon('skip-forward', 15) + 'Save and next</button>' +
-        '<button class="btn btn-primary" id="rej-save" data-action="rej-save"' + (canSave ? '' : ' disabled') +
-        ' title="' + (F.path ? 'Save the edited fields and move this transaction to Corrected' : 'Choose a correction path first') + '">' +
-        icon('save', 15) + 'Save correction</button>') +
-      '</div>' +
-      '</div></div>';
+    return sidePanel({
+      wide: true, cls: 'rej-panel', close: 'rej-cancel',
+      eyebrow: 'Fix reject',
+      name: arnCell(t.arn) + '<span class="sp-name-meta">' + esc(t.merchant) + '</span>',
+      headExtra: '<div class="rej-panel-nav">' +
+        '<span class="meta num">' + (idx + 1) + ' of ' + list.length + '</span>' +
+        '<button class="icon-btn" data-action="rej-prev"' + (idx <= 0 ? ' disabled' : '') + ' aria-label="Previous transaction" title="Previous transaction">' + icon('chevron-left', 18) + '</button>' +
+        '<button class="icon-btn" data-action="rej-next"' + (idx < 0 || idx >= list.length - 1 ? ' disabled' : '') + ' aria-label="Next transaction" title="Next transaction">' + icon('chevron-right', 18) + '</button>' +
+        '</div>',
+      body:
+        '<div class="rej-panel-status">' + statusPill(t) + manualTag(t.manualTag) +
+        '<span class="meta">' + esc(lc(t.status).note) + '</span>' +
+        '<span class="meta" style="margin-left:auto">Assigned to ' + (t.assignee ? esc(t.assignee) : '—') + '</span></div>' +
+        attemptBlock + ctx + awaitingBlock + pathCards(t) + workspace + historyBlock,
+      foot:
+        '<button class="btn btn-secondary btn-sm" data-action="rej-wontfix-open">' + icon('ban', 16) + "Mark as won't fix" + '</button>' +
+        '<span style="flex:1"></span>' +
+        '<button class="btn btn-secondary" data-action="rej-cancel">Cancel</button>' +
+        (F.path === 'config' ? '' :
+          '<button class="btn btn-secondary" id="rej-save-next" data-action="rej-save-next"' + (canSave && nextTarget ? '' : ' disabled') +
+          ' title="' + (nextTarget ? 'Save and open the next transaction still to fix' : 'Nothing left to fix in this batch') + '">' +
+          'Save and next' + icon('arrow-right', 16) + '</button>' +
+          '<button class="btn btn-primary" id="rej-save" data-action="rej-save"' + (canSave ? '' : ' disabled') +
+          ' title="' + (F.path ? 'Save the edited fields and mark this transaction fixed' : 'Choose what kind of fix this is first') + '">' +
+          icon('save', 16) + 'Save fix</button>')
+    });
   }
 
   function nextUncorrected() {
@@ -1680,7 +1524,7 @@ window.RejectsUI = function (kit) {
       F.path = null; F.cfgNote = ''; F.cfgFamily = '';
     }
     F.irdManual = ''; F.irdNote = '';
-    F.irdCards = {}; F.irdAttrs = false; F.irdHistory = false; F.irdApplied = null;
+    F.irdCards = {}; F.irdHistory = false; F.irdManualOpen = false; F.irdApplied = null;
     // NEW ──edit──▶ UNDER CORRECTION. A re-reject keeps its attempt count, so it
     // still sorts to the top while someone is working it. A transaction awaiting
     // a config fix keeps its state — opening it is not working it.
@@ -1693,7 +1537,7 @@ window.RejectsUI = function (kit) {
     F.editing = null; F.editFrom = null; F.draft = null;
     F.path = null; F.cfgNote = ''; F.cfgFamily = '';
     F.irdManual = ''; F.irdNote = '';
-    F.irdCards = {}; F.irdAttrs = false; F.irdHistory = false; F.irdApplied = null;
+    F.irdCards = {}; F.irdHistory = false; F.irdManualOpen = false; F.irdApplied = null;
     if (!keepOrder) F.navOrder = null;
   }
   function doSave() {
@@ -1774,15 +1618,40 @@ window.RejectsUI = function (kit) {
       viewOverview();
     },
     'rej-tenant-all': function () { F.tenants = {}; viewOverview(); },
+    'rej-details': function () { F.detailsOpen = !F.detailsOpen; viewBatch(); },
+    'rej-clear-q': function () { F.q = ''; viewBatch(); },
+    'rej-fgroup': function (t) {
+      var g = t.getAttribute('data-group');
+      F.fgroups[g] = F.fgroups[g] === false;
+      viewBatch();
+    },
     'rej-c-network': function (t) { F.network = t.value; viewOverview(); },
     'rej-c-family': function (t) { F.family = t.value; viewOverview(); },
     'rej-c-reason': function (t) { F.reason = t.value; viewOverview(); },
     'rej-date-preset': function (t) { F.dateMode = t.getAttribute('data-mode'); viewOverview(); },
+    // The standard filter row drives single-select controls; the multi-tenant
+    // chip set is still reachable through the removable chips beneath it.
+    'rej-c-tenant-one': function (t) {
+      F.tenants = {};
+      if (t.value !== 'all') F.tenants[t.value] = true;
+      viewOverview();
+    },
+    'rej-c-preset': function (t) { F.dateMode = t.value; viewOverview(); },
+    'rej-clear-network': function () { F.network = 'all'; viewOverview(); },
+    'rej-clear-family': function () { F.family = 'all'; viewOverview(); },
+    'rej-clear-reason': function () { F.reason = 'all'; viewOverview(); },
+    'rej-clear-date': function () { F.dateMode = 'all'; F.dateOn = ''; F.dateFrom = ''; F.dateTo = ''; viewOverview(); },
+    'rej-refresh': function () { viewOverview(); toast('Refreshed', 'success'); },
+    'rej-i-bq': function (t) {
+      F.bq = t.value; viewOverview();
+      var i = el('view').querySelector('[data-action="rej-i-bq"]');
+      if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+    },
     'rej-c-date-on': function (t) { F.dateOn = t.value; viewOverview(); },
     'rej-c-date-from': function (t) { F.dateFrom = t.value; viewOverview(); },
     'rej-c-date-to': function (t) { F.dateTo = t.value; viewOverview(); },
     'rej-reset': function () {
-      F.tenants = {}; F.network = 'all'; F.family = 'all'; F.reason = 'all';
+      F.tenants = {}; F.bq = ''; F.network = 'all'; F.family = 'all'; F.reason = 'all';
       F.dateMode = 'all'; F.dateOn = ''; F.dateFrom = ''; F.dateTo = '';
       F.sort = { key: 'default', dir: 'desc' };
       viewOverview();
@@ -1926,14 +1795,7 @@ window.RejectsUI = function (kit) {
     },
 
     /* ---- IRD Resolution ladder ---- */
-    'rej-res-card': function (t) {
-      var n = parseInt(t.getAttribute('data-n'), 10);
-      var res = R.resolveIrd(editingTxn());
-      var was = F.irdCards[n] != null ? F.irdCards[n] : !!(res && res.recommended && res.recommended.n === n);
-      F.irdCards[n] = !was;
-      viewBatch();
-    },
-    'rej-res-attrs': function () { F.irdAttrs = !F.irdAttrs; viewBatch(); },
+    'rej-res-manual': function () { F.irdManualOpen = !F.irdManualOpen; viewBatch(); },
     'rej-res-history': function () { F.irdHistory = !F.irdHistory; viewBatch(); },
     'rej-res-apply': function (t) {
       var n = parseInt(t.getAttribute('data-n'), 10);

@@ -2202,3 +2202,922 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .recon-rej-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 600;
   color: var(--primary); cursor: pointer; white-space: nowrap; }
 .recon-rej-link:hover { color: var(--primary-hover); text-decoration: underline; }
+
+/* =============================================================================
+   OPS PORTAL — DESIGN LANGUAGE v2 (overhaul Part 2)
+   -----------------------------------------------------------------------------
+   Everything below is scoped to `.portal-ops` (the class the router stamps on
+   the shell) or `.ops-scope` (the toast + overlay mounts, which live outside
+   the shell). Nothing here can reach a Bank Portal screen: the Part 2.2 palette
+   is a FORK of the shared token names, not a replacement of them, because the
+   Bank Portal renders from the same names and must not change.
+   ============================================================================= */
+
+/* ---- 2.2 Colour tokens --------------------------------------------------- */
+.portal-ops, .ops-scope {
+  /* Surfaces */
+  --bg-app:            #FFFFFF;
+  --bg-rail:           #FFFFFF;
+  --bg-subtle:         #F7F8FA;
+  --bg-active-nav:     #F1F3F7;
+  --bg-card:           #FFFFFF;
+
+  /* Borders */
+  --border-light:      #EDEFF3;
+  --border-default:    #E3E7ED;
+  --border-strong:     #CFD5DE;
+
+  /* Text */
+  --text-strong:       #111827;
+  --text-primary:      #2C3444;
+  --text-secondary:    #6B7280;
+  --text-muted:        #8A93A5;
+  --text-faint:        #A8B0BD;
+
+  /* Primary action */
+  --primary:           #2563EB;
+  --primary-hover:     #1D4FD7;
+  --primary-ring:      rgba(37, 99, 235, 0.18);
+
+  /* Status — light background, saturated text */
+  --ok-bg:             #E7F7EE;
+  --ok-fg:             #197A45;
+  --warn-bg:           #FEF3E2;
+  --warn-fg:           #9A5B0B;
+  --danger-bg:         #FDECEC;
+  --danger-fg:         #B42318;
+  --info-bg:           #EAF1FE;
+  --info-fg:           #1D4FD7;
+  --neutral-bg:        #F1F3F7;
+  --neutral-fg:        #4B5563;
+
+  /* Accent icon tiles (KPI cards) */
+  --tile-purple-bg:    #F2EDFE;  --tile-purple-fg:  #7C3AED;
+  --tile-blue-bg:      #EAF1FE;  --tile-blue-fg:    #2563EB;
+  --tile-orange-bg:    #FEF1E6;  --tile-orange-fg:  #EA6C0B;
+  --tile-green-bg:     #E7F7EE;  --tile-green-fg:   #197A45;
+
+  /* --- Shared names the existing components read, re-pointed at the above ---
+     This is what lets every Phase 1/2/3 component inherit the new language
+     without being rewritten, while the Bank Portal keeps the originals. */
+  --bg-page:           #FFFFFF;
+  --text-tertiary:     #8A93A5;
+  --border-subtle:     #EDEFF3;
+  --primary-subtle-bg: #EAF1FE;
+  --primary-subtle-fg: #1D4FD7;
+  --status-info-bg:    #EAF1FE;  --status-info-fg:    #1D4FD7;
+  --status-success-bg: #E7F7EE;  --status-success-fg: #197A45;
+  --status-warning-bg: #FEF3E2;  --status-warning-fg: #9A5B0B;
+  --status-danger-bg:  #FDECEC;  --status-danger-fg:  #B42318;
+  --status-neutral-bg: #F1F3F7;  --status-neutral-fg: #4B5563;
+  /* The nav is light now — the dark-nav names resolve to the light panel. */
+  --bg-nav:            #FFFFFF;
+  --nav-fg:            #2C3444;
+  --nav-fg-muted:      #8A93A5;
+  --nav-hover-bg:      #F7F8FA;
+  --nav-active-bg:     #F1F3F7;
+
+  /* Layout metrics for the three-panel shell */
+  --rail-w:            72px;
+  --opsnav-w:          230px;
+  --opsnav-w-collapsed: 68px;
+}
+
+/* =============================================================================
+   2.1 SHELL — icon rail + nav panel + content area. No dark top bar.
+   ============================================================================= */
+.rail { display: none; }
+.ops-searchrow { display: none; }
+
+.app.portal-ops {
+  grid-template-columns: var(--rail-w) var(--opsnav-w) 1fr;
+  grid-template-rows: 1fr;
+  grid-template-areas: "rail sidebar main";
+}
+.app.portal-ops.collapsed { grid-template-columns: var(--rail-w) var(--opsnav-w-collapsed) 1fr; }
+.app.portal-ops > .topbar { display: none; }
+
+/* ---- Panel 1 · icon rail ------------------------------------------------- */
+.app.portal-ops > .rail {
+  grid-area: rail; display: flex; flex-direction: column; align-items: center;
+  gap: 10px; padding: 14px 0 16px; background: var(--bg-rail);
+  border-right: 1px solid var(--border-light); position: relative;
+}
+.rail-home {
+  width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--border-light);
+  background: #fff; color: var(--text-primary); display: flex; align-items: center; justify-content: center;
+}
+.rail-home:hover { background: var(--bg-subtle); color: var(--text-strong); }
+.rail-divider { width: 32px; height: 1px; background: var(--border-light); }
+.rail-stack { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.rail-avatar {
+  width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--border-light);
+  background: #fff; color: var(--text-muted); font-size: 13px; font-weight: 600;
+  letter-spacing: .2px; display: flex; align-items: center; justify-content: center;
+}
+.rail-avatar:hover { background: var(--bg-subtle); color: var(--text-primary); }
+.rail-avatar.active {
+  background: var(--info-bg); color: var(--primary); border: 2px solid var(--primary);
+}
+.rail-spacer { flex: 1; }
+.rail-more {
+  width: 40px; height: 40px; border-radius: 10px; border: 1px solid transparent;
+  background: transparent; color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+}
+.rail-more:hover { background: var(--bg-subtle); color: var(--text-primary); }
+.rail-menu, .nav-context-menu, .nav-user-menu {
+  position: absolute; z-index: 60; min-width: 230px; background: #fff;
+  border: 1px solid var(--border-default); border-radius: 10px; padding: 6px;
+  box-shadow: 0 8px 28px rgba(16,24,40,0.12);
+}
+.rail-menu { left: 62px; bottom: 16px; }
+.rail-menu button, .nav-user-menu button {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px;
+  border: none; background: transparent; border-radius: 7px;
+  font-size: 14px; font-weight: 500; color: var(--text-primary); text-align: left;
+}
+.rail-menu button:hover, .nav-user-menu button:hover { background: var(--bg-subtle); }
+.rail-menu-label, .ncm-label {
+  font-size: 12px; font-weight: 500; color: var(--text-muted); padding: 6px 10px 4px;
+  text-transform: none;
+}
+.rail-menu-sep { height: 1px; background: var(--border-light); margin: 5px 0; }
+
+/* ---- Panel 2 · navigation panel ------------------------------------------ */
+.app.portal-ops > .sidebar {
+  grid-area: sidebar; background: #fff; color: var(--text-primary);
+  border-right: 1px solid var(--border-light); position: relative;
+}
+.portal-ops .nav-context {
+  display: flex; align-items: center; gap: 6px; padding: 16px 12px 12px 16px; position: relative;
+}
+.nav-context-btn {
+  display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+  background: transparent; border: none; padding: 4px 6px; border-radius: 8px;
+  font-size: 17px; font-weight: 600; color: var(--text-strong); letter-spacing: -0.2px;
+}
+.nav-context-btn > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-context-btn:hover { background: var(--bg-subtle); }
+.nav-context-btn svg { color: var(--text-muted); flex-shrink: 0; }
+.nav-collapse {
+  width: 32px; height: 32px; flex-shrink: 0; border-radius: 8px; border: none;
+  background: transparent; color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+}
+.nav-collapse:hover { background: var(--bg-subtle); color: var(--text-primary); }
+.nav-context-menu { left: 12px; top: 52px; }
+.ncm-row {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+  font-size: 14px; color: var(--text-primary);
+}
+.ncm-row.strong { font-weight: 600; color: var(--text-strong); }
+.ncm-meta { margin-left: auto; font-size: 13px; color: var(--text-muted); }
+
+.portal-ops .sidebar .nav-scroll { padding: 4px 0 12px; }
+.portal-ops .nav-item {
+  gap: 10px; padding: 9px 14px; margin: 0 10px 2px; border-radius: 8px; border-left: none;
+  font-size: 15px; font-weight: 500; color: var(--text-primary);
+}
+.portal-ops .nav-item:hover { background: var(--bg-subtle); color: var(--text-primary); }
+.portal-ops .nav-item.active { background: var(--bg-active-nav); color: var(--text-strong); border-left: none; }
+.portal-ops .nav-item .nav-icon { width: 18px; height: 18px; color: var(--text-muted); }
+.portal-ops .nav-item .nav-icon svg { width: 18px; height: 18px; }
+.portal-ops .nav-item.active .nav-icon { color: var(--text-strong); }
+/* Active rows carry a filled hexagon rather than an outline (Part 2.1). */
+.portal-ops .nav-item.active .nav-icon svg { fill: currentColor; }
+.portal-ops .nav-item .nav-icon-solo { display: none; }
+.portal-ops .nav-item .nav-chevron { color: var(--text-muted); }
+.portal-ops .nav-children .nav-item { padding-left: 32px; font-size: 14px; }
+.portal-ops .nav-group.expanded .nav-children { max-height: 300px; }
+
+.portal-ops .nav-user { padding: 10px; border-top: 1px solid var(--border-light); position: relative; }
+.nav-user-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 8px;
+  border-radius: 8px; border: none; background: transparent;
+}
+.nav-user-row:hover { background: var(--bg-subtle); }
+.nav-avatar {
+  width: 28px; height: 28px; flex-shrink: 0; border-radius: 999px; background: #16A34A;
+  color: #fff; font-size: 13px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+}
+.nav-user-mail {
+  flex: 1; min-width: 0; font-size: 14px; color: var(--neutral-fg); text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nav-user-row svg { color: var(--text-muted); flex-shrink: 0; }
+.nav-user-menu { left: 10px; right: 10px; bottom: 56px; min-width: 0; }
+
+/* Collapsed / icons-only: the hexagon is dropped for the section's own icon,
+   because eight identical hexagons with no labels identify nothing. */
+.app.portal-ops.collapsed .nav-context { justify-content: center; padding: 16px 8px 12px; }
+.app.portal-ops.collapsed .nav-context-btn { display: none; }
+.app.portal-ops.collapsed .nav-context-menu { display: none; }
+.app.portal-ops.collapsed .nav-item { justify-content: center; margin: 0 8px 2px; padding: 10px 0; }
+.app.portal-ops.collapsed .nav-item .nav-icon { display: none; }
+.app.portal-ops.collapsed .nav-item .nav-icon-solo {
+  display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--text-muted);
+}
+.app.portal-ops.collapsed .nav-item.active .nav-icon-solo { color: var(--text-strong); }
+.app.portal-ops.collapsed .nav-user-mail, .app.portal-ops.collapsed .nav-user-row svg { display: none; }
+.app.portal-ops.collapsed .nav-user-row { justify-content: center; }
+.app.portal-ops.collapsed .nav-item:hover::after {
+  background: var(--text-strong); border: none; box-shadow: 0 4px 14px rgba(16,24,40,0.18);
+}
+
+/* ---- Panel 3 · content area + search row --------------------------------- */
+.portal-ops .main { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.app.portal-ops .ops-searchrow {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  height: 44px; padding: 0 32px; border-bottom: 1px solid var(--border-light); background: #fff;
+}
+.ops-searchrow .ops-search-icon { display: flex; color: var(--text-muted); flex-shrink: 0; }
+.ops-searchrow input {
+  flex: 1; min-width: 0; height: 42px; border: none; outline: none; background: transparent;
+  font-family: inherit; font-size: 15px; color: var(--text-primary);
+}
+.ops-searchrow input::placeholder { color: var(--text-faint); }
+.portal-ops .content {
+  flex: 1; min-width: 0; max-width: none; width: 100%;
+  overflow-y: auto; padding: 28px 32px 40px;
+}
+
+/* =============================================================================
+   2.3 TYPOGRAPHY — one scale, applied on every Ops screen
+   ============================================================================= */
+.portal-ops .page-title { font-size: 32px; font-weight: 700; line-height: 1.2; color: var(--text-strong); letter-spacing: -0.6px; }
+.portal-ops .page-head .subtitle { font-size: 15px; font-weight: 400; line-height: 1.5; color: var(--text-secondary); margin-top: 6px; }
+.portal-ops .section-title { font-size: 20px; font-weight: 600; line-height: 1.35; color: var(--text-strong); }
+.portal-ops .cfg-section-title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+.portal-ops .card-title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+.portal-ops .meta { font-size: 13px; font-weight: 400; color: var(--text-muted); }
+.portal-ops .kpi-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+.portal-ops .kpi-value { font-size: 34px; font-weight: 700; line-height: 1.2; color: var(--text-strong); }
+.portal-ops .sc-label { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+.portal-ops .sc-value { font-size: 28px; font-weight: 700; line-height: 1.2; color: var(--text-strong); }
+.portal-ops .sc-sub, .portal-ops .kpi-foot { font-size: 13px; color: var(--text-muted); }
+/* Identifiers scanned character by character (Part 2.3). */
+.portal-ops .mono, .ops-scope .mono, .portal-ops code, .portal-ops .cfg-raw, .portal-ops textarea.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px;
+}
+.portal-ops, .ops-scope { font-variant-numeric: tabular-nums; }
+
+/* =============================================================================
+   2.4 COMPONENT LIBRARY
+   ============================================================================= */
+/* ---- Buttons ------------------------------------------------------------- */
+.portal-ops .btn, .ops-scope .btn {
+  border-radius: 8px; padding: 11px 18px; font-size: 15px; font-weight: 500; gap: 8px;
+}
+.portal-ops .btn svg, .ops-scope .btn svg { width: 18px; height: 18px; }
+.portal-ops .btn-sm, .ops-scope .btn-sm { padding: 8px 13px; font-size: 14px; }
+.portal-ops .btn-sm svg, .ops-scope .btn-sm svg { width: 16px; height: 16px; }
+.portal-ops .btn-secondary, .ops-scope .btn-secondary { background: #fff; border: 1px solid var(--border-default); color: var(--text-primary); }
+.portal-ops .btn-secondary:hover, .ops-scope .btn-secondary:hover { background: var(--bg-subtle); border-color: var(--border-strong); }
+.portal-ops .btn-ghost, .ops-scope .btn-ghost { font-size: 15px; font-weight: 500; }
+.portal-ops .head-actions, .ops-scope .head-actions { gap: 10px; }
+.portal-ops .icon-btn, .ops-scope .icon-btn {
+  width: 40px; height: 40px; border-radius: 8px; background: #fff;
+  border: 1px solid var(--border-default); color: var(--text-secondary);
+}
+.portal-ops .icon-btn svg, .ops-scope .icon-btn svg { width: 18px; height: 18px; }
+.portal-ops .icon-btn.xs, .ops-scope .icon-btn.xs { width: 30px; height: 30px; }
+.portal-ops .icon-btn.xs svg, .ops-scope .icon-btn.xs svg { width: 14px; height: 14px; }
+
+/* ---- Status pills — rounded-rectangular, always icon-bearing ------------- */
+.portal-ops .pill, .ops-scope .pill {
+  border-radius: 8px; padding: 5px 11px; font-size: 13px; font-weight: 500; gap: 6px;
+}
+.portal-ops .pill svg, .ops-scope .pill svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* ---- Cards --------------------------------------------------------------- */
+.portal-ops .card, .ops-scope .card {
+  background: #fff; border: 1px solid var(--border-light); border-radius: 12px; padding: 22px; box-shadow: none;
+}
+.portal-ops .card.pad-sm { padding: 16px; }
+.portal-ops .card.clickable:hover, .portal-ops .kpi-card.clickable:hover {
+  box-shadow: 0 1px 3px rgba(16,24,40,0.06); background: #fff; border-color: var(--border-default);
+}
+.portal-ops .card-head { margin-bottom: 16px; }
+
+/* ---- KPI cards, with the optional accent icon tile ----------------------- */
+.portal-ops .kpi-card {
+  border: 1px solid var(--border-light); border-radius: 12px; padding: 22px; gap: 6px;
+  box-shadow: none;
+}
+.kpi-tile {
+  width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center;
+  justify-content: center; margin-bottom: 10px;
+}
+.kpi-tile svg { width: 22px; height: 22px; }
+.kpi-tile.purple { background: var(--tile-purple-bg); color: var(--tile-purple-fg); }
+.kpi-tile.blue   { background: var(--tile-blue-bg);   color: var(--tile-blue-fg); }
+.kpi-tile.orange { background: var(--tile-orange-bg); color: var(--tile-orange-fg); }
+.kpi-tile.green  { background: var(--tile-green-bg);  color: var(--tile-green-fg); }
+.kpi-card.tiled { align-items: center; text-align: center; }
+
+/* ---- Tables — in a card shell, no zebra, 56px rows ----------------------- */
+.portal-ops table.data thead th {
+  text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 500;
+  color: var(--text-muted); border-bottom: 1px solid var(--border-default); padding: 13px 18px;
+}
+.portal-ops table.data tbody td {
+  border-bottom: 1px solid var(--border-light); padding: 16px 18px; font-size: 15px;
+  color: var(--text-primary);
+}
+.portal-ops table.data tbody tr { min-height: 56px; }
+.portal-ops table.data tbody tr:hover { background: var(--bg-subtle); }
+.portal-ops table.data tbody tr:nth-child(even) { background: inherit; }
+.portal-ops .table-card {
+  border: 1px solid var(--border-light); border-radius: 12px; overflow: hidden; background: #fff;
+}
+.portal-ops .table-card > .table-wrap { border-radius: 12px; }
+.portal-ops .table-card table.data tbody tr:last-child td { border-bottom: none; }
+.portal-ops .cell-sub { font-size: 13px; color: var(--text-muted); }
+
+/* ---- Tabs — dark underline, dark active text (not blue) ------------------ */
+.portal-ops .tabs { gap: 28px; border-bottom: 1px solid var(--border-default); }
+.portal-ops .tab {
+  font-size: 16px; font-weight: 500; color: var(--text-secondary);
+  padding: 0 0 14px; border-bottom: 2px solid transparent;
+}
+.portal-ops .tab.active { color: var(--text-strong); border-bottom-color: var(--text-strong); font-weight: 600; }
+.portal-ops .tab:hover { color: var(--text-strong); }
+.portal-ops .tab .count {
+  font-size: 13px; background: var(--neutral-bg); color: var(--neutral-fg); border-radius: 6px; padding: 1px 7px;
+}
+
+/* ---- Inputs, selects, filters ------------------------------------------- */
+.portal-ops .input, .portal-ops select.input, .portal-ops textarea.input,
+.ops-scope .input, .ops-scope select.input, .ops-scope textarea.input {
+  border: 1px solid var(--border-default); border-radius: 8px; padding: 11px 14px; font-size: 15px;
+  color: var(--text-primary);
+}
+.portal-ops .input:focus, .portal-ops select.input:focus, .portal-ops textarea.input:focus,
+.ops-scope .input:focus, .ops-scope select.input:focus, .ops-scope textarea.input:focus {
+  outline: 3px solid var(--primary-ring); border-color: var(--primary);
+}
+.portal-ops .input::placeholder, .ops-scope .input::placeholder { color: var(--text-faint); }
+.portal-ops .field { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+
+/* The standard filter row: search → filters → preset → date range → refresh */
+.ops-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ops-filters .ops-search { position: relative; flex: 1 1 260px; min-width: 220px; max-width: 420px; }
+.ops-filters .ops-search svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); width: 18px; height: 18px; }
+.ops-filters .ops-search input { width: 100%; padding-left: 42px; }
+.ops-select {
+  display: inline-flex; align-items: center; gap: 8px; background: #fff;
+  border: 1px solid var(--border-default); border-radius: 8px; padding: 0 12px 0 14px; height: 44px;
+}
+.ops-select select {
+  border: none; background: transparent; font-family: inherit; font-size: 15px; font-weight: 500;
+  color: var(--text-primary); padding: 0 4px 0 0; appearance: none; outline: none; max-width: 210px;
+}
+.ops-select svg { color: var(--text-muted); width: 16px; height: 16px; flex-shrink: 0; }
+.ops-daterange {
+  display: inline-flex; align-items: center; gap: 10px; background: #fff;
+  border: 1px solid var(--border-default); border-radius: 8px; padding: 0 12px; height: 44px;
+  font-size: 15px; color: var(--text-primary); white-space: nowrap;
+}
+.ops-daterange > svg:first-child { color: var(--text-muted); width: 18px; height: 18px; }
+.ops-daterange input[type=date] { border: none; outline: none; font-family: inherit; font-size: 15px; padding: 0; background: transparent; color: var(--text-primary); }
+.ops-refresh { flex-shrink: 0; }
+.ops-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.ops-chip {
+  display: inline-flex; align-items: center; gap: 6px; background: var(--bg-subtle);
+  border: 1px solid var(--border-light); border-radius: 8px; padding: 5px 8px 5px 11px;
+  font-size: 13px; font-weight: 500; color: var(--text-primary);
+}
+.ops-chip button { border: none; background: transparent; color: var(--text-muted); display: flex; padding: 0; }
+.ops-chip button:hover { color: var(--danger-fg); }
+.ops-chip svg { width: 14px; height: 14px; }
+
+/* ---- Side panels --------------------------------------------------------- */
+.ops-scope .side-panel, .portal-ops .side-panel {
+  width: clamp(460px, 40vw, 680px); border-left: 1px solid var(--border-light);
+  box-shadow: -8px 0 32px rgba(16,24,40,0.10); padding: 0; display: flex; flex-direction: column;
+}
+.ops-scope .side-panel.wide, .portal-ops .side-panel.wide { width: clamp(560px, 52vw, 860px); }
+.sp-head {
+  flex-shrink: 0; padding: 20px 24px 16px; border-bottom: 1px solid var(--border-light);
+  display: flex; align-items: flex-start; gap: 12px;
+}
+.sp-eyebrow { font-size: 12px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; }
+.sp-name { font-size: 17px; font-weight: 600; color: var(--text-strong); margin-top: 3px; }
+.sp-body { flex: 1; overflow-y: auto; padding: 22px 24px; }
+.sp-body > * + * { margin-top: 24px; }
+.sp-section-head { font-size: 15px; font-weight: 600; color: var(--text-strong); margin-bottom: 12px; }
+.sp-foot {
+  flex-shrink: 0; display: flex; align-items: center; gap: 10px; justify-content: flex-end;
+  padding: 14px 24px; border-top: 1px solid var(--border-light); background: #fff;
+}
+
+/* ---- Toggles ------------------------------------------------------------- */
+.ops-toggle { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+.ops-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.ops-toggle .ops-track {
+  width: 40px; height: 22px; border-radius: 999px; background: #D5DAE2; position: relative;
+  flex-shrink: 0; transition: background .15s;
+}
+.ops-toggle .ops-track::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+  border-radius: 999px; background: #fff; box-shadow: 0 1px 2px rgba(16,24,40,0.20); transition: transform .15s;
+}
+.ops-toggle input:checked + .ops-track { background: var(--primary); }
+.ops-toggle input:checked + .ops-track::after { transform: translateX(18px); }
+.ops-toggle input:focus-visible + .ops-track { outline: 3px solid var(--primary-ring); }
+.ops-toggle .ops-toggle-label { font-size: 15px; font-weight: 500; color: var(--text-primary); }
+
+/* ---- Step / status timelines -------------------------------------------- */
+.ops-timeline { display: flex; flex-direction: column; }
+.ops-step { display: flex; gap: 12px; position: relative; padding-bottom: 18px; }
+.ops-step:last-child { padding-bottom: 0; }
+.ops-step::before {
+  content: ''; position: absolute; left: 11px; top: 26px; bottom: 0; width: 2px; background: var(--border-light);
+}
+.ops-step:last-child::before { display: none; }
+.ops-step.done::before { background: var(--ok-fg); opacity: .35; }
+.ops-step-icon {
+  width: 24px; height: 24px; flex-shrink: 0; border-radius: 999px; display: flex;
+  align-items: center; justify-content: center; background: #fff; z-index: 1;
+}
+.ops-step-icon svg { width: 20px; height: 20px; }
+.ops-step.done .ops-step-icon { color: var(--ok-fg); }
+.ops-step.failed .ops-step-icon { color: var(--danger-fg); }
+.ops-step.pending .ops-step-icon { color: var(--text-faint); }
+.ops-step-label { font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.ops-step-status { font-size: 13px; margin-top: 2px; }
+.ops-step.done .ops-step-status { color: var(--ok-fg); }
+.ops-step.failed .ops-step-status { color: var(--danger-fg); }
+.ops-step.pending .ops-step-status { color: var(--text-muted); }
+
+/* ---- Note / callout boxes ------------------------------------------------ */
+.portal-ops .callout, .ops-scope .callout {
+  background: var(--bg-subtle); border: 1px solid var(--border-light); border-radius: 8px;
+  padding: 14px; font-size: 14px; color: var(--text-secondary); gap: 10px;
+}
+.portal-ops .callout.info, .ops-scope .callout.info { background: var(--info-bg); border-color: var(--info-bg); color: var(--info-fg); }
+.portal-ops .callout.warn, .ops-scope .callout.warn { background: var(--warn-bg); border-color: var(--warn-bg); color: var(--warn-fg); }
+.portal-ops .callout.danger, .ops-scope .callout.danger { background: var(--danger-bg); border-color: var(--danger-bg); color: var(--danger-fg); }
+
+/* ---- Standard page header (Part 3.1) ------------------------------------- */
+.portal-ops .page-head { margin-bottom: 24px; align-items: flex-start; }
+
+/* ---- Empty / loading / error states (Part 3.4) --------------------------- */
+.portal-ops .empty-state, .portal-ops .error-state { padding: 44px 24px; text-align: center; }
+.portal-ops .empty-state .es-icon, .portal-ops .error-state .es-icon { color: var(--text-faint); }
+.portal-ops .empty-state .es-icon svg, .portal-ops .error-state .es-icon svg { width: 40px; height: 40px; }
+.portal-ops .empty-state h3, .portal-ops .error-state h3 { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+.portal-ops .empty-state p, .portal-ops .error-state p { font-size: 14px; color: var(--text-secondary); }
+.portal-ops .skel-row { background: var(--bg-subtle); border-radius: 8px; }
+
+/* =============================================================================
+   2.5 RESPONSIVENESS — re-verified after the redesign
+   ============================================================================= */
+/* Below 1280 the nav panel is icons-only whether or not it was collapsed. */
+@media (max-width: 1279px) {
+  .app.portal-ops { grid-template-columns: var(--rail-w) var(--opsnav-w-collapsed) 1fr; }
+  .app.portal-ops .nav-label, .app.portal-ops .nav-chevron { display: none; }
+  .app.portal-ops .nav-children { display: none; }
+  .app.portal-ops .nav-context { justify-content: center; padding: 16px 8px 12px; }
+  .app.portal-ops .nav-context-btn, .app.portal-ops .nav-context-menu { display: none; }
+  .app.portal-ops .nav-item { justify-content: center; margin: 0 8px 2px; padding: 10px 0; }
+  .app.portal-ops .nav-item .nav-icon { display: none; }
+  .app.portal-ops .nav-item .nav-icon-solo {
+    display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--text-muted);
+  }
+  .app.portal-ops .nav-item.active .nav-icon-solo { color: var(--text-strong); }
+  .app.portal-ops .nav-user-mail, .app.portal-ops .nav-user-row svg { display: none; }
+  .app.portal-ops .nav-user-row { justify-content: center; }
+}
+@media (min-width: 1920px) {
+  .portal-ops .content { padding: 32px 48px 48px; }
+  .app.portal-ops .ops-searchrow { padding: 0 48px; }
+}
+
+/* =============================================================================
+   REJECTS — overhaul Part 4. Presentation only: every capability the previous
+   build had is still here, expressed with less prose and fewer surfaces.
+   ============================================================================= */
+
+/* A fifth accent tile pair, for the Staging KPI card (Part 4.2). */
+.portal-ops, .ops-scope { --tile-red-bg: #FDECEC; --tile-red-fg: #B42318; }
+.kpi-tile.red { background: var(--tile-red-bg); color: var(--tile-red-fg); }
+
+/* ---- 4.1 One status line, not a banner ---------------------------------- */
+.rej-statusline {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 8px;
+  font-size: 15px; font-weight: 500; margin-bottom: 16px;
+}
+.rej-statusline svg { flex-shrink: 0; }
+.rej-statusline.danger { background: var(--danger-bg); color: var(--danger-fg); }
+.rej-statusline.info { background: var(--info-bg); color: var(--info-fg); }
+.rej-statusline.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.rej-statusline-link {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap;
+}
+.rej-statusline-link:hover { text-decoration: underline; }
+
+/* ---- 4.3 Compact stat row (secondary information, not KPI cards) -------- */
+.rej-statrow {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0;
+  border: 1px solid var(--border-light); border-radius: 12px; padding: 4px 0; background: #fff;
+}
+.rej-stat {
+  display: flex; flex-direction: column; gap: 3px; padding: 12px 22px; min-width: 0;
+  border-right: 1px solid var(--border-light);
+}
+.rej-stat:last-child { border-right: none; }
+.rej-stat-label { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.rej-stat-value { font-size: 22px; font-weight: 700; color: var(--text-strong); line-height: 1.2; }
+.portal-ops .rej-title-sep { color: var(--text-faint); font-weight: 400; }
+.portal-ops .rej-head-id { font-size: 14px; color: var(--text-muted); margin: 0 8px; }
+.portal-ops .page-head .subtitle .rej-back {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer; margin-right: 10px;
+  color: var(--text-secondary);
+}
+.portal-ops .page-head .subtitle .rej-back:hover { color: var(--primary); }
+
+.rej-details { margin-top: 16px; }
+.rej-details-head {
+  display: flex; align-items: center; gap: 7px; background: transparent; border: none;
+  padding: 8px 0; font-size: 14px; font-weight: 500; color: var(--text-secondary);
+}
+.rej-details-head:hover { color: var(--text-strong); }
+.rej-details-body {
+  border: 1px solid var(--border-light); border-radius: 12px; padding: 18px 22px; background: #fff;
+}
+
+/* ---- 4.3 Reason column: plain language leads, code beneath -------------- */
+.portal-ops .reason-cell { display: flex; flex-direction: column; gap: 2px; max-width: 300px; }
+.portal-ops .reason-cell .reason-text {
+  font-size: 15px; color: var(--text-primary); line-height: 1.35;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.portal-ops .reason-cell .reason-code {
+  font-size: 13px; color: var(--text-muted); background: none; padding: 0; border: none;
+}
+.rej-row-actions { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.rej-fix-link {
+  display: inline-flex; align-items: center; gap: 4px; background: transparent; border: none;
+  font-size: 15px; font-weight: 500; color: var(--primary); padding: 6px 4px;
+}
+.rej-fix-link:hover { color: var(--primary-hover); text-decoration: underline; }
+.rej-fix-link svg { width: 15px; height: 15px; }
+
+/* ---- 4.4 Fix panel: two path cards, two lines each ---------------------- */
+.rej-path-cards { display: flex; flex-direction: column; gap: 10px; }
+.rej-path-card {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left;
+  background: #fff; border: 1px solid var(--border-default); border-radius: 10px; padding: 14px 16px;
+}
+.rej-path-card:hover { border-color: var(--border-strong); background: var(--bg-subtle); }
+.rej-path-card.on { border-color: var(--primary); background: var(--info-bg); }
+.rej-path-radio { display: flex; color: var(--text-muted); flex-shrink: 0; margin-top: 1px; }
+.rej-path-card.on .rej-path-radio { color: var(--primary); }
+.rej-path-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rej-path-title { font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.rej-path-blurb { font-size: 14px; color: var(--text-secondary); }
+
+.rej-fgroup { border: 1px solid var(--border-light); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+.rej-fgroup .rej-fgroup-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: var(--bg-subtle); border: none; padding: 11px 14px;
+  font-size: 14px; color: var(--text-secondary);
+}
+.rej-fgroup .rej-fgroup-name { font-weight: 600; color: var(--text-strong); }
+.rej-fgroup.flagged { border-color: var(--primary); }
+.rej-fgroup.flagged .rej-fgroup-head { background: var(--info-bg); }
+.rej-flag-dot {
+  width: 8px; height: 8px; border-radius: 999px; background: var(--primary);
+  display: inline-block; margin-right: 7px; flex-shrink: 0;
+}
+.rej-flag-suffix { font-size: 13px; font-weight: 400; color: var(--text-muted); margin-left: 7px; }
+
+.sp-name-meta { font-size: 14px; font-weight: 400; color: var(--text-muted); margin-left: 10px; }
+.rej-panel-nav { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* =============================================================================
+   4.5 IRD RESOLUTION — four strategies, four cards, one list.
+   The ladder position indicator, the separate fee comparison table and the
+   transaction-attributes card are gone; these cards carry all three inline.
+   ============================================================================= */
+.ird-head { margin-bottom: 14px; }
+.ird-cards { display: flex; flex-direction: column; gap: 10px; }
+.ird-card {
+  border: 1px solid var(--border-default); border-radius: 10px; padding: 14px 16px;
+  background: #fff; cursor: pointer;
+}
+.ird-card:hover { border-color: var(--border-strong); }
+.ird-card.selected { border-color: var(--primary); background: var(--info-bg); box-shadow: 0 0 0 3px var(--primary-ring); }
+.ird-card.disabled { background: var(--bg-subtle); cursor: default; opacity: .72; }
+.ird-card.disabled:hover { border-color: var(--border-default); }
+/* Strategy 4 costs money every time it is used — the border says so before a
+   word is read. */
+.ird-card.fallback { border-left: 3px solid var(--warn-fg); }
+
+.ird-card-head { display: flex; align-items: center; gap: 12px; }
+.ird-radio { display: flex; color: var(--text-muted); flex-shrink: 0; }
+.ird-card.selected .ird-radio { color: var(--primary); }
+.ird-card.disabled .ird-radio { color: var(--text-faint); }
+/* The IRD value is the largest element on the card. */
+.ird-value {
+  font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--text-strong);
+  letter-spacing: .5px;
+}
+.ird-card.disabled .ird-value { color: var(--text-muted); text-decoration: line-through; }
+.ird-nums { margin-left: auto; display: flex; align-items: baseline; gap: 16px; white-space: nowrap; }
+.ird-rate, .ird-fee { font-size: 15px; font-variant-numeric: tabular-nums; }
+.ird-rate { color: var(--text-secondary); }
+.ird-fee { color: var(--text-strong); font-weight: 600; }
+
+.ird-why { font-size: 14px; color: var(--text-secondary); margin-top: 8px; padding-left: 32px; }
+.ird-why.muted { color: var(--text-muted); }
+.ird-matches { font-size: 13px; color: var(--text-muted); margin-top: 4px; padding-left: 32px; }
+.ird-rec {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; margin-left: 32px;
+  background: var(--ok-bg); color: var(--ok-fg); border-radius: 8px; padding: 4px 10px;
+  font-size: 13px; font-weight: 500;
+}
+.ird-delta { font-size: 13px; color: var(--text-muted); margin-top: 6px; padding-left: 32px; font-variant-numeric: tabular-nums; }
+.ird-delta.warn {
+  display: flex; align-items: center; gap: 6px; color: var(--warn-fg); font-weight: 500; font-size: 14px;
+}
+.ird-delta.warn svg { flex-shrink: 0; }
+
+@media (max-width: 1439px) {
+  .ird-card-head { flex-wrap: wrap; }
+  .ird-nums { margin-left: auto; }
+}
+
+/* =============================================================================
+   PLATFORM CONFIGS — overhaul Part 5. Presentation only. Every field, action
+   and validation the previous build had is still reachable: through Simple,
+   through Advanced, or through Browse all configurations.
+   ============================================================================= */
+
+/* ---- 5.1 Task-based entry points ---------------------------------------- */
+.task-groups { display: flex; flex-direction: column; gap: 28px; margin-bottom: 28px; }
+.task-group-head { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
+.task-group-head svg { color: var(--text-muted); }
+.task-group-title { font-size: 20px; font-weight: 600; color: var(--text-strong); }
+.task-group-head .meta { margin-left: 4px; }
+.task-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.task-card {
+  display: flex; align-items: center; gap: 12px; text-align: left; width: 100%;
+  background: #fff; border: 1px solid var(--border-light); border-radius: 12px; padding: 18px 20px;
+}
+.task-card:hover { box-shadow: 0 1px 3px rgba(16,24,40,0.06); border-color: var(--border-default); }
+.task-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.task-card-title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+.task-card-desc { font-size: 14px; color: var(--text-secondary); }
+.task-card > svg { color: var(--text-muted); flex-shrink: 0; }
+
+.cfg-browse { border-top: 1px solid var(--border-light); padding-top: 8px; }
+.cfg-browse-head {
+  display: flex; align-items: center; gap: 9px; width: 100%; background: transparent; border: none;
+  padding: 14px 0; font-size: 16px; font-weight: 600; color: var(--text-strong); text-align: left;
+}
+.cfg-browse-head .meta { margin-left: auto; font-weight: 400; }
+.cfg-browse-head:hover { color: var(--primary); }
+.cfg-browse-body .cfg-list { width: 100%; max-width: none; }
+.cfg-browse-body { padding-bottom: 20px; }
+
+.cfg-task-hint {
+  display: flex; align-items: center; gap: 10px; background: var(--info-bg); color: var(--info-fg);
+  border-radius: 8px; padding: 11px 14px; font-size: 14px; margin-bottom: 18px;
+}
+.cfg-task-hint svg { flex-shrink: 0; }
+.cfg-task-hint > span { flex: 1; }
+.cfg-task-hint .icon-btn { border: none; background: transparent; color: inherit; }
+.portal-ops .cfg-mode-note { margin-top: 8px; }
+
+/* ---- 5.3 The layout ruler as the primary interface ---------------------- */
+.byte-map.live { margin: 0 0 20px; padding: 18px 0 4px; }
+.byte-map.live .bm-track { height: 46px; }
+.byte-map.live .bm-seg { font-size: 12px; }
+.byte-map.live .bm-gap.clickable { cursor: pointer; }
+/* An unexplained gap is hatched and carries a + affordance. Clicking it opens
+   the add-field form pre-filled with that gap's position and length. */
+.byte-map .bm-gap {
+  background-image: repeating-linear-gradient(45deg, #F1F3F7 0 6px, #FFFFFF 6px 12px);
+  border: 1px dashed var(--border-strong);
+}
+.byte-map .bm-gap.clickable:hover {
+  background-image: repeating-linear-gradient(45deg, #E4EBFA 0 6px, #F5F8FF 6px 12px);
+  border-color: var(--primary);
+}
+.byte-map .bm-gap.clickable .bm-label { color: var(--primary); font-weight: 700; font-size: 15px; }
+/* A name too long for its segment is truncated with an ellipsis, never clipped
+   mid-character — the full name is in the tooltip and in the table row. */
+.byte-map.live .bm-label { text-overflow: ellipsis; }
+.byte-map .bm-overlap {
+  background: var(--danger-bg); border: 1px solid var(--danger-fg); color: var(--danger-fg);
+}
+.byte-map .bm-warn { position: absolute; top: 2px; right: 3px; color: var(--danger-fg); }
+.byte-map .bm-seg.fk-lit { outline: 2px solid var(--primary); outline-offset: -2px; z-index: 3; }
+.portal-ops tr.fk-lit > td { background: var(--info-bg) !important; }
+
+/* A single live status line beneath the ruler. */
+.bm-status {
+  display: flex; align-items: center; gap: 8px; margin-top: 12px;
+  font-size: 14px; font-weight: 500; padding: 8px 12px; border-radius: 8px;
+}
+.bm-status svg { flex-shrink: 0; }
+.bm-status.ok { background: var(--ok-bg); color: var(--ok-fg); }
+.bm-status.warn { background: var(--warn-bg); color: var(--warn-fg); }
+.bm-status.bad { background: var(--danger-bg); color: var(--danger-fg); }
+
+.gap-form {
+  border: 1px solid var(--primary); border-radius: 12px; padding: 18px 20px;
+  background: var(--info-bg); margin-bottom: 18px;
+}
+.gap-form-head { display: flex; align-items: center; gap: 9px; margin-bottom: 16px; color: var(--text-strong); }
+.gap-form-head .meta { margin-left: 4px; }
+.gap-form-head .icon-btn { margin-left: auto; }
+.gap-form .input { background: #fff; }
+.cfg-hidden-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+/* ---- 5.3 / 5.5 Two-column mappings -------------------------------------- */
+.map-grid { border: 1px solid var(--border-light); border-radius: 12px; overflow: hidden; background: #fff; }
+.map-head {
+  display: grid; grid-template-columns: 1fr 40px 1fr; gap: 14px; align-items: center;
+  padding: 11px 18px; background: var(--bg-subtle); border-bottom: 1px solid var(--border-light);
+  font-size: 13px; font-weight: 500; color: var(--text-muted);
+}
+.map-grid[data-dnd-table] .map-head { grid-template-columns: 24px 1fr 40px 1fr; }
+.map-row {
+  display: grid; grid-template-columns: 1fr 40px 1fr; gap: 14px; align-items: center;
+  padding: 12px 18px; border-bottom: 1px solid var(--border-light);
+}
+.map-row.report { grid-template-columns: 24px 1fr 40px 1fr auto; }
+.map-row:last-child { border-bottom: none; }
+.map-row:hover { background: var(--bg-subtle); }
+.map-row.child { padding-left: 40px; }
+.map-row.unmapped { background: var(--warn-bg); }
+.map-grip { color: var(--text-faint); cursor: grab; display: flex; }
+.map-arrow { display: flex; justify-content: center; color: var(--text-faint); }
+.map-right { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.map-field { font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.map-detail { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-left: 0; }
+.map-row.report .map-detail { grid-column: auto; padding-left: 0; }
+.map-warn, .map-ok, .parse-ok {
+  display: flex; align-items: center; gap: 10px; border-radius: 8px; padding: 12px 14px;
+  font-size: 14px; margin-bottom: 14px;
+}
+.map-warn { background: var(--warn-bg); color: var(--warn-fg); }
+.map-ok, .parse-ok { background: var(--ok-bg); color: var(--ok-fg); }
+.map-warn svg, .map-ok svg, .parse-ok svg { flex-shrink: 0; }
+.map-unmapped { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.map-unmapped-chip {
+  display: inline-flex; align-items: center; gap: 6px; background: #fff;
+  border: 1px solid var(--warn-fg); color: var(--warn-fg); border-radius: 8px; padding: 6px 11px;
+  font-size: 13px; font-weight: 500;
+}
+.map-unmapped-chip:hover { background: var(--warn-bg); }
+.map-unused { margin-top: 20px; }
+.map-unused-head {
+  display: flex; align-items: center; gap: 8px; background: transparent; border: none;
+  padding: 8px 0; font-size: 14px; font-weight: 500; color: var(--text-secondary);
+}
+.map-unused-head .meta { margin-left: 6px; }
+.map-unused-body { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 0; }
+.map-chip {
+  background: var(--bg-subtle); border: 1px solid var(--border-light); border-radius: 6px;
+  padding: 4px 9px; font-size: 13px; color: var(--text-secondary);
+}
+
+/* ---- Plain if/then rows (sectioning, eligibility, exceptions) ----------- */
+.ifthen-list { border: 1px solid var(--border-light); border-radius: 12px; overflow: hidden; background: #fff; }
+.ifthen-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-light); font-size: 15px;
+}
+.ifthen-list .ifthen-row:last-child { border-bottom: none; }
+.ifthen-kw { color: var(--text-secondary); }
+.ifthen-field { font-weight: 600; color: var(--text-strong); }
+.ifthen-arrow { display: flex; color: var(--text-faint); }
+.ifthen-row .input { width: auto; }
+
+/* ---- 5.4 Parsing issues ------------------------------------------------- */
+.parse-panel {
+  border: 1px solid var(--warn-fg); border-radius: 12px; overflow: hidden;
+  background: #fff; margin-bottom: 20px;
+}
+.parse-head {
+  display: flex; align-items: center; gap: 10px; padding: 14px 18px;
+  background: var(--warn-bg); color: var(--warn-fg); font-size: 16px;
+}
+.parse-head .meta { margin-left: auto; color: inherit; }
+.parse-row {
+  display: flex; align-items: center; gap: 12px; padding: 13px 18px;
+  border-bottom: 1px solid var(--border-light);
+}
+.parse-row:last-child { border-bottom: none; }
+.parse-row > svg { color: var(--warn-fg); flex-shrink: 0; }
+.parse-field { font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.parse-seen { flex: 1; }
+.sample-out, .sample-result { border: 1px solid var(--border-light); border-radius: 12px; padding: 18px; background: #fff; }
+.sample-out-table th { white-space: nowrap; }
+.portal-ops tr.sample-empty td { background: var(--warn-bg); }
+
+/* ---- 5.5 Schedule, plain controls --------------------------------------- */
+.sched-plain { display: flex; flex-direction: column; gap: 10px; }
+.sched-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sched-line.indent { padding-left: 22px; }
+.sched-lead { font-size: 15px; color: var(--text-primary); }
+.sched-kw { font-size: 15px; color: var(--text-secondary); }
+.sched-line .input { width: auto; }
+.sched-toggles { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-light); }
+.sched-preview { border: 1px solid var(--border-light); border-radius: 12px; padding: 18px; background: #fff; }
+.sched-preview .sp-head { display: flex; align-items: center; gap: 10px; padding: 0 0 14px; border: none; flex-wrap: wrap; }
+.portal-ops tr.skipped td { color: var(--text-muted); background: var(--bg-subtle); }
+
+/* ---- 5.5 Fee rule cards + calculator ------------------------------------ */
+.fee-cards { display: flex; flex-direction: column; gap: 14px; }
+.fee-card { border: 1px solid var(--border-light); border-radius: 12px; background: #fff; overflow: hidden; }
+.fee-card.open { border-color: var(--primary); }
+.fee-card-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 16px 20px; border-bottom: 1px solid var(--border-light);
+}
+.fee-card-title { font-size: 16px; font-weight: 600; color: var(--text-strong); }
+.fee-card-spacer { flex: 1; }
+.fee-card-body { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; padding: 18px 20px; }
+.fee-block { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.fee-block-label { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+.fee-conds { display: flex; flex-direction: column; gap: 6px; }
+.fee-cond {
+  display: inline-flex; align-self: flex-start; background: var(--bg-subtle);
+  border: 1px solid var(--border-light); border-radius: 8px; padding: 5px 11px;
+  font-size: 14px; color: var(--text-primary);
+}
+.fee-cond.all { color: var(--text-muted); }
+.fee-charge { font-size: 17px; font-weight: 600; color: var(--text-strong); }
+.fee-editor { padding: 0 20px 20px; border-top: 1px solid var(--border-light); padding-top: 18px; }
+.portal-ops tr.bad-row td { background: var(--danger-bg); }
+
+.fee-calc { border: 1px solid var(--border-light); border-radius: 12px; padding: 18px 20px; background: var(--bg-subtle); }
+.fee-calc-head { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; color: var(--text-strong); font-size: 16px; }
+.fee-calc-head .meta { margin-left: 4px; font-weight: 400; }
+.fee-calc-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+.calc-result {
+  display: flex; align-items: flex-start; gap: 12px; background: #fff;
+  border: 1px solid var(--border-light); border-radius: 10px; padding: 16px 18px;
+}
+.calc-result > svg { color: var(--ok-fg); flex-shrink: 0; margin-top: 2px; }
+.calc-result.none > svg { color: var(--text-muted); }
+.calc-rule { font-size: 15px; color: var(--text-primary); }
+.calc-fee { font-size: 28px; font-weight: 700; color: var(--text-strong); line-height: 1.2; margin: 4px 0 2px; }
+
+/* ---- 5.4 Expected file names -------------------------------------------- */
+.fname-examples { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.fname-row { display: flex; align-items: center; gap: 10px; font-size: 14px; flex-wrap: wrap; }
+.fname-row > svg { color: var(--text-faint); }
+
+/* ---- 5.6 Approval diff --------------------------------------------------- */
+.dv-summary {
+  display: flex; align-items: center; gap: 10px; padding: 13px 16px;
+  background: var(--info-bg); color: var(--info-fg); border-radius: 8px; margin-bottom: 16px; font-size: 15px;
+}
+.dv-summary svg { flex-shrink: 0; }
+.dv-path .dv-plain { display: block; font-size: 14px; color: var(--text-primary); }
+.dv-path .dv-raw { display: block; font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+
+@media (max-width: 1439px) {
+  .fee-card-body { grid-template-columns: 1fr; gap: 16px; }
+  .map-row, .map-head { grid-template-columns: 1fr 32px 1fr; gap: 10px; }
+  .map-row.report, .map-grid[data-dnd-table] .map-head { grid-template-columns: 24px 1fr 32px 1fr; }
+  .map-row.report .map-detail { grid-column: 1 / -1; }
+}
+
+/* =============================================================================
+   RESPONSIVE FIXES FOUND BY RE-VERIFICATION AFTER THE REDESIGN
+   The shell is 82px wider than the old one (72px rail + 230px nav vs a single
+   220px sidebar), so two surfaces that used to just fit at 1440px no longer do.
+   ============================================================================= */
+
+/* The Cross-Tenant Cycle Status grid carries a 1160px min-width. Its wrapper
+   already declares overflow-x:auto, but without max-width it was widened by its
+   parent instead of scrolling — which pushed the whole page sideways at 1440. */
+/* `position: relative` matters as much as the overflow: without it the wrapper
+   is not a containing block, so absolutely positioned descendants (the cell
+   tooltips) escape the clip and widen the document itself. */
+.portal-ops .cyc-grid-wrap { max-width: 100%; min-width: 0; position: relative; }
+
+/* A page header whose actions cannot fit on the title line wraps rather than
+   overflowing its own box. */
+.portal-ops .page-head { flex-wrap: wrap; }
+.portal-ops .page-head > div:first-child { min-width: 0; flex: 1 1 320px; }
+.portal-ops .head-actions { flex-wrap: wrap; justify-content: flex-end; }
+
+/* The network's literal reject message is a transcript, so it keeps a dark
+   surface. It used to read `var(--bg-nav)` — which the Ops token fork
+   redefines to white, leaving white text on white. It gets its own colour. */
+.portal-ops .rej-raw code, .ops-scope .rej-raw code {
+  background: #1C1C22; color: rgba(255, 255, 255, 0.88);
+}
+.ird-delta.cheaper { color: var(--ok-fg); }
+
+/* Filler segments are recessive, but the ruler is the primary interface now —
+   the label still has to be readable against the filler fill (was 2.09:1). */
+.portal-ops .bm-seg.bm-filler .bm-label { color: var(--neutral-fg); }

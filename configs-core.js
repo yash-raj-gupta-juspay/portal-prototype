@@ -233,37 +233,74 @@ window.CFGCORE = (function () {
   }
 
   function tickStep(span) {
-    var cand = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
-    for (var i = 0; i < cand.length; i++) if (span / cand[i] <= 12) return cand[i];
+    // Part 5.3 asks for a mark every 10th position. Long records would then
+    // carry a hundred ticks, so the step grows in multiples of 10 past 250.
+    if (span <= 250) return 10;
+    var cand = [20, 25, 50, 100, 200, 250, 500, 1000];
+    for (var i = 0; i < cand.length; i++) if (span / cand[i] <= 25) return cand[i];
     return 1000;
   }
   var SEG_COLORS = 6;
 
-  // opts: { id, compact, title }
+  /* =========================================================================
+     The layout ruler (overhaul Part 5.3)
+     The ruler is the primary interface for a fixed-width layout, not a
+     secondary check on the table. Fields are labelled spans; gaps are hatched
+     and clickable — clicking one opens the add-field form pre-filled with that
+     gap's start position and length, which is the single biggest usability win
+     available here. Someone reading a Visa spec sees the gap, clicks it, and
+     types in what the spec says belongs there.
+
+     opts: { id, compact, title, interactive, rt }
+     ========================================================================= */
   function byteMapHtml(recordLength, fields, opts) {
     opts = opts || {};
     var m = byteSegments(recordLength, fields);
     var scale = m.scale, st = m.stats;
+    var live = !!opts.interactive;
+    var rt = opts.rt == null ? 0 : opts.rt;
     var fi = 0, bars = '';
+
+    // Field index within the record type, so the ruler and the table can
+    // highlight each other (two-way hover linking, Part 5.3).
+    function indexOf(f) {
+      for (var i = 0; i < (fields || []).length; i++) if (fields[i] === f) return i;
+      return -1;
+    }
+
     m.segs.forEach(function (s) {
       var left = ((s.start - 1) / scale) * 100, w = (s.len / scale) * 100;
       var cls = 'bm-seg bm-' + s.kind;
       if (s.kind === 'field') { cls += ' bm-c' + (fi % SEG_COLORS); fi++; }
-      var label = s.kind === 'gap' ? 'gap' : (s.kind === 'overlap' ? 'overlap' : s.fields[0].name);
-      var tip;
+      var label = s.kind === 'gap' ? (live ? '+' : 'gap') : (s.kind === 'overlap' ? 'overlap' : s.fields[0].name);
+      var tip, attrs = '';
       if (s.kind === 'overlap') {
-        tip = '<strong>Overlap — ' + s.len + ' byte' + (s.len === 1 ? '' : 's') + '</strong>' +
+        tip = '<strong>Fields overlap here — ' + s.len + ' character' + (s.len === 1 ? '' : 's') + '</strong>' +
           s.fields.map(function (f) { return '<span class="bt-row">' + esc(f.name) + ' · ' + f.start + '–' + (f.start + f.length - 1) + '</span>'; }).join('');
       } else if (s.kind === 'gap') {
-        tip = '<strong>Unmapped gap</strong><span class="bt-row">bytes ' + s.start + '–' + s.end + ' · ' + s.len + ' byte' + (s.len === 1 ? '' : 's') + '</span><span class="bt-row">Declare a filler field to close it.</span>';
+        tip = '<strong>Nothing declared here</strong><span class="bt-row">characters ' + s.start + '–' + s.end +
+          ' · ' + s.len + ' long</span>' +
+          (live ? '<span class="bt-row">Click to add a field here.</span>' : '<span class="bt-row">Declare a filler field to close it.</span>');
+        if (live) {
+          attrs = ' data-action="cfg-gap" data-rt="' + rt + '" data-start="' + s.start + '" data-len="' + s.len + '"' +
+            ' role="button" tabindex="0" aria-label="Add a field at characters ' + s.start + ' to ' + s.end + '"';
+          cls += ' clickable';
+        }
       } else if (s.kind === 'overflow') {
-        tip = '<strong>Past record length</strong><span class="bt-row">' + esc(s.fields[0].name) + ' · bytes ' + s.start + '–' + s.end + '</span>';
+        tip = '<strong>Past the record length</strong><span class="bt-row">' + esc(s.fields[0].name) + ' · characters ' + s.start + '–' + s.end + '</span>';
       } else {
         var f = s.fields[0];
-        tip = '<strong>' + esc(f.name) + '</strong><span class="bt-row">bytes ' + f.start + '–' + (f.start + f.length - 1) + ' · length ' + f.length + ' · type ' + esc(f.type || '—') + '</span>' + (f.note ? '<span class="bt-row">' + esc(f.note) + '</span>' : '');
+        tip = '<strong>' + esc(f.name) + '</strong><span class="bt-row">characters ' + f.start + '–' + (f.start + f.length - 1) +
+          ' · ' + f.length + ' long · ' + (f.type === 'N' ? 'numbers only' : (f.type === 'AN' ? 'letters and numbers' : esc(f.type || '—'))) + '</span>' +
+          (f.note ? '<span class="bt-row">' + esc(f.note) + '</span>' : '');
+        if (live) {
+          var idx = indexOf(f);
+          if (idx >= 0) attrs = ' data-fieldkey="' + rt + '-' + idx + '"';
+        }
       }
-      bars += '<div class="' + cls + '" style="left:' + left.toFixed(4) + '%;width:' + w.toFixed(4) + '%">' +
+      bars += '<div class="' + cls + '"' + attrs + ' style="left:' + left.toFixed(4) + '%;width:' + w.toFixed(4) + '%">' +
         '<span class="bm-label">' + esc(label) + '</span>' +
+        (s.kind === 'overlap' ? '<span class="bm-warn">' + iconTag('alert-triangle', 12) + '</span>' : '') +
         '<span class="bm-tip">' + tip + '</span></div>';
     });
 
@@ -273,20 +310,42 @@ window.CFGCORE = (function () {
     }
     ticks += '<span class="bm-tick bm-tick-end" style="left:100%"><i></i><b>' + scale + '</b></span>';
 
-    var legend =
-      '<span class="bm-stat"><span class="bm-sw bm-c0"></span>' + st.fields + ' field' + (st.fields === 1 ? '' : 's') + '</span>' +
-      '<span class="bm-stat"><span class="bm-sw bm-filler"></span>declared filler</span>' +
-      '<span class="bm-stat' + (st.gap ? ' bad' : '') + '"><span class="bm-sw bm-gap"></span>' + st.gap + ' byte' + (st.gap === 1 ? '' : 's') + ' gap</span>' +
-      '<span class="bm-stat' + (st.overlap ? ' bad' : '') + '"><span class="bm-sw bm-overlap"></span>' + st.overlap + ' byte' + (st.overlap === 1 ? '' : 's') + ' overlapping</span>' +
-      '<span class="bm-stat">Σ lengths <b class="num">' + st.sumLengths + '</b> / record_length <b class="num">' + st.recordLength + '</b></span>';
-
-    return '<div class="byte-map' + (opts.compact ? ' compact' : '') + '"' + (opts.id ? ' id="' + opts.id + '"' : '') + '>' +
+    return '<div class="byte-map' + (opts.compact ? ' compact' : '') + (live ? ' live' : '') + '"' +
+      (opts.id ? ' id="' + opts.id + '"' : '') + '>' +
       (opts.title ? '<div class="bm-title">' + opts.title + '</div>' : '') +
       '<div class="bm-track">' + bars + '</div>' +
       '<div class="bm-axis">' + ticks + '</div>' +
-      '<div class="bm-legend">' + legend + '</div>' +
+      layoutStatusLine(m) +
       '</div>';
   }
+
+  // A single live status line beneath the ruler (Part 5.3) — accounted
+  // characters, gaps, or overlaps, in that order of severity.
+  function layoutStatusLine(m) {
+    var st = m.stats;
+    var overlaps = m.segs.filter(function (s) { return s.kind === 'overlap'; });
+    if (overlaps.length) {
+      var o = overlaps[0];
+      return '<div class="bm-status bad">' + iconTag('alert-triangle', 15) +
+        'Fields overlap at positions ' + o.start + '–' + o.end +
+        (overlaps.length > 1 ? ' (and ' + (overlaps.length - 1) + ' more)' : '') + '</div>';
+    }
+    var over = m.segs.filter(function (s) { return s.kind === 'overflow'; });
+    if (over.length) {
+      return '<div class="bm-status bad">' + iconTag('alert-triangle', 15) +
+        'Fields run past the record length at positions ' + over[0].start + '–' + over[over.length - 1].end + '</div>';
+    }
+    var gaps = m.segs.filter(function (s) { return s.kind === 'gap'; });
+    if (gaps.length) {
+      var where = gaps.map(function (g) { return g.start + '–' + g.end; }).join(', ');
+      return '<div class="bm-status warn">' + iconTag('alert-triangle', 15) +
+        st.gap + ' character' + (st.gap === 1 ? '' : 's') + ' unaccounted for at position' +
+        (gaps.length > 1 || gaps[0].len > 1 ? 's ' : ' ') + where + '</div>';
+    }
+    return '<div class="bm-status ok">' + iconTag('check-circle', 15) +
+      st.mapped + ' of ' + (st.recordLength || st.span) + ' characters accounted for</div>';
+  }
+  function iconTag(name, size) { return '<i data-lucide="' + name + '" style="width:' + size + 'px;height:' + size + 'px"></i>'; }
 
   // Recalculate start positions so fields are contiguous from byte 1.
   function autoPack(fields) {

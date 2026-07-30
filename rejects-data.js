@@ -72,16 +72,19 @@ window.REJDATA = (function () {
   /* Round 3 §C.6 — the two correction paths. The choice is declared before any
      field is touched and is recorded on every correction; it is what decides
      whether the fix is committed here or handed to Platform Configs. */
+  /* Two lines each, no more (overhaul Part 4.4). The long-form explanations are
+     gone: the choice is between fixing a value and fixing the rule that
+     produced it, and two lines say that. */
   var PATHS = {
     data: {
-      key: 'data', label: 'Update transaction data', icon: 'pencil',
-      blurb: 'A field on this specific transaction is incorrect. Edit it here.',
-      long: 'The entity transaction record carries a wrong value for this one transaction. Correcting it here is the whole fix.'
+      key: 'data', label: "This transaction's data is wrong", icon: 'pencil',
+      blurb: 'Fix the values here.',
+      long: ''
     },
     config: {
-      key: 'config', label: 'Update config or code', icon: 'settings',
-      blurb: 'The logic or mapping that produced this value is wrong. Fix at source.',
-      long: 'The derivation, mapping or configuration behind the value is wrong, so it affects more than this transaction. The fix belongs in Platform Configs or in a code change — it cannot be completed here.'
+      key: 'config', label: 'The rule that produced it is wrong', icon: 'settings',
+      blurb: 'Fix it in Platform Configs.',
+      long: ''
     }
   };
   function pathLabel(k) { return (PATHS[k] || {}).label || null; }

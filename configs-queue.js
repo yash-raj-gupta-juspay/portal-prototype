@@ -54,6 +54,66 @@ window.ConfigsQueue = function (ui) {
       return X.byteMapHtml(body.record_length, rt.fields, { compact: true, title: label + ' · record type ' + esc(rt.record_type || '?') });
     }).join('');
   }
+  /* Part 5.6 — a config path reads as the label the editor uses, never as a raw
+     key. The path is kept beside it in muted mono, because a checker sometimes
+     does need to know exactly which key moved. */
+  var PATH_LABEL = {
+    record_length: 'Record length (characters)',
+    padding_char: 'Padding character',
+    encoding: 'Character encoding',
+    start: 'Starts at character',
+    length: 'Length (characters)',
+    type: 'Content type',
+    name: 'Field name',
+    note: 'Notes',
+    record_type: 'Record type',
+    record_types: 'Record types',
+    json_extractions: 'Where the data comes from',
+    field_mappings: 'Data mapping',
+    output: 'Field in the file',
+    transaction_date: 'Transaction window',
+    report_offset: 'Generated on',
+    sundays_off: 'Skip Sundays',
+    saturdays_off: 'Skip Saturdays',
+    apply_general_holiday: 'Skip bank holidays',
+    timezone: 'Time zone',
+    'select': 'Columns in this report',
+    eligibility_flags: 'Which transactions are included',
+    txn_rules: 'Fee rules',
+    priority: 'Priority',
+    starting_date: 'Effective from',
+    fee_mode: 'How the fee is taken',
+    conditions: 'When it applies',
+    calculations: 'What it charges',
+    percentage: 'Rate %',
+    min: 'From amount',
+    max: 'To amount',
+    sectioning: 'How records are sorted',
+    source_format: 'File format',
+    layout_ref: 'Referenced layout',
+    mappings: 'Mappings',
+    filters: 'Filters'
+  };
+  function plainPath(path) {
+    return String(path).split('.').map(function (seg) {
+      var m = /^(.*?)(\[\d+\])?$/.exec(seg);
+      var key = m[1], idx = m[2] || '';
+      var label = PATH_LABEL[key];
+      if (!label) label = key.replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); });
+      return label + (idx ? ' ' + idx : '');
+    }).join(' › ');
+  }
+  // One sentence above the detail: how many changes, and of what kind.
+  function diffChangeSummary(st) {
+    var bits = [];
+    if (st.added) bits.push(st.added + ' field' + (st.added === 1 ? '' : 's') + ' added');
+    if (st.modified) bits.push(st.modified + ' value' + (st.modified === 1 ? '' : 's') + ' changed');
+    if (st.removed) bits.push(st.removed + ' field' + (st.removed === 1 ? '' : 's') + ' removed');
+    var total = st.added + st.modified + st.removed;
+    if (!total) return 'No changes between these two versions.';
+    return total + ' change' + (total === 1 ? '' : 's') + ': ' + bits.join(', ') + '.';
+  }
+
   // leftBody may be null → "New config"
   function diffPanel(leftBody, rightBody, leftLabel, rightLabel, cfg) {
     var rows = X.diffRows(leftBody, rightBody);
@@ -64,7 +124,8 @@ window.ConfigsQueue = function (ui) {
 
     var body = shown.map(function (r) {
       return '<div class="dv-row ' + r.kind + '">' +
-        '<div class="dv-path mono">' + esc(r.path) + '</div>' +
+        '<div class="dv-path"><span class="dv-plain">' + esc(plainPath(r.path)) + '</span>' +
+        '<span class="dv-raw mono">' + esc(r.path) + '</span></div>' +
         '<div class="dv-side left">' + valCell(r.left, r.kind, 'left') + '</div>' +
         '<div class="dv-side right">' + valCell(r.right, r.kind, 'right') +
         (r.kind !== 'same' ? '<span class="diff-tag ' + r.kind + '">' + r.kind + '</span>' : '') + '</div>' +
@@ -77,15 +138,16 @@ window.ConfigsQueue = function (ui) {
     var hasLayout = (leftBody && leftBody.record_types) || (rightBody && rightBody.record_types);
     if (hasLayout) {
       maps = '<div class="dv-maps">' +
-        '<div class="dv-maps-head">' + icon('ruler', 15) + '<strong>Layout comparison</strong><span class="meta">stacked so layout differences are visible at a glance</span></div>' +
+        '<div class="dv-maps-head">' + icon('ruler', 15) + '<strong>Layout comparison</strong><span class="meta">Both versions, stacked</span></div>' +
         (leftBody ? layoutMaps(leftBody, leftLabel) : '<div class="meta">No previous layout — this is a new config.</div>') +
         layoutMaps(rightBody, rightLabel) +
         '</div>';
     }
 
     return '<div class="diff-view">' +
+      '<div class="dv-summary">' + icon('git-compare', 18) + '<strong>' + esc(diffChangeSummary(st)) + '</strong></div>' +
       '<div class="dv-head">' +
-      '<div class="dv-path meta">Path</div>' +
+      '<div class="dv-path meta">What changed</div>' +
       '<div class="dv-side left"><strong>' + esc(leftLabel) + '</strong></div>' +
       '<div class="dv-side right"><strong>' + esc(rightLabel) + '</strong></div>' +
       '</div>' +
@@ -141,7 +203,7 @@ window.ConfigsQueue = function (ui) {
     });
 
     var tabBar = '<div class="tabs">' +
-      [['pending', 'Pending'], ['approved', 'Approved <span class="meta">(last 30 days)</span>'], ['rejected', 'Rejected <span class="meta">(last 30 days)</span>']]
+      [['pending', 'Waiting for approval'], ['approved', 'Approved <span class="meta">(last 30 days)</span>'], ['rejected', 'Not approved <span class="meta">(last 30 days)</span>']]
         .map(function (t) {
           return '<button class="tab ' + (tab === t[0] ? 'active' : '') + '" data-action="cfg-q-tab" data-tab="' + t[0] + '">' + t[1] +
             '<span class="count num">' + counts[t[0]] + '</span></button>';
@@ -232,7 +294,7 @@ window.ConfigsQueue = function (ui) {
     var banner = '';
     if (cfg.state === 'REJECTED') {
       banner = '<div class="callout danger cfg-banner">' + icon('x-circle', 20) +
-        '<div class="callout-body"><strong>Rejected by ' + esc(cfg.rejectedBy || 'checker') + '</strong> · ' + esc(cfg.rejectedAt || '') +
+        '<div class="callout-body"><strong>Not approved</strong> — returned by ' + esc(cfg.rejectedBy || 'checker') + ' · ' + esc(cfg.rejectedAt || '') +
         '<div style="margin-top:4px">' + esc(cfg.rejectionReason || '') + '</div></div></div>';
     } else if (cfg.state === 'APPROVED' || cfg.state === 'ACTIVE' || cfg.state === 'INACTIVE') {
       var lastV = cfg.versions[cfg.versions.length - 1];

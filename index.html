@@ -22,14 +22,20 @@
 
   <!-- App shell (persists across Bank + Ops routes) -->
   <div class="app" id="app">
+    <!-- Icon rail (Ops Portal only — Part 2.1 panel 1). Hidden on Bank routes,
+         where the shell keeps its original topbar + sidebar grid. -->
+    <aside class="rail" id="rail" aria-label="Portal switcher"></aside>
+
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar" aria-label="Primary navigation"></aside>
 
     <!-- Top bar -->
     <header class="topbar" id="topbar"></header>
 
-    <!-- Main content (routed views render here) -->
+    <!-- Main content (routed views render here). On Ops routes a search row
+         (Part 2.1 panel 3) is mounted above the view. -->
     <main class="main" id="main">
+      <div class="ops-searchrow" id="opsSearch"></div>
       <div class="content" id="view"></div>
     </main>
   </div>

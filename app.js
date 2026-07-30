@@ -24,6 +24,9 @@
     // ---- Ops Portal (Phase 2) ----
     opsActive: 'ops-home',
     opsChild: null,          // active nested sub-item (Phase 3: Platform Configs)
+    // Ops shell (design overhaul Part 2.1) — rail overflow menu, nav context
+    // popover and the account popover. All transient, all in memory.
+    railMenu: false, opsContext: false, opsUserMenu: false,
     query: {},
     ops: {
       approvalTab: 'pending', approvalsTenant: 'all', approvalsSla: 'all',
@@ -70,7 +73,16 @@
   function el(id) { return document.getElementById(id); }
   function setView(html) { el('view').innerHTML = html; if (window.lucide) lucide.createIcons(); }
 
+  /* Ops status pills always carry a 14px icon (Part 2.4). Callers that pass one
+     keep it; the rest fall back to the icon for their status. Bank Portal pills
+     are unchanged — an icon-less pill there still renders icon-less. */
+  var PILL_ICON = {
+    success: 'check-circle', warning: 'alert-triangle', danger: 'x-circle',
+    info: 'file-text', neutral: 'circle', primary: 'file-text',
+    nullified: 'ban', correction: 'corner-down-right'
+  };
   function pill(text, kind, ic) {
+    if (!ic && S.portal === 'ops') ic = PILL_ICON[kind] || 'circle';
     return '<span class="pill pill-' + kind + '">' + (ic ? icon(ic, 14) : '') + text + '</span>';
   }
   function delta(v, invert) {
@@ -188,6 +200,105 @@
     for (var i = 0; i < n; i++) out += '<div class="skeleton skel-row"></div>';
     return '<div>' + out + '</div>';
   }
+  /* ======================================================================== *
+     OPS COMPONENT LIBRARY (overhaul Part 2.4 / 3.1 / 3.3)
+     Built once here and shared with every Ops module through CFGKIT, so no
+     screen re-implements a header, a KPI card, a filter row or a side panel.
+     ======================================================================== */
+
+  // Part 3.1 — every screen opens the same way: title, one line of subtitle,
+  // and at most one primary action on the right.
+  function pageHead(title, subtitle, actions) {
+    return '<div class="page-head"><div>' +
+      '<h1 class="page-title">' + title + '</h1>' +
+      (subtitle ? '<div class="subtitle">' + subtitle + '</div>' : '') +
+      '</div>' + (actions ? '<div class="head-actions">' + actions + '</div>' : '') + '</div>';
+  }
+
+  // KPI card with the optional 44px accent icon tile.
+  function kpiCard(o) {
+    return '<div class="kpi-card' + (o.tile ? ' tiled' : '') + (o.route ? ' clickable' : '') + '"' +
+      (o.route ? ' data-route="' + o.route + '"' : '') + (o.title ? ' title="' + esc(o.title) + '"' : '') + '>' +
+      (o.tile ? '<div class="kpi-tile ' + o.tile + '">' + icon(o.icon || 'activity', 22) + '</div>' : '') +
+      '<div class="kpi-label">' + o.label + '</div>' +
+      '<div class="kpi-value num">' + o.value + '</div>' +
+      (o.sub ? '<div class="kpi-foot">' + o.sub + '</div>' : '') + '</div>';
+  }
+
+  // A table inside its own card shell (Part 2.4) — the shell owns the radius
+  // and the border, the wrapper owns the horizontal scroll.
+  function tableCard(inner, cls) {
+    return '<div class="table-card ' + (cls || '') + '"><div class="table-wrap">' + inner + '</div></div>';
+  }
+
+  function opsSelect(action, value, options, aria) {
+    return '<span class="ops-select"><select data-action="' + action + '" aria-label="' + esc(aria || action) + '">' +
+      options.map(function (o) {
+        var v = (o instanceof Array) ? o[0] : o, l = (o instanceof Array) ? o[1] : o;
+        return '<option value="' + esc(v) + '"' + (String(value) === String(v) ? ' selected' : '') + '>' + esc(l) + '</option>';
+      }).join('') + '</select>' + icon('chevron-down', 16) + '</span>';
+  }
+
+  /* Part 3.3 — one filter-row shape everywhere: search, then categorical
+     filters (4 visible at most), then the preset, then the date range, then
+     refresh. Active filters render as removable chips underneath. */
+  function opsFilterRow(o) {
+    var html = '<div class="ops-filters">';
+    if (o.search) {
+      html += '<label class="ops-search">' + icon('search', 18) +
+        '<input class="input" type="text" placeholder="' + esc(o.search.placeholder || 'Search…') + '" ' +
+        'value="' + esc(o.search.value || '') + '" data-action="' + o.search.action + '" aria-label="' + esc(o.search.placeholder || 'Search') + '" /></label>';
+    }
+    (o.filters || []).forEach(function (f) { html += opsSelect(f.action, f.value, f.options, f.label); });
+    if (o.preset) html += opsSelect(o.preset.action, o.preset.value, o.preset.options, 'Date preset');
+    if (o.dateRange) html += '<span class="ops-daterange">' + icon('calendar', 18) + o.dateRange + '</span>';
+    if (o.refresh) {
+      html += '<button class="icon-btn ops-refresh" data-action="' + o.refresh + '" title="Refresh" aria-label="Refresh">' +
+        icon('refresh-cw', 18) + '</button>';
+    }
+    if (o.extra) html += o.extra;
+    html += '</div>';
+    if (o.chips && o.chips.length) {
+      html += '<div class="ops-chips">' + o.chips.map(function (c) {
+        return '<span class="ops-chip">' + esc(c.label) +
+          '<button data-action="' + c.action + '"' + (c.data || '') + ' aria-label="Remove ' + esc(c.label) + '">' + icon('x', 14) + '</button></span>';
+      }).join('') + '</div>';
+    }
+    return html;
+  }
+
+  // Track-and-knob toggle (Part 2.4), label on the right.
+  function opsToggle(action, on, label, data) {
+    return '<label class="ops-toggle"><input type="checkbox"' + (on ? ' checked' : '') +
+      ' data-action="' + action + '"' + (data || '') + ' /><span class="ops-track"></span>' +
+      '<span class="ops-toggle-label">' + esc(label) + '</span></label>';
+  }
+
+  // Right-hand side panel: eyebrow + name header, scrolling body, pinned footer.
+  function sidePanel(o) {
+    return '<div class="overlay" data-action="' + (o.close || 'close-overlay') + '">' +
+      '<div class="side-panel' + (o.wide ? ' wide' : '') + ' ' + (o.cls || '') + '" onclick="event.stopPropagation()">' +
+      '<div class="sp-head"><div style="flex:1;min-width:0">' +
+      '<div class="sp-eyebrow">' + esc(o.eyebrow || '') + '</div>' +
+      '<div class="sp-name">' + (o.name || '') + '</div></div>' +
+      (o.headExtra || '') +
+      '<button class="icon-btn" data-action="' + (o.close || 'close-overlay') + '" aria-label="Close">' + icon('x', 18) + '</button></div>' +
+      '<div class="sp-body">' + o.body + '</div>' +
+      (o.foot ? '<div class="sp-foot">' + o.foot + '</div>' : '') +
+      '</div></div>';
+  }
+
+  // Vertical step timeline (Part 2.4) — success / failure / pending.
+  function opsTimeline(steps) {
+    return '<div class="ops-timeline">' + steps.map(function (s) {
+      var ic = s.state === 'done' ? 'check-circle' : (s.state === 'failed' ? 'x-circle' : 'circle');
+      return '<div class="ops-step ' + s.state + '">' +
+        '<span class="ops-step-icon">' + icon(ic, 20) + '</span>' +
+        '<div><div class="ops-step-label">' + esc(s.label) + '</div>' +
+        (s.status ? '<div class="ops-step-status">' + esc(s.status) + '</div>' : '') + '</div></div>';
+    }).join('') + '</div>';
+  }
+
   function toast(msg, kind) {
     var wrap = el('toasts'); var t = document.createElement('div');
     t.className = 'toast ' + (kind || 'success');
@@ -236,9 +347,9 @@
   // nested parent, matching the Bank Portal's Merchants / Reconciliation pattern.
   var OPS_NAV = [
     { id: 'ops-home', label: 'Ops Home', icon: 'home', route: '#/dashboard/ops' },
-    { id: 'ops-approvals', label: 'Fee Config Approvals', icon: 'check-square', route: '#/dashboard/ops/approvals' },
+    { id: 'ops-approvals', label: 'Fee Approvals', full: 'Fee Config Approvals', icon: 'check-square', route: '#/dashboard/ops/approvals' },
     { id: 'ops-recon', label: 'Reconciliation', icon: 'git-compare', route: '#/dashboard/ops/reconciliation' },
-    { id: 'ops-files', label: 'Settlement File Monitoring', icon: 'upload', route: '#/dashboard/ops/files' },
+    { id: 'ops-files', label: 'Settlement Files', full: 'Settlement File Monitoring', icon: 'upload', route: '#/dashboard/ops/files' },
     { id: 'ops-rejects', label: 'Rejects', icon: 'file-warning', route: '#/dashboard/ops/rejects' },
     { id: 'ops-onboarding', label: 'Bank Onboarding', icon: 'building', route: '#/dashboard/ops/onboarding' },
     {
@@ -253,10 +364,122 @@
     { id: 'ops-disputes', label: 'Dispute Ops Support', icon: 'life-buoy', route: '#/dashboard/ops/disputes' }
   ];
 
+  /* ---- Ops shell (Part 2.1) — icon rail + light nav panel ------------------
+     Three panels, all light: a 72px icon rail, a 230px nav panel and the
+     content area. The dark top bar is gone on Ops routes — the portal switcher
+     moved into the rail and search moved to the top of the content area. Bank
+     routes keep the original topbar + single dark sidebar untouched. */
+  var OPS_USER = 'ops.analyst@juspay.in';
+
+  function renderRail() {
+    var isOps = S.portal === 'ops';
+    var portals = [
+      { key: 'bank', initials: 'BP', label: 'Bank Portal', route: '#/dashboard/bank/home' },
+      { key: 'ops', initials: 'OP', label: 'Ops Portal', route: '#/dashboard/ops' }
+    ];
+    var avatars = portals.map(function (p) {
+      var on = (p.key === 'ops') === isOps;
+      return '<button class="rail-avatar' + (on ? ' active' : '') + '" data-route="' + p.route + '" ' +
+        'title="' + p.label + '" aria-label="' + p.label + '" aria-current="' + (on ? 'true' : 'false') + '">' +
+        p.initials + '</button>';
+    }).join('');
+    el('rail').innerHTML =
+      '<button class="rail-home" data-route="' + (isOps ? '#/dashboard/ops' : '#/dashboard/bank/home') + '" ' +
+      'title="Home" aria-label="Home">' + icon('home', 20) + '</button>' +
+      '<div class="rail-divider"></div>' +
+      '<div class="rail-stack">' + avatars + '</div>' +
+      '<div class="rail-spacer"></div>' +
+      '<button class="rail-more" data-action="rail-more" title="More" aria-label="More">' + icon('more-horizontal', 20) + '</button>' +
+      (S.railMenu
+        ? '<div class="rail-menu"><div class="rail-menu-label">Go to</div>' +
+        '<button data-route="#/dashboard/bank/home">' + icon('building-2', 16) + 'Bank Portal</button>' +
+        '<button data-route="#/dashboard/ops">' + icon('server', 16) + 'Ops Portal</button>' +
+        '<div class="rail-menu-sep"></div>' +
+        '<button data-route="#/dashboard/ops/holidays">' + icon('calendar-days', 16) + 'Holiday calendar</button>' +
+        '</div>'
+        : '');
+    if (window.lucide) lucide.createIcons();
+  }
+
+  // Search sits at the top of the content area, not in a top bar (Part 2.1).
+  function renderOpsSearch() {
+    el('opsSearch').innerHTML =
+      '<span class="ops-search-icon">' + icon('search', 18) + '</span>' +
+      '<input id="globalSearch" type="text" placeholder="Search (⌘+K)" aria-label="Search" />';
+    if (window.lucide) lucide.createIcons();
+  }
+
+  /* The Ops nav panel. Section rows carry a hexagon outline that fills when
+     active (Part 2.1); the section's own icon is kept for the icons-only
+     collapsed state, where identical hexagons would be unreadable. */
+  function renderOpsNav() {
+    var html = '<div class="nav-context">' +
+      '<button class="nav-context-btn" data-action="ops-context" aria-expanded="' + (S.opsContext ? 'true' : 'false') + '">' +
+      '<span>juspay_ops</span>' + icon('chevron-down', 16) + '</button>' +
+      '<button class="nav-collapse" data-action="toggle-sidebar" title="Collapse panel" aria-label="Collapse navigation panel">' +
+      icon('panel-left', 18) + '</button>' +
+      (S.opsContext
+        ? '<div class="nav-context-menu"><div class="ncm-label">Tenants in scope</div>' +
+        O.tenants.map(function (t) {
+          return '<div class="ncm-row"><span class="tenant-dot" style="background:' + t.color + '"></span>' +
+            esc(t.name) + '<span class="ncm-meta">' + esc(t.country) + '</span></div>';
+        }).join('') + '</div>'
+        : '') +
+      '</div>';
+
+    html += '<div class="nav-scroll">';
+    OPS_NAV.forEach(function (item) {
+      var isActiveSection = S.opsActive === item.id;
+      function row(it, active, nested) {
+        return '<div class="nav-item' + (active ? ' active' : '') + (nested ? ' nested' : '') + '" ' +
+          'data-route="' + it.route + '" data-label="' + esc(it.full || it.label) + '" ' +
+          'title="' + esc(it.full || it.label) + '" role="button" tabindex="0">' +
+          '<span class="nav-icon">' + icon('hexagon', 18) + '</span>' +
+          '<span class="nav-icon-solo">' + icon(it.icon || item.icon, 20) + '</span>' +
+          '<span class="nav-label">' + esc(it.label) + '</span></div>';
+      }
+      if (!item.children) { html += row(item, isActiveSection, false); return; }
+      var expanded = S.expanded[item.id];
+      html += '<div class="nav-group ' + (expanded ? 'expanded' : '') + '">' +
+        '<div class="nav-item' + (isActiveSection && !S.opsChild ? ' active' : '') + '" data-route="' + item.route + '" ' +
+        'data-label="' + esc(item.label) + '" title="' + esc(item.label) + '" role="button" tabindex="0">' +
+        '<span class="nav-icon">' + icon('hexagon', 18) + '</span>' +
+        '<span class="nav-icon-solo">' + icon(item.icon, 20) + '</span>' +
+        '<span class="nav-label">' + esc(item.label) + '</span>' +
+        '<span class="nav-chevron" data-action="toggle-section" data-section="' + item.id + '" aria-label="Toggle ' + esc(item.label) + '">' +
+        icon('chevron-right', 15) + '</span></div>' +
+        '<div class="nav-children">' +
+        item.children.map(function (ch) {
+          return row(ch, isActiveSection && S.opsChild === ch.id, true);
+        }).join('') +
+        '</div></div>';
+    });
+    html += '</div>';
+
+    html += '<div class="nav-user">' +
+      (S.opsUserMenu
+        ? '<div class="nav-user-menu">' +
+        '<div class="ncm-label">Signed in as</div>' +
+        '<div class="ncm-row strong">' + esc(OPS_USER) + '</div>' +
+        '<div class="ncm-row"><span class="ncm-meta">Role is set per config screen — Maker or Checker.</span></div>' +
+        '<div class="rail-menu-sep"></div>' +
+        '<button data-route="#/dashboard/ops/holidays">' + icon('calendar-days', 16) + 'Holiday calendar</button>' +
+        '</div>'
+        : '') +
+      '<button class="nav-user-row" data-action="ops-user" aria-label="Account" aria-expanded="' + (S.opsUserMenu ? 'true' : 'false') + '">' +
+      '<span class="nav-avatar">' + esc(OPS_USER.charAt(0).toUpperCase()) + '</span>' +
+      '<span class="nav-user-mail">' + esc(OPS_USER) + '</span>' +
+      icon('chevron-down', 15) + '</button></div>';
+
+    el('sidebar').innerHTML = html;
+    if (window.lucide) lucide.createIcons();
+  }
+
   function renderSidebar() {
     var isOps = S.portal === 'ops';
+    if (isOps) return renderOpsNav();
     var a = S.active;
-    var navList = isOps ? OPS_NAV : NAV;
+    var navList = NAV;
     var html = '<div class="nav-scroll">';
     navList.forEach(function (item) {
       var isActiveSection = isOps ? (S.opsActive === item.id) : (a.section === item.id);
@@ -317,11 +540,25 @@
     if (seg[0] !== 'dashboard') { location.hash = '#/dashboard/bank/home'; return; }
     S.portal = (seg[1] === 'ops') ? 'ops' : 'bank';
     // The Ops Portal is fully fluid (Part 1); the Bank Portal keeps its fixed
-    // reading width. One class on the shell scopes every responsive rule.
-    var appEl = el('app'); if (appEl) appEl.classList.toggle('portal-ops', S.portal === 'ops');
-    renderTopbar();
+    // reading width. One class on the shell scopes every responsive rule — and,
+    // since the overhaul, the entire Ops design language: the Part 2.2 tokens
+    // are redeclared under .portal-ops so no Bank Portal screen can see them.
+    var isOps = S.portal === 'ops';
+    var appEl = el('app'); if (appEl) appEl.classList.toggle('portal-ops', isOps);
+    // Toasts and the overlay mount live outside .app, so they carry the scope
+    // class themselves or they would render with Bank Portal tokens.
+    var om = el('overlay-mount'); if (om) om.className = isOps ? 'ops-scope' : '';
+    var tw = el('toasts'); if (tw) tw.className = 'toast-wrap' + (isOps ? ' ops-scope' : '');
 
-    if (S.portal === 'ops') { return routeOps(seg.slice(2)); }
+    if (isOps) {
+      // No dark top bar in the new design (Part 2.1): the portal switcher moved
+      // into the rail and search moved to the top of the content area.
+      el('topbar').innerHTML = '';
+      renderRail(); renderOpsSearch();
+      return routeOps(seg.slice(2));
+    }
+    el('rail').innerHTML = ''; el('opsSearch').innerHTML = '';
+    renderTopbar();
 
     var rest = seg.slice(2); // after dashboard/bank
     var head = rest[0] || 'home';
@@ -1410,10 +1647,14 @@
        Transactions sparkline is gone too — the card is a count, and the trend
        behind it belongs to the cross-tenant grid below. */
     var kpis =
-      '<div class="kpi-card"><div class="kpi-label">Total Transactions Processed</div><div class="kpi-value">' + num(k.totalTxnsMTD) + '</div><div class="kpi-foot"><span class="meta">MTD, all tenants</span></div></div>' +
-      '<div class="kpi-card" title="Aggregated across tenants at 1 SGD = ₹61.5, 1 HKD = ₹10.7 (rates as of prototype date)"><div class="kpi-label">Total MTD Volume <span class="meta">(INR-eq)</span></div><div class="kpi-value">' + fmtCr(k.totalMtdINR) + '</div><div class="kpi-foot"><span class="meta">' + icon('info', 12) + ' converted to INR</span></div></div>' +
-      '<div class="kpi-card clickable" data-route="#/dashboard/ops/approvals?approvalTab=pending"><div class="kpi-label">Pending Fee Approvals</div><div class="kpi-value">' + k.pendingApprovals + '</div><div class="kpi-foot"><span class="kpi-link">Review queue ' + icon('arrow-right', 12) + '</span></div></div>' +
-      '<div class="kpi-card clickable" data-route="#/dashboard/ops/disputes"><div class="kpi-label">Open Disputes</div><div class="kpi-value">' + k.openDisputes + '</div><div class="kpi-foot"><span class="kpi-link">Across portfolio ' + icon('arrow-right', 12) + '</span></div></div>';
+      kpiCard({ tile: 'blue', icon: 'activity', label: 'Transactions processed', value: num(k.totalTxnsMTD), sub: 'Month to date, all tenants' }) +
+      kpiCard({
+        tile: 'green', icon: 'indian-rupee', label: 'Volume (INR-equivalent)', value: fmtCr(k.totalMtdINR),
+        sub: 'Month to date · converted at 1 SGD = ₹61.5, 1 HKD = ₹10.7',
+        title: 'Aggregated across tenants at 1 SGD = ₹61.5, 1 HKD = ₹10.7 (rates as of prototype date)'
+      }) +
+      kpiCard({ tile: 'orange', icon: 'check-square', label: 'Fee approvals waiting', value: k.pendingApprovals, sub: 'Review queue ' + icon('arrow-right', 12), route: '#/dashboard/ops/approvals?approvalTab=pending' }) +
+      kpiCard({ tile: 'purple', icon: 'life-buoy', label: 'Open disputes', value: k.openDisputes, sub: 'Across the portfolio ' + icon('arrow-right', 12), route: '#/dashboard/ops/disputes' });
 
     // cross-tenant cycle status grid — four legs per cell (CLR / STL / INC / JV2),
     // each cutoff aware, with its own cycle-date stepper. A cell opens the Cycle
@@ -1448,7 +1689,8 @@
       return t.name + ' (' + (t.currency === 'INR' ? fmt(rb.amount, 0, 'INR') : fmt(rb.amount, 0, t.currency)) + ', ' + rb.count + ')';
     }).join(' · ');
     var rejCard = '<div class="callout warn" data-route="#/dashboard/ops/reconciliation" style="cursor:pointer">' + icon('alert-triangle', 20) +
-      '<div class="callout-body"><strong>Unresolved rejections across platform:</strong> ' + k.rejTotalCount + ' transactions, ~' + fmtCr(k.rejTotalINR) + ' equivalent. <div class="meta" style="margin-top:4px">' + rejBreak + '</div></div>' + icon('chevron-right', 18) + '</div>';
+      '<div class="callout-body"><strong>' + k.rejTotalCount + ' rejections unresolved · ~' + fmtCr(k.rejTotalINR) + '</strong>' +
+      '<div class="meta" style="margin-top:4px">' + rejBreak + '</div></div>' + icon('chevron-right', 18) + '</div>';
 
     // holidays widget
     var upcoming = O.holidays.filter(function (h) { return h.date >= D.TODAY; }).slice(0, 5).map(function (h) {
@@ -1458,7 +1700,7 @@
     }).join('');
 
     setView(
-      '<div class="page-head"><div><h1 class="page-title">Operations Overview</h1><div class="subtitle">' + U.prettyLong(D.TODAY) + ' · cross-tenant platform snapshot</div></div></div>' +
+      pageHead('Operations Overview', 'Platform status across all four tenants for ' + U.prettyLong(D.TODAY) + '.') +
       '<div class="ops-status-strip">' + strip + '</div>' +
       // Round 3 §A.3 — KPI rows wrap on their own rather than overflowing:
       // repeat(auto-fit, minmax(240px, 1fr)) via .kpi-row.
@@ -1531,7 +1773,9 @@
     else if (S.ops.approvalsSla === 'approaching') list = list.filter(function (a) { var l = 48 - a.submittedHoursAgo; return l > 0 && l < 24; });
 
     var body;
-    if (!list.length) body = '<div class="card">' + emptyState('inbox', 'Nothing in this view', 'No ' + tab + ' fee approvals match the current filters.') + '</div>';
+    if (!list.length) body = '<div class="card">' + emptyState('inbox', 'No ' + tab + ' approvals',
+      'Nothing matches the current filters. Clear them to see the whole queue.',
+      '<button class="btn btn-secondary" data-action="ops-approval-clear">' + icon('rotate-ccw', 18) + 'Clear filters</button>') + '</div>';
     else {
       var rows = list.map(function (a) {
         var left = 48 - a.submittedHoursAgo;
@@ -1544,16 +1788,32 @@
           '<td class="cell-sub">' + esc(a.changeSummary) + '</td>' +
           '<td><button class="btn btn-primary btn-sm" data-route="#/dashboard/ops/approvals/' + a.id + '">Review</button></td></tr>';
       }).join('');
-      body = '<div class="table-wrap"><table class="data"><thead><tr><th>Tenant</th><th>Merchant</th><th>Submitted by</th><th>Submitted</th><th>' + (tab === 'pending' ? 'SLA' : 'Status') + '</th><th>Change summary</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      body = tableCard('<table class="data"><thead><tr><th>Tenant</th><th>Merchant</th><th>Submitted by</th><th>Submitted</th><th>' + (tab === 'pending' ? 'SLA' : 'Status') + '</th><th>Change summary</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>');
     }
 
+    // Part 3.3 — the standard filter row: search, then categorical filters,
+    // then refresh. Active filters show as removable chips beneath.
+    var chips = [];
+    if (S.ops.approvalsTenant !== 'all') {
+      var tn = (O.tenantById[S.ops.approvalsTenant] || {}).name || S.ops.approvalsTenant;
+      chips.push({ label: 'Tenant: ' + tn, action: 'ops-approval-tile', data: ' data-tenant="all"' });
+    }
+    if (S.ops.approvalsSla !== 'all') chips.push({ label: 'SLA: ' + S.ops.approvalsSla, action: 'ops-approval-sla-clear' });
+
     setView(
-      '<div class="page-head"><div><h1 class="page-title">Fee Config Approvals</h1><div class="subtitle">Ops side of the maker-checker flow · all tenants</div></div></div>' +
+      pageHead('Fee Config Approvals',
+        'Approve or reject merchant fee changes submitted by bank users.') +
       approvalTiles() + tabBar +
-      '<div class="filter-row"><label class="field" style="flex-direction:row;align-items:center;gap:8px">Tenant ' + tenantSelect('ops-approval-tenant', S.ops.approvalsTenant, true) + '</label>' +
-      '<div class="chip search-chip">' + icon('search', 15) + '<input class="input" placeholder="Submitted-by search" data-action="noop" /></div>' +
-      '<label class="field" style="flex-direction:row;align-items:center;gap:8px">SLA <select class="input" style="width:auto" data-action="ops-approval-sla"><option value="all"' + (S.ops.approvalsSla === 'all' ? ' selected' : '') + '>All</option><option value="approaching"' + (S.ops.approvalsSla === 'approaching' ? ' selected' : '') + '>Approaching</option><option value="overdue"' + (S.ops.approvalsSla === 'overdue' ? ' selected' : '') + '>Overdue</option></select></label></div>' +
-      body
+      opsFilterRow({
+        search: { placeholder: 'Search merchant or submitter', action: 'noop', value: '' },
+        filters: [
+          { action: 'ops-approval-tenant', value: S.ops.approvalsTenant, label: 'Tenant', options: [['all', 'All tenants']].concat(O.tenants.map(function (t) { return [t.id, t.name]; })) },
+          { action: 'ops-approval-sla', value: S.ops.approvalsSla, label: 'SLA', options: [['all', 'Any SLA'], ['approaching', 'Approaching breach'], ['overdue', 'Overdue']] }
+        ],
+        refresh: 'ops-refresh',
+        chips: chips
+      }) +
+      '<div class="mt-16">' + body + '</div>'
     );
   }
 
@@ -1583,7 +1843,9 @@
 
     setView(
       '<div class="breadcrumb"><a data-route="#/dashboard/ops/approvals">Fee Config Approvals</a><span class="sep">/</span><span>' + a.id + '</span></div>' +
-      '<div class="page-head"><div><h1 class="page-title">' + esc(a.merchant) + '</h1><div class="subtitle">' + tenantTag(a.tenantId) + ' · MID ' + a.mid + ' · submitted by ' + esc(a.submittedBy) + ' · ' + a.submittedHoursAgo + 'h ago ' + (a.status === 'Pending' ? slaBadge(left) : pill(a.status, approvalStatusKind(a.status))) + '</div></div></div>' +
+      pageHead(esc(a.merchant),
+        tenantTag(a.tenantId) + ' · MID ' + a.mid + ' · submitted by ' + esc(a.submittedBy) + ' ' + a.submittedHoursAgo + 'h ago ' +
+        (a.status === 'Pending' ? slaBadge(left) : pill(a.status, approvalStatusKind(a.status)))) +
       banner +
       '<div class="section-title mb-16">Configuration diff</div>' +
       '<div class="grid grid-2">' +
@@ -1712,14 +1974,14 @@
       }).join('');
       rejSection = '<div class="card mt-24" style="border-color:#FDE68A"><div class="card-title" style="color:var(--status-warning-fg)">' + icon('alert-triangle', 18) + ' Incoming Rejections — this cycle</div>' +
         '<div class="callout warn" style="margin:12px 0"><span class="strong">' + cyc.rejections.length + ' rejections, ' + fmt(rtot, 2, cur) + ' total' + (allAwaiting ? ', all awaiting re-clearing' : '') + '</span></div>' +
-        '<div class="meta mb-16">Transactions rejected by the network in this cycle\'s incoming file. They are deducted from settlement math and re-cleared in the next cycle (T+1), settling the following day (T+2).</div>' +
+        '<div class="meta mb-16">Deducted from settlement math, re-cleared at T+1 and settled at T+2.</div>' +
         '<div class="table-wrap"><table class="data"><thead><tr><th>Tenant</th><th>Network</th><th>ARN</th><th class="num">Amount</th><th>Reason</th><th>Received (T)</th><th>Lifecycle</th><th>Expected settle (T+2)</th></tr></thead><tbody>' + rrows + '</tbody></table></div></div>';
     }
 
     var corrSection = cyc.corrections.length ? cardBox('Correction history', '<div class="meta mb-16">Immutable — original entry nullified (struck-through), correcting entry directly below.</div>' + cyc.corrections.map(cycleCorrectionPair).join('')) : '';
 
     setView(
-      '<div class="page-head"><div><h1 class="page-title">Two-Way Reconciliation</h1><div class="subtitle">One outgoing clearing batch per cycle vs. what the network settled, aggregated across six incoming cycles · no acknowledgment leg</div></div></div>' +
+      pageHead('Two-Way Reconciliation', 'What we submitted to the network against what the network settled.') +
       selectors +
       '<div class="amounts-panel" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:20px">' +
       amountCell('Cycle', U.prettyDate(cyc.date), '') + amountCell('Cycle ID', cyc.id.split('-').slice(-3).join('-'), '') + amountCell('Currency', cur, '') + '<div class="amount-cell"><span class="ac-label">Status</span><span>' + pill(cyc.status, statusKind) + '</span></div></div>' +
@@ -1761,9 +2023,9 @@
         '<td>' + pill(t.status, stKind) + '</td></tr>';
     }).join('');
     setView(
-      '<div class="page-head"><div><h1 class="page-title">Bank Tenants</h1><div class="subtitle">Onboard and manage bank tenants on the platform</div></div><div class="head-actions"><button class="btn btn-primary" data-route="#/dashboard/ops/onboarding/new">' + icon('plus', 16) + 'Onboard new bank</button></div></div>' +
-      '<div class="filter-row"><div class="chip"><span class="chip-label">Status</span>' + icon('chevron-down', 15) + '</div><div class="chip"><span class="chip-label">Country</span>' + icon('chevron-down', 15) + '</div></div>' +
-      '<div class="table-wrap"><table class="data"><thead><tr><th>Bank</th><th>Country</th><th>Currency</th><th>Onboarded</th><th>Networks</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      pageHead('Bank Tenants', 'Every bank live on the platform, and the ones still being provisioned.',
+        '<button class="btn btn-primary" data-route="#/dashboard/ops/onboarding/new">' + icon('plus', 18) + 'Onboard new bank</button>') +
+      tableCard('<table class="data"><thead><tr><th>Bank</th><th>Country</th><th>Currency</th><th>Onboarded</th><th>Networks</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table>')
     );
   }
   function viewTenantDetail(tenantId) {
@@ -1772,14 +2034,14 @@
     var stKind = t.status === 'Active' ? 'success' : (t.status === 'Provisioning' ? 'warning' : 'neutral');
     setView(
       '<div class="breadcrumb"><a data-route="#/dashboard/ops/onboarding">Bank Tenants</a><span class="sep">/</span><span>' + esc(t.name) + '</span></div>' +
-      '<div class="page-head"><div><h1 class="page-title">' + tenantTag(t.id) + '</h1><div class="subtitle">' + t.flag + ' ' + t.country + ' · ' + t.currency + ' · onboarded ' + U.prettyDate(t.onboarded) + ' ' + pill(t.status, stKind) + '</div></div></div>' +
+      pageHead(tenantTag(t.id), t.flag + ' ' + t.country + ' · ' + t.currency + ' · onboarded ' + U.prettyDate(t.onboarded) + ' ' + pill(t.status, stKind)) +
       '<div class="grid grid-2">' +
       cardBox('Identity', '<dl class="def-list"><dt>Legal name</dt><dd>' + esc(t.legalName) + '</dd><dt>Primary contact</dt><dd>' + esc(t.contact) + '</dd><dt>Data region</dt><dd>' + esc(t.address) + '</dd></dl>') +
       cardBox('Currency & settlement', '<dl class="def-list"><dt>Currency</dt><dd>' + t.currency + '</dd><dt>Settlement account</dt><dd>' + t.settleAcct + '</dd></dl>') +
       cardBox('Networks & BIN ranges', '<div class="mb-16">' + t.networks.map(function (n) { return pill(n, 'primary'); }).join(' ') + '</div><dl class="def-list"><dt>BIN ranges</dt><dd class="mono">' + t.bins + '</dd></dl>') +
       cardBox('Network rule set', '<dl class="def-list"><dt>Assigned rule set</dt><dd class="mono">' + t.ruleSet + '</dd></dl><pre style="background:var(--bg-subtle);border:1px solid var(--border-subtle);border-radius:6px;padding:12px;font-size:12px;overflow-x:auto;margin-top:10px">{\n  "ruleSet": "' + t.ruleSet + '",\n  "networks": ' + JSON.stringify(t.networks) + ',\n  "readOnly": true\n}</pre>') +
       '</div>' +
-      '<div class="mt-24">' + cardBox('Configuration history', '<div class="meta mb-16">Immutable — every configuration change is appended; corrections nullify the prior entry without deleting it.</div>' + immutableTimeline(O.configHistory[t.id])) + '</div>'
+      '<div class="mt-24">' + cardBox('Configuration history', '<div class="meta mb-16">Append-only — a correction nullifies the prior entry, it never deletes it.</div>' + immutableTimeline(O.configHistory[t.id])) + '</div>'
     );
   }
   var ONB_STEPS = ['Bank Identity', 'Currency & Settlement Account', 'Networks & BIN Ranges', 'Network Rule Set Assignment', 'Review & Activate'];
@@ -1793,12 +2055,12 @@
     if (step === 1) body = '<div class="grid grid-2">' + field('Legal name', '<input class="input" id="obName" placeholder="e.g. Axis Bank Ltd" />', true) + field('Country', '<select class="input"><option>India</option><option>Singapore</option><option>Hong Kong</option></select>', true) + field('Primary contact', '<input class="input" placeholder="onboarding@bank.com" />', true) + field('Registered address', '<input class="input" placeholder="City, data region" />', true) + '</div>';
     else if (step === 2) body = '<div class="grid grid-2">' + field('Settlement currency', '<select class="input"><option>INR</option><option>SGD</option><option>HKD</option></select>', true) + field('Settlement bank account', '<input class="input" placeholder="Account number" />', true) + field('SWIFT / IFSC', '<input class="input" placeholder="Routing code" />', true) + field('Nostro account', '<input class="input" placeholder="Nostro reference" />') + '</div>';
     else if (step === 3) body = '<div class="stack"><div class="field">Enable networks <span class="req">*</span><div class="row" style="gap:20px;margin-top:8px">' + ['Visa', 'Mastercard', 'RuPay', 'HSBC ONUS'].map(function (n) { return '<label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--text-primary)"><input type="checkbox" checked /> ' + n + '</label>'; }).join('') + '</div></div>' + field('BIN ranges (per network)', '<input class="input" placeholder="e.g. 4571xx, 5412xx" />') + '</div>';
-    else if (step === 4) body = '<div class="stack">' + field('Network rule set', '<select class="input"><option>RULESET-IN-STD-v3</option><option>RULESET-SG-STD-v2</option><option>RULESET-HK-STD-v2</option><option>RULESET-GLOBAL-v1</option></select>', true) + '<div class="callout info">' + icon('info', 20) + '<div class="callout-body">Rule sets define interchange/scheme fee tables and clearing windows. Cycle schedule is platform-level and not configured here.</div></div></div>';
-    else body = '<div class="stack"><div class="callout info">' + icon('info', 20) + '<div class="callout-body">On activate, the tenant is created in <strong>Provisioning</strong> status and enters the platform provisioning queue.</div></div><dl class="def-list"><dt>Legal name</dt><dd>Axis Bank Ltd</dd><dt>Country</dt><dd>India</dd><dt>Currency</dt><dd>INR</dd><dt>Networks</dt><dd>Visa, Mastercard, RuPay, HSBC ONUS</dd><dt>Rule set</dt><dd>RULESET-IN-STD-v3</dd></dl></div>';
+    else if (step === 4) body = '<div class="stack">' + field('Network rule set', '<select class="input"><option>RULESET-IN-STD-v3</option><option>RULESET-SG-STD-v2</option><option>RULESET-HK-STD-v2</option><option>RULESET-GLOBAL-v1</option></select>', true) + '<div class="callout info">' + icon('info', 20) + '<div class="callout-body">Rule sets carry the interchange and scheme fee tables. Cycle timing is platform-level.</div></div></div>';
+    else body = '<div class="stack"><div class="callout info">' + icon('info', 20) + '<div class="callout-body">Activating creates the tenant in <strong>Provisioning</strong>.</div></div><dl class="def-list"><dt>Legal name</dt><dd>Axis Bank Ltd</dd><dt>Country</dt><dd>India</dd><dt>Currency</dt><dd>INR</dd><dt>Networks</dt><dd>Visa, Mastercard, RuPay, HSBC ONUS</dd><dt>Rule set</dt><dd>RULESET-IN-STD-v3</dd></dl></div>';
     var nav = '<div class="row" style="justify-content:space-between;margin-top:24px">' + (step > 1 ? '<button class="btn btn-secondary" data-action="ops-onboard-prev">' + icon('arrow-left', 16) + 'Back</button>' : '<span></span>') + (step < 5 ? '<button class="btn btn-primary" data-action="ops-onboard-next">Continue' + icon('arrow-right', 16) + '</button>' : '<button class="btn btn-primary" data-action="ops-onboard-activate">' + icon('check', 16) + 'Activate tenant</button>') + '</div>';
     setView(
       '<div class="breadcrumb"><a data-route="#/dashboard/ops/onboarding">Bank Tenants</a><span class="sep">/</span><span>Onboard new bank</span></div>' +
-      '<div class="page-head"><div><h1 class="page-title">Onboard new bank</h1><div class="subtitle">Step ' + step + ' of 5</div></div></div>' +
+      pageHead('Onboard new bank', 'Step ' + step + ' of 5 — ' + ONB_STEPS[step - 1] + '.') +
       '<div class="steps">' + stepsHtml + '</div><div class="card">' + body + nav + '</div>'
     );
   }
@@ -1810,6 +2072,8 @@
       if (tf !== 'all' && d.tenantId !== tf) return false;
       if (uf === '<7 days' && !(d.deadlineDays < 7 && d.status !== 'Won' && d.status !== 'Lost')) return false;
       if (uf === '<3 days' && !(d.deadlineDays < 3 && d.status !== 'Won' && d.status !== 'Lost')) return false;
+      // The stage chip used to be inert; it filters now (Part 3.3).
+      if (S.ops.disputesStage !== 'all' && d.stage !== S.ops.disputesStage) return false;
       return true;
     });
     var byTenant = {};
@@ -1827,16 +2091,23 @@
           '<td>' + pill(U.prettyDate(d.deadline) + ' · ' + d.deadlineDays + 'd', urg) + '</td><td>' + pill(d.status, stKind) + '</td></tr>';
       }).join('');
       return '<div class="dispute-group-head">' + tenantTag(t.id) + '<span class="count-badge">' + ds.length + '</span></div>' +
-        '<div class="table-wrap"><table class="data"><thead><tr><th>Dispute</th><th>Merchant</th><th>Network</th><th>Stage</th><th>Reason</th><th class="num">Amount</th><th>Received</th><th>Deadline</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+        tableCard('<table class="data"><thead><tr><th>Dispute</th><th>Merchant</th><th>Network</th><th>Stage</th><th>Reason</th><th class="num">Amount</th><th>Received</th><th>Deadline</th><th>Status</th></tr></thead><tbody>' + rows + '</tbody></table>');
     }).join('');
 
     setView(
-      '<div class="page-head"><div><h1 class="page-title">Dispute Ops Support</h1><div class="subtitle">Cross-tenant disputes grouped by tenant · ops-side support</div></div></div>' +
-      '<div class="filter-row"><label class="field" style="flex-direction:row;align-items:center;gap:8px">Tenant ' + tenantSelect('ops-disp-tenant', tf, true) + '</label>' +
-      '<div class="chip"><span class="chip-label">Stage</span>' + icon('chevron-down', 15) + '</div>' +
-      '<label class="field" style="flex-direction:row;align-items:center;gap:8px">Deadline <select class="input" style="width:auto" data-action="ops-disp-urgency"><option' + (uf === '<7 days' ? ' selected' : '') + '>&lt;7 days</option><option' + (uf === '<3 days' ? ' selected' : '') + '>&lt;3 days</option><option' + (uf === 'all' ? ' selected' : '') + ' value="all">All</option></select></label>' +
-      '<div class="chip"><span class="chip-label">Reason code</span>' + icon('chevron-down', 15) + '</div></div>' +
-      (groups || '<div class="card">' + emptyState('shield-check', 'No disputes match', 'Adjust the tenant or deadline filter.') + '</div>')
+      pageHead('Dispute Ops Support', 'Disputes across every tenant, with the ones closest to their deadline first.') +
+      opsFilterRow({
+        search: { placeholder: 'Search dispute ID, merchant or ARN', action: 'noop', value: '' },
+        filters: [
+          { action: 'ops-disp-tenant', value: tf, label: 'Tenant', options: [['all', 'All tenants']].concat(O.tenants.map(function (t) { return [t.id, t.name]; })) },
+          { action: 'ops-disp-stage', value: S.ops.disputesStage, label: 'Stage', options: [['all', 'All stages'], 'First Chargeback', 'Second Presentment', 'Arbitration', 'Pre-Arb'] },
+          { action: 'ops-disp-urgency', value: uf, label: 'Deadline', options: [['<7 days', 'Due in under 7 days'], ['<3 days', 'Due in under 3 days'], ['all', 'Any deadline']] }
+        ],
+        refresh: 'ops-refresh'
+      }) +
+      '<div class="mt-16">' + (groups || '<div class="card">' + emptyState('shield-check', 'No disputes match these filters',
+        'Widen the deadline filter or clear the tenant filter to see the full list.',
+        '<button class="btn btn-secondary" data-action="ops-disp-clear">' + icon('rotate-ccw', 18) + 'Clear filters</button>') + '</div>') + '</div>'
     );
   }
   function viewOpsDisputeDetail(id) {
@@ -1849,7 +2120,8 @@
     }).join('') + '</div>';
     setView(
       '<div class="breadcrumb"><a data-route="#/dashboard/ops/disputes">Dispute Ops Support</a><span class="sep">/</span><span>' + d.id + '</span></div>' +
-      '<div class="page-head"><div><h1 class="page-title">' + d.id + '</h1><div class="subtitle">' + tenantTag(d.tenantId) + ' · ' + esc(d.merchant) + ' · ' + d.network + ' · ' + fmt(d.amount, 2, d.currency) + ' ' + pill(d.stage, 'info') + ' ' + pill('Deadline ' + U.prettyDate(d.deadline), urg) + '</div></div></div>' +
+      pageHead(d.id, tenantTag(d.tenantId) + ' · ' + esc(d.merchant) + ' · ' + d.network + ' · ' + fmt(d.amount, 2, d.currency) + ' ' +
+        pill(d.stage, 'info') + ' ' + pill('Deadline ' + U.prettyDate(d.deadline), urg, 'clock')) +
       cardBox('Lifecycle', tl) +
       '<div class="grid grid-2 mt-24">' +
       cardBox('Original transaction', '<dl class="def-list"><dt>Transaction date</dt><dd>' + U.prettyDate(d.txnDate) + '</dd><dt>Amount</dt><dd>' + fmt(d.amount, 2, d.currency) + '</dd><dt>Card BIN</dt><dd class="mono">' + d.bin + '</dd><dt>Auth code</dt><dd>' + d.authCode + '</dd><dt>ARN</dt><dd class="mono">' + d.arn + '</dd></dl>') +
@@ -1867,7 +2139,10 @@
     var country = S.ops.holidayCountry, view = S.ops.holidayView;
     var list = O.holidays.filter(function (h) { return country === 'All' ? true : h.country === country; });
     var toggle = '<div class="chip" style="padding:2px;gap:2px"><button class="btn btn-sm ' + (view === 'list' ? 'btn-primary' : 'btn-ghost') + '" data-action="holiday-view" data-view="list">List</button><button class="btn btn-sm ' + (view === 'calendar' ? 'btn-primary' : 'btn-ghost') + '" data-action="holiday-view" data-view="calendar">Calendar</button></div>';
-    var filters = '<div class="filter-row"><label class="field" style="flex-direction:row;align-items:center;gap:8px">Country <select class="input" style="width:auto" data-action="holiday-ops-country">' + ['All', 'India', 'Singapore', 'Hong Kong'].map(function (c) { return '<option' + (country === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select></label><div style="flex:1"></div>' + toggle + '</div>';
+    var filters = opsFilterRow({
+      filters: [{ action: 'holiday-ops-country', value: country, label: 'Country', options: ['All', 'India', 'Singapore', 'Hong Kong'] }],
+      refresh: 'ops-refresh', extra: '<div style="flex:1"></div>' + toggle
+    }) + '<div class="mb-16"></div>';
 
     var body;
     if (view === 'list') {
@@ -1876,13 +2151,13 @@
         var kind = h.impact === 'Full holiday' ? 'danger' : (h.impact === 'Half day' ? 'warning' : 'neutral');
         return '<tr><td class="nowrap">' + U.prettyDate(h.date) + '</td><td>' + U.DOW[d.getUTCDay()] + '</td><td>' + esc(h.name) + '</td><td>' + flag + ' ' + h.country + '</td><td>' + pill(h.impact, kind) + '</td></tr>';
       }).join('');
-      body = '<div class="table-wrap"><table class="data"><thead><tr><th>Date</th><th>Day</th><th>Holiday</th><th>Country</th><th>Impact</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      body = tableCard('<table class="data"><thead><tr><th>Date</th><th>Day</th><th>Holiday</th><th>Country</th><th>Impact</th></tr></thead><tbody>' + rows + '</tbody></table>');
     } else {
       body = miniCalendar(list);
     }
     setView(
       '<div class="breadcrumb"><a data-route="#/dashboard/ops">Ops Home</a><span class="sep">/</span><span>Bank Holidays</span></div>' +
-      '<div class="page-head"><div><h1 class="page-title">Bank Holiday Calendar</h1><div class="subtitle">Know when to expect no settlement files across regions</div></div></div>' + filters + body
+      pageHead('Bank Holiday Calendar', 'Days when no settlement files are expected, by region.') + filters + body
     );
   }
   function miniCalendar(list) {
@@ -1909,6 +2184,10 @@
   var ACTIONS = {
     'toggle-sidebar': function () { S.sidebarCollapsed = !S.sidebarCollapsed; el('app').classList.toggle('collapsed', S.sidebarCollapsed); renderSidebar(); },
     'toggle-section': function (t, e) { e.stopPropagation(); var sec = t.getAttribute('data-section'); S.expanded[sec] = !S.expanded[sec]; renderSidebar(); },
+    // Ops shell popovers (Part 2.1). Each closes the others — only one at a time.
+    'rail-more': function () { S.railMenu = !S.railMenu; S.opsContext = false; S.opsUserMenu = false; renderRail(); renderSidebar(); },
+    'ops-context': function () { S.opsContext = !S.opsContext; S.railMenu = false; S.opsUserMenu = false; renderRail(); renderSidebar(); },
+    'ops-user': function () { S.opsUserMenu = !S.opsUserMenu; S.railMenu = false; S.opsContext = false; renderRail(); renderSidebar(); },
     'tab': function (t) { var g = t.getAttribute('data-tab-group'), tb = t.getAttribute('data-tab'); S.tabs[g] = tb; route(); },
     'toast': function (t) { toast(t.getAttribute('data-msg')); },
     'noop': function () { },
@@ -1971,6 +2250,11 @@
     'ops-approval-tenant': function (t) { S.ops.approvalsTenant = t.value; viewApprovals(); },
     'ops-approval-tile': function (t) { S.ops.approvalsTenant = t.getAttribute('data-tenant'); viewApprovals(); },
     'ops-approval-sla': function (t) { S.ops.approvalsSla = t.value; viewApprovals(); },
+    'ops-approval-sla-clear': function () { S.ops.approvalsSla = 'all'; viewApprovals(); },
+    'ops-approval-clear': function () { S.ops.approvalsTenant = 'all'; S.ops.approvalsSla = 'all'; viewApprovals(); },
+    // Every standard filter row carries a refresh button (Part 3.3). There is
+    // no backend to re-query, so it re-renders the current view.
+    'ops-refresh': function () { route(); toast('Refreshed', 'success'); },
     'ops-approve': function (t) {
       var id = t.getAttribute('data-id'); var a = O.feeApprovals.find(function (x) { return x.id === id; });
       if (a) { a.status = 'Approved'; toast('Approved ' + id + ' — moved to Approved tab', 'success'); }
@@ -1998,6 +2282,8 @@
     },
     'ops-disp-tenant': function (t) { S.ops.disputesTenant = t.value; viewOpsDisputes(); },
     'ops-disp-urgency': function (t) { S.ops.disputesUrgency = t.value; viewOpsDisputes(); },
+    'ops-disp-stage': function (t) { S.ops.disputesStage = t.value; viewOpsDisputes(); },
+    'ops-disp-clear': function () { S.ops.disputesTenant = 'all'; S.ops.disputesUrgency = 'all'; S.ops.disputesStage = 'all'; viewOpsDisputes(); },
     'holiday-ops-country': function (t) { S.ops.holidayCountry = t.value; viewOpsHolidays(); },
     'holiday-view': function (t) { S.ops.holidayView = t.getAttribute('data-view'); viewOpsHolidays(); }
   };
@@ -2010,7 +2296,12 @@
     setView: setView, toast: toast, el: el, go: go, num: num, fmt: fmt, pct: pct,
     tenantTag: tenantTag, slaBadge: slaBadge,
     immutableEntry: immutableEntry, immutablePair: immutablePair, immutableTimeline: immutableTimeline,
-    renderSidebar: renderSidebar, field: field
+    renderSidebar: renderSidebar, field: field,
+    // Ops component library (overhaul Part 2.4 / 3.1 / 3.3) — one implementation,
+    // reused by every Ops module.
+    pageHead: pageHead, kpiCard: kpiCard, tableCard: tableCard, opsSelect: opsSelect,
+    opsFilterRow: opsFilterRow, opsToggle: opsToggle, sidePanel: sidePanel, opsTimeline: opsTimeline,
+    skeletonRows: skeletonRows
   };
   var CFGUI = window.ConfigsUI(CFGKIT);
   var CFGQ = window.ConfigsQueue(CFGUI);
@@ -2064,6 +2355,8 @@
     // Rejects: 'rej-i-*' actions are live-typing bindings — they update the
     // model and re-render only the affected region, so the input keeps focus.
     if (a.indexOf('rej-i-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
+    // Settlement File Monitoring: 'sf-i-*' are live-typing bindings too.
+    if (a.indexOf('sf-i-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
     if (a === 'filter-merchants') ACTIONS[a](t);
   });
   document.addEventListener('change', function (e) {
@@ -2076,7 +2369,8 @@
     // Settlement File Monitoring: selects, date inputs and the upload file picker.
     if (a.indexOf('sf-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
     if (['filter-merchant-status', 'filter-merchant-mcc', 'fb-group', 'holiday-country', 'propose-merchant', 'report-delivery',
-      'ops-approval-tenant', 'ops-approval-sla', 'recon-tenant', 'recon-cycle', 'ops-disp-tenant', 'ops-disp-urgency', 'holiday-ops-country'].indexOf(a) >= 0) ACTIONS[a](t);
+      'ops-approval-tenant', 'ops-approval-sla', 'recon-tenant', 'recon-cycle', 'ops-disp-tenant', 'ops-disp-urgency',
+      'ops-disp-stage', 'holiday-ops-country'].indexOf(a) >= 0) ACTIONS[a](t);
   });
   // Tag inputs commit on Enter (Part 6.2 eligibility flags, Part 7.2 ack filenames).
   document.addEventListener('keydown', function (e) {
