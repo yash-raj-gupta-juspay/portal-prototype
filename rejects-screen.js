@@ -619,6 +619,23 @@ window.RejectsUI = function (kit) {
       '</div>'
       : '';
 
+    /* Observability brief Part 9 — a batch that arrived from a failed parse (or
+       a stage the network refused) shows that run's RCA above the transaction
+       table, using the same component the Run Console uses. The link to the run
+       that ingested the batch is Part 10.1. */
+    var ingestRun = window.RUNS ? window.RUNS.runForRejectBatch(b) : null;
+    var rcaBlock = '';
+    if (ingestRun && kit.rca) {
+      if (ingestRun.status === 'failed' || ingestRun.status === 'blocked') {
+        rcaBlock = '<div class="rej-rca mt-24">' + kit.rca.card(ingestRun, { variant: 'inline' }) + '</div>';
+      } else {
+        rcaBlock = '<div class="rej-runlink mt-24">' + icon('activity', 15) +
+          '<span>Ingested by run <a class="mono" data-route="#/dashboard/ops/runs/' + esc(ingestRun.runId) + '">' +
+          esc(ingestRun.runId) + '</a> · ' + esc(ingestRun.typeLabel) + ' · ' + esc(ingestRun.startedAt) + '</span>' +
+          '<a class="btn-ghost" data-route="#/dashboard/ops/runs/' + esc(ingestRun.runId) + '">View run ' + icon('arrow-right', 13) + '</a></div>';
+      }
+    }
+
     var body = tab === 'file'
       ? '<div class="mt-24">' + tabs + fileTable(b) + '</div>'
       : '<div class="mt-24">' + tabs + toolbar + bulkBar(b) +
@@ -627,6 +644,7 @@ window.RejectsUI = function (kit) {
     setView(
       head + statusLine + awaitingLine +
       statRow(b) + cycleDetails(b) +
+      rcaBlock +
       body +
       '<div class="mt-24">' + generatedHistory(b) + '</div>' +
       (F.editing ? editorPanel() : '') +

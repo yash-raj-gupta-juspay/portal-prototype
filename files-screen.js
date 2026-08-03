@@ -51,7 +51,7 @@ window.FilesUI = function (kit) {
       ? '<span class="sf-manual" title="' + esc('Manually marked by ' + row.manual.by + ' · ' + row.manual.at + ' — ' + row.manual.note) + '">' +
       icon('hand', 11) + 'manually marked</span>'
       : '';
-    return '<div class="sf-status">' + pill(m.label, m.kind, m.icon) + tag + '</div>';
+    return '<div class="sf-status">' + pill(m.label, m.kind, m.icon) + tag + whyLink(row, 'delivery') + '</div>';
   }
   function validationPill(row) {
     var m = F.VALIDATION[row.validation];
@@ -59,7 +59,25 @@ window.FilesUI = function (kit) {
       ? '<div class="sf-hint" title="' + esc('The correction loop: pull the file, fix it outside the platform, upload the corrected copy (validation resets), then re-run validation.') + '">' +
       'Download → correct → upload → re-validate</div>'
       : '';
-    return '<div class="sf-status">' + pill(m.label, m.kind, m.icon) + hint + '</div>';
+    return '<div class="sf-status">' + pill(m.label, m.kind, m.icon) + hint + whyLink(row, 'validation') + '</div>';
+  }
+
+  /* =======================================================================
+     OBSERVABILITY BRIEF PART 9 — "Why? →" OPENS THE RCA IN A SIDE PANEL
+     A failed delivery has a run behind it, and that run knows why. The link
+     opens the same RCA component the Run Console renders, in a panel, so the
+     analyst never loses the row they were looking at. The link is omitted
+     entirely when no run stands behind the row (Part 10.2).
+     ======================================================================= */
+  function runBehind(row) { return window.RUNS ? window.RUNS.runForFileRow(row) : null; }
+  function whyLink(row, which) {
+    var bad = which === 'delivery' ? row.delivery === 'Failed' : row.validation === 'Mismatch';
+    if (!bad) return '';
+    var run = runBehind(row);
+    if (!run) return '';
+    return '<button class="sf-why" data-action="sf-why" data-id="' + esc(row.id) + '" ' +
+      'title="' + esc('Root cause: ' + (kit.rca ? kit.rca.headline(run) : '')) + '">' +
+      icon('help-circle', 13) + 'Why?' + icon('arrow-right', 12) + '</button>';
   }
 
   /* ---- §C.7 cross-acquirer overview strip --------------------------------- */
@@ -175,8 +193,18 @@ window.FilesUI = function (kit) {
     var canShare = row.delivery === 'Pending' || row.delivery === 'Failed';
     var canValidate = row.validation === 'Not run' || row.validation === 'Mismatch';
     var canReport = row.validation === 'Validated' || row.validation === 'Mismatch';
+    /* Part 10.1 — a file name links to its download AND to the run that
+       produced it. The run action is omitted, not disabled, when the run model
+       has nothing for this row. */
+    var gen = window.RUNS ? window.RUNS.generatingRunForFileRow(row) : null;
+    var runBtn = gen
+      ? '<button type="button" class="sf-act" data-route="#/dashboard/ops/runs/' + esc(gen.runId) + '" ' +
+      'title="' + esc('Open run ' + gen.runId + ', which generated this file') + '" aria-label="View the run that generated this file">' +
+      icon('activity', 15) + '</button>'
+      : '';
     return '<div class="sf-actions">' +
       actionBtn('sf-download', row.id, 'download', 'Download ' + row.name, true) +
+      runBtn +
       actionBtn('sf-mark', row.id, 'hand', 'Mark as shared with the acquirer', canShare) +
       actionBtn('sf-upload', row.id, 'upload', 'Upload corrected file', true) +
       actionBtn('sf-validate', row.id, 'shield-check', 'Run validation against the base DB source', canValidate) +
@@ -204,9 +232,16 @@ window.FilesUI = function (kit) {
         '<td class="num">' + fmt(m.sourceValue, 2, cur) + '</td>' +
         '<td class="num sf-bad">' + fmt(m.delta, 2, cur) + '</td></tr>';
     }).join('');
+    /* Part 9 — the validation report itself carries the RCA structure when the
+       comparison failed, using the same component rather than a look-alike. */
+    var run = runBehind(row);
+    var rcaBlock = (run && kit.rca && row.validation === 'Mismatch')
+      ? '<div class="sf-report-rca">' + kit.rca.card(run, { variant: 'inline' }) + '</div>' : '';
+
     return '<div class="sf-report">' +
       '<div class="sf-report-head"><span class="sf-report-title">Validation report · ' + esc(row.name) + '</span>' +
       '<span class="meta">Run ' + esc(rep.ranAt) + ' · file contents vs. base DB source</span></div>' +
+      rcaBlock + relatedRunLinks(row) +
       '<div class="table-wrap"><table class="data sf-report-table"><thead><tr><th>Check</th><th class="num">In file</th><th class="num">In source</th><th class="num">Delta</th><th>Result</th></tr></thead><tbody>' +
       cmp('Record count', rep.fileRecords, rep.sourceRecords, countOk, false) +
       cmp('Sum of amounts', rep.fileSum, rep.sourceSum, sumOk, true) +
@@ -219,6 +254,25 @@ window.FilesUI = function (kit) {
       '<div class="cyc-sub-title">File history</div>' +
       '<div class="sf-events">' + kit.immutableTimeline(row.events.slice().reverse()) + '</div>' +
       '</div>';
+  }
+
+  /* Part 10.1 — a settlement file row links to the run that generated it and to
+     the cycle it belongs to. Each link is omitted when it has no destination. */
+  function relatedRunLinks(row) {
+    if (!window.RUNS) return '';
+    var gen = window.RUNS.generatingRunForFileRow(row);
+    var links = [];
+    if (gen) {
+      links.push('<a data-route="#/dashboard/ops/runs/' + esc(gen.runId) + '">' + icon('activity', 14) +
+        'The run that generated this file <span class="mono">' + esc(gen.runId) + '</span>' + icon('arrow-right', 13) + '</a>');
+    }
+    links.push('<a data-route="#/dashboard/ops/cycle-snapshot/' + esc(row.tenantId) + '/' +
+      esc(window.RUNS.primaryNetwork(row.tenantId)) + '/' + esc(row.date) + '">' + icon('calendar-clock', 14) +
+      'This cycle’s snapshot' + icon('arrow-right', 13) + '</a>');
+    links.push('<a data-route="#/dashboard/ops/runs?runTenant=' + esc(row.tenantId) +
+      '&runCycle=' + esc(row.date) + '&runRange=30">' + icon('list', 14) +
+      'Every run for this cycle' + icon('arrow-right', 13) + '</a>');
+    return '<div class="sf-related">' + links.join('') + '</div>';
   }
 
   /* ---- the table (§C.8) --------------------------------------------------- */
@@ -435,12 +489,33 @@ window.FilesUI = function (kit) {
         render();
       });
     },
-    'sf-close': function () { closeOverlay(); }
+    'sf-close': function () { closeOverlay(); },
+    /* The RCA opens in a side panel rather than navigating away, so the row the
+       analyst was working stays on screen behind it (Part 10.2). */
+    'sf-why': function (t) {
+      withRow(t, function (row) {
+        var run = runBehind(row);
+        if (!run || !kit.rca) return;
+        paintOverlay(kit.rca.panel(run));
+      });
+    }
   };
 
   function route() {
-    // Deep links (?filesTenant=…) land on S.ops.filesTenant via routeOps.
+    // Deep links land on S.ops.* via routeOps: filesTenant scopes the table,
+    // filesDate narrows to one cycle, filesOpenValidation opens that row's
+    // validation report so an RCA action arrives at the report itself.
     if (S.files.type !== 'all' && F.typesForFilter(S.ops.filesTenant).indexOf(S.files.type) < 0) S.files.type = 'all';
+    if (S.ops.filesDate) {
+      S.files.dateMode = 'date';
+      S.files.date = clampDate(S.ops.filesDate);
+      S.ops.filesDate = null;
+    }
+    if (S.ops.filesOpenValidation) {
+      var hit = visibleRows(range()).filter(function (r) { return r.validation === 'Mismatch' || r.delivery === 'Failed'; })[0];
+      if (hit) S.files.openReport = hit.id;
+      S.ops.filesOpenValidation = null;
+    }
     render();
   }
 

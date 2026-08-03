@@ -73,6 +73,16 @@
        files, no network dimension. files-data.js needs window.OPS. -->
   <script src="files-data.js"></script>
   <script src="files-screen.js"></script>
+  <!-- Observability, RCA & run controls (Ops Portal only).
+       runs-catalog.js is pure data and loads first; runs-data.js reads
+       window.CYCLES for the timing model and window.OPS for tenants, so it
+       comes after both; runs-rca.js is the single RCA card component that
+       every screen renders; runs-screen.js is the Run Console, the launcher
+       and the duplicate remediation view. -->
+  <script src="runs-catalog.js"></script>
+  <script src="runs-data.js"></script>
+  <script src="runs-rca.js"></script>
+  <script src="runs-screen.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

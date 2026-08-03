@@ -41,7 +41,7 @@ window.ConfigsUI = function (kit) {
     queue: { tab: 'pending', family: 'all', submitter: 'all', sla: 'all' },
     // Task-based landing (Part 5.1) — which task the user came in on, and the
     // Browse all configurations disclosure beneath the task cards.
-    task: null, rejFrom: null, browseOpen: false, browseFam: 'network-file', unusedOpen: false, parseForm: null,
+    task: null, rejFrom: null, runFrom: null, browseOpen: false, browseFam: 'network-file', unusedOpen: false, parseForm: null,
     // Layout ruler: hovered field index and the pre-filled add-field form.
     hoverField: null, gapForm: null,
     // Incoming parsing issues that have been resolved this session.
@@ -453,6 +453,32 @@ window.ConfigsUI = function (kit) {
       }
     }
 
+    /* Observability brief Part 9 — a config whose activation failed shows the
+       RCA on its detail, with the same component every other screen uses. The
+       failure belongs here because this screen is where the fix happens.
+       Part 10.1 adds the runs that used this config alongside it. */
+    var runBanner = '';
+    if (window.RUNS && kit.rca) {
+      var badRun = window.RUNS.activationFailureFor(cfg.configId);
+      if (badRun) {
+        runBanner = '<div class="cfg-run-rca">' +
+          '<div class="cfg-run-rca-head">' + icon('x-circle', 16) +
+          'The last run that used this configuration failed on it</div>' +
+          kit.rca.card(badRun, { variant: 'inline' }) + '</div>';
+      }
+      var used = window.RUNS.runsUsingConfig(cfg);
+      if (used.length) {
+        var lastFail = used.filter(function (r) { return r.status === 'failed'; })[0];
+        runBanner += '<div class="cfg-run-links">' +
+          '<a data-route="#/dashboard/ops/runs?runTenant=' + esc(used[0].tenantId) +
+          (cfg.network ? '&runNetwork=' + esc(cfg.network) : '') + '&runRange=30">' +
+          icon('activity', 14) + '<span class="num">' + used.length + '</span> runs used this configuration' + icon('arrow-right', 13) + '</a>' +
+          (lastFail ? '<a data-route="#/dashboard/ops/runs/' + esc(lastFail.runId) + '">' + icon('x-circle', 14) +
+            'Most recent failure <span class="mono">' + esc(lastFail.runId) + '</span>' + icon('arrow-right', 13) + '</a>' : '') +
+          '</div>';
+      }
+    }
+
     return '<div class="cfg-editor-head">' + itemHead +
       '<div class="ceh-row">' +
       (cfg.family === 'settlement' ? '<span class="editing-label">' + icon('pencil', 13) + 'editing</span>' : '') +
@@ -464,7 +490,7 @@ window.ConfigsUI = function (kit) {
       ' <span class="meta">· ' + esc(cfg.configId) + ' · ' + esc(cfg.configType) + ' · created by ' + esc(cfg.createdBy) +
       (cfg.approvedBy ? ' · approved by ' + esc(cfg.approvedBy) : '') + '</span></div>' +
       '<div class="ceh-actions" id="cfgActions">' + actions + '</div>' +
-      banner + '</div>';
+      banner + runBanner + '</div>';
   }
 
   // Per-tab attention dot on a settlement report item, so a pending or rejected
@@ -1703,7 +1729,7 @@ window.ConfigsUI = function (kit) {
       }
     }
 
-    return '<div class="cfg-grid-4">' +
+    return taskHint() + '<div class="cfg-grid-4">' +
       fld('Gateway', txt('gateway', b.gateway)) +
       fld('Network', txt('network', b.network)) +
       fld('Direction', selIn('direction', b.direction, ['INCOMING', 'OUTGOING'])) +
@@ -2009,7 +2035,7 @@ window.ConfigsUI = function (kit) {
         '<span class="meta">' + esc(Object.keys(s).filter(function (k) { return k !== 'op'; }).map(function (k) { return k + '=' + s[k]; }).join(' · ')) + '</span>' +
         iconBtn('cfg-arr-del', 'trash-2', 'Remove step', 'data-path="steps" data-idx="' + i + '"') + '</div>';
     }).join('');
-    return '<div class="cfg-grid-4">' +
+    return taskHint() + '<div class="cfg-grid-4">' +
       fld('Skip header rows', txt('skip_header_rows', b.skip_header_rows, { type: 'number', cast: 'int', cls: 'num' })) +
       fld('Skip trailer rows', txt('skip_trailer_rows', b.skip_trailer_rows, { type: 'number', cast: 'int', cls: 'num' })) +
       fld('Encoding', selIn('encoding', b.encoding, ['ASCII', 'EBCDIC', 'UTF-8'])) +
@@ -2336,8 +2362,25 @@ window.ConfigsUI = function (kit) {
         '<button class="icon-btn xs" data-action="cfg-rej-clear" title="Dismiss" aria-label="Dismiss">' + kit.icon('x', 14) + '</button>' +
         '</div>';
     }
+    /* Carried in from an RCA card's primary action. It names the exact field,
+       position or record type the failed run tripped on, so the operator does
+       not have to re-derive it from the card they just left. */
+    var runHint = '';
+    var rf = S.cfg.runFrom;
+    if (rf) {
+      var what = rf.field
+        ? 'field <span class="mono">' + kit.esc(rf.field) + '</span>' + (rf.start ? ' at characters ' + kit.esc(rf.start) + '–' + kit.esc(String(Number(rf.start) + Number(rf.length || 1) - 1)) : '')
+        : (rf.recordType ? 'record type <span class="mono">' + kit.esc(rf.recordType) + '</span>' : 'this configuration');
+      runHint = '<div class="cfg-task-hint cfg-run-hint">' + kit.icon('activity', 16) +
+        '<span><strong>From a failed run</strong> — ' +
+        '<a class="mono" data-route="#/dashboard/ops/runs/' + kit.esc(rf.runId) + '">' + kit.esc(rf.runId) + '</a>' +
+        ' broke on ' + what + '. Fix it here, then re-run from the run detail.</span>' +
+        '<button class="icon-btn xs" data-action="cfg-run-clear" title="Dismiss" aria-label="Dismiss">' + kit.icon('x', 14) + '</button>' +
+        '</div>';
+    }
+
     var t = TASK_BY_ID[S.cfg.task];
-    if (!t) return rejHint;
+    if (!t) return rejHint + runHint;
     var extra = {
       'add-field': 'Click an unexplained gap in the ruler to add a field there, or use Add field below.',
       'move-field': 'Edit “Starts at” and “Length” in the table, or use Fix positions automatically.',
@@ -2346,7 +2389,7 @@ window.ConfigsUI = function (kit) {
       'report-when': 'Change a control and read Next 5 runs — no offset arithmetic needed.',
       'fee-rules': 'Each rule states its conditions and charge in plain language. Test one with the calculator.'
     }[t.id] || '';
-    return rejHint + '<div class="cfg-task-hint">' + icon('target', 16) +
+    return rejHint + runHint + '<div class="cfg-task-hint">' + icon('target', 16) +
       '<span><strong>' + t.label + '</strong>' + (extra ? ' — ' + extra : '') + '</span>' +
       '<button class="icon-btn xs" data-action="cfg-task-clear" title="Dismiss" aria-label="Dismiss">' + icon('x', 14) + '</button>' +
       '</div>';
@@ -2677,6 +2720,7 @@ window.ConfigsUI = function (kit) {
     },
     'cfg-task-clear': function () { S.cfg.task = null; renderFamily(S.cfg.family); },
     'cfg-rej-clear': function () { S.cfg.rejFrom = null; renderFamily(S.cfg.family); },
+    'cfg-run-clear': function () { S.cfg.runFrom = null; renderFamily(S.cfg.family); },
     'cfg-browse': function () {
       S.cfg.browseOpen = !S.cfg.browseOpen;
       if (S.opsChild) renderFamily(S.cfg.family); else renderLanding();
@@ -3105,6 +3149,18 @@ window.ConfigsUI = function (kit) {
     // (Rejects Part 5), shown as a hint with a way back to the open panel.
     if (S.query && S.query.rejFrom) {
       S.cfg.rejFrom = { id: S.query.rejFrom, reason: S.query.rejReason || '', batch: S.query.rejBatch || '' };
+    }
+    // An RCA card's primary action carries the run and the exact thing to fix
+    // (observability brief Part 10.2), so the editor opens knowing what the
+    // operator came here to change rather than making them find it.
+    if (S.query && S.query.runFrom) {
+      S.cfg.runFrom = {
+        runId: S.query.runFrom, code: S.query.runCode || '',
+        field: S.query.field || '', start: S.query.start || '', length: S.query.length || '',
+        recordType: S.query.recordType || '', network: S.query.network || '', tab: S.query.tab || ''
+      };
+      // Where the fix lives on a specific tab, land on that tab.
+      if (S.query.tab && S.cfg.tab[fam] !== undefined) S.cfg.tab[fam] = S.query.tab;
     }
     kit.renderSidebar();
     return renderFamily(fam, rest[1]);

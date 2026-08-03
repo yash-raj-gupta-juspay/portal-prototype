@@ -445,9 +445,68 @@ window.CycleUI = function (kit) {
     return ['Against cutoff', '<span class="st-' + leg.state + ' cyc-strong">' + deltaText(leg) + '</span>'];
   }
 
+  /* =======================================================================
+     OBSERVABILITY BRIEF PART 9 — RCA INLINE ON A FAILED LEG
+     A leg in a failed state stops showing its normal content and shows the
+     reason instead, using the same RCA component the Run Console uses. Nothing
+     about the card changes here: same five sections, same evidence cap, same
+     two-action limit. Only the frame around it differs.
+     ======================================================================= */
+  function runFor(snap, legKey) {
+    if (!window.RUNS) return null;
+    return window.RUNS.runForLeg(snap.tenant.id, snap.network.key, snap.date, legKey);
+  }
+  function failedRunFor(snap, legKey) {
+    if (!window.RUNS) return null;
+    return window.RUNS.failedRunForLeg(snap.tenant.id, snap.network.key, snap.date, legKey);
+  }
+  /* Returns the replacement body for a failed leg's card, or '' when the leg is
+     fine or when no run stands behind it (an older cycle the run model does not
+     reach) — in which case the card keeps the note it always had. */
+  function legRcaBlock(snap, legKey) {
+    var run = failedRunFor(snap, legKey);
+    if (!run || !kit.rca) return '';
+    return '<div class="cyc-rca">' + kit.rca.card(run, { variant: 'inline' }) +
+      '<a class="cyc-rca-link" data-route="#/dashboard/ops/runs/' + esc(run.runId) + '">' +
+      'View run ' + esc(run.runId) + ' ' + icon('arrow-right', 14) + '</a></div>';
+  }
+
+  /* Part 8.2 · surface 2 — the inline critical callout on the clearing leg of
+     an affected cycle. */
+  function duplicateCallout(snap) {
+    if (!window.RUNS) return '';
+    var a = window.RUNS.anomalyFor(snap.tenant.id, snap.network.key, snap.date);
+    if (!a) return '';
+    return '<div class="cyc-critical" data-route="#/dashboard/ops/runs/duplicate/' + a.tenantId + '/' + a.networkKey + '/' + a.cycleDate + '">' +
+      icon('x-circle', 20) +
+      '<div class="cyc-critical-body"><strong>This cycle was staged twice.</strong> ' +
+      esc(a.runIds.join(' and ')) + ' each sent a clearing file to ' + esc(a.networkName) + '. ' +
+      esc(window.RUNS.assessment(a)) +
+      '</div><span class="btn btn-secondary btn-sm">Investigate ' + icon('arrow-right', 14) + '</span></div>';
+  }
+
+  /* Part 7.1 — "Run this leg" opens the same launcher the Run Console opens,
+     pre-selected on this leg, this tenant, this network and this cycle. There
+     is no second way to start a run. */
+  var LEG_OP = {
+    clearing: 'CLEARING_STAGE', settlement: 'SETTLEMENT_GENERATE',
+    incoming: 'INCOMING_PARSE', jv2: 'SETTLEMENT_GENERATE'
+  };
+  function runLegBtn(snap, legKey) {
+    if (!window.RUNSUI || !LEG_OP[legKey]) return '';
+    return '<button class="btn btn-secondary btn-sm" data-action="cyc-run-leg" data-leg="' + legKey + '" ' +
+      'title="Open the run launcher for this leg — the guards still apply">' +
+      icon('play', 15) + 'Run this leg</button>';
+  }
+
   function clearingCard(snap) {
     var cur = snap.currency, cl = snap.clearing, leg = cl.leg;
+    // A failed leg shows the reason instead of the numbers — the numbers are
+    // about a file that does not exist.
+    var rca = legRcaBlock(snap, 'clearing');
+    if (rca) return cardBox('Clearing — outgoing to network' + statusChip(leg), duplicateCallout(snap) + rca, runLegBtn(snap, 'clearing'));
     var body =
+      duplicateCallout(snap) +
       '<div class="cyc-2col">' +
       kv([
         ['Transaction cohort', esc(snap.cohort.from) + ' → ' + esc(snap.cohort.to), 'Stated in the tenant’s own zone — the transactions genuinely happened on local time. Every processing time on this screen is IST.'],
@@ -467,12 +526,24 @@ window.CycleUI = function (kit) {
       '</div>' +
       (leg.note ? '<div class="callout danger mt-16">' + icon('x-circle', 20) + '<div class="callout-body">' + esc(leg.note) + '</div></div>' : '') +
       '<div class="cyc-sub-title">Outgoing clearing file</div>' +
-      fileRow(cl.file, cl.file.size + ' · ' + cl.file.checksum + ' · ' + cl.file.dest);
-    return cardBox('Clearing — outgoing to network' + statusChip(leg), body);
+      fileRow(cl.file, cl.file.size + ' · ' + cl.file.checksum + ' · ' + cl.file.dest) +
+      runLink(snap, 'clearing');
+    return cardBox('Clearing — outgoing to network' + statusChip(leg), body, runLegBtn(snap, 'clearing'));
+  }
+
+  /* Part 10.1 — a cycle-snapshot leg links to the run that produced it. */
+  function runLink(snap, legKey) {
+    var run = runFor(snap, legKey);
+    if (!run) return '';
+    return '<a class="cyc-runlink" data-route="#/dashboard/ops/runs/' + esc(run.runId) + '">' +
+      icon('activity', 14) + 'Run <span class="mono">' + esc(run.runId) + '</span> produced this ' + icon('arrow-right', 13) + '</a>';
   }
 
   function settlementCard(snap) {
     var cur = snap.currency, st = snap.settlement, leg = st.leg;
+    var rcaS = legRcaBlock(snap, 'settlement');
+    if (rcaS) return cardBox('Settlement files — outgoing to acquirer' + statusChip(leg), rcaS,
+      markSentBtn(leg) + runLegBtn(snap, 'settlement'));
     var files = st.files.map(function (f) {
       return fileRow(f, f.desc + ' · ' + f.size + ' · ' + (f.generatedAt ? 'generated ' + f.generatedAt : 'not generated'));
     }).join('');
@@ -497,12 +568,16 @@ window.CycleUI = function (kit) {
         ? '<div class="meta">Delivery asserted manually — the platform has no transfer record for these files.</div>'
         : leg.state === 'failed'
           ? '<div class="meta">No settlement files were produced for this cycle.</div>'
-          : files);
-    return cardBox('Settlement files — outgoing to acquirer' + statusChip(leg), body, markSentBtn(leg));
+          : files) +
+      runLink(snap, 'settlement');
+    return cardBox('Settlement files — outgoing to acquirer' + statusChip(leg), body,
+      markSentBtn(leg) + runLegBtn(snap, 'settlement'));
   }
 
   function incomingCard(snap) {
     var cur = snap.currency, inc = snap.incoming, leg = inc.leg;
+    var rcaI = legRcaBlock(snap, 'incoming');
+    if (rcaI) return cardBox('Incoming — response from network' + statusChip(leg), rcaI, runLegBtn(snap, 'incoming'));
     var rej = inc.rejections;
     var rejRows = rej.rows.map(function (r) {
       return '<tr><td class="mono">' + r.arn + '</td><td class="num">' + fmt(r.amount, 2, cur) + '</td>' +
@@ -542,8 +617,9 @@ window.CycleUI = function (kit) {
       '<div class="cyc-sub-title">Rejections</div>' + rejBlock +
       '<div class="cyc-sub-title">Incoming file</div>' +
       (inc.file ? fileRow(inc.file, inc.file.size + ' · ' + inc.file.checksum)
-        : '<div class="meta">' + (leg.state === 'failed' ? 'No incoming file was produced for this cycle.' : 'Not received yet — cutoff ' + leg.cutoffLabel + ' IST ' + leg.cutoffDay + '.') + '</div>');
-    return cardBox('Incoming — response from network' + statusChip(leg), body);
+        : '<div class="meta">' + (leg.state === 'failed' ? 'No incoming file was produced for this cycle.' : 'Not received yet — cutoff ' + leg.cutoffLabel + ' IST ' + leg.cutoffDay + '.') + '</div>') +
+      runLink(snap, 'incoming');
+    return cardBox('Incoming — response from network' + statusChip(leg), body, runLegBtn(snap, 'incoming'));
   }
 
   function jv2Card(snap) {
@@ -635,7 +711,7 @@ window.CycleUI = function (kit) {
     return '<div class="breadcrumb"><a data-route="#/dashboard/ops">Ops Home</a><span class="sep">/</span><span>Cycle Snapshot</span></div>' +
       '<div class="page-head cyc-head">' +
       '<div>' +
-      '<h1 class="page-title cyc-title">' + tenantTag(t.id) +
+      '<h1 class="page-title cyc-title">' + tenantTag(t.id, true) +
       '<span class="cyc-net-badge" style="background:' + net.color + '1A;color:' + net.color + ';border-color:' + net.color + '40">' + net.name + '</span></h1>' +
       '<div class="subtitle">Cycle ' + U.prettyDate(snap.date) + ' · ' + snap.dow +
       ' <span class="cyc-daytag" title="' + esc(DATE_TIP) + '">transaction date · cohort in ' + snap.tz.code + ' (' + snap.tz.offset + ')</span>' +
@@ -647,6 +723,9 @@ window.CycleUI = function (kit) {
       '<div class="head-actions">' +
       '<button class="icon-btn" data-action="cyc-refresh" title="Refresh" aria-label="Refresh">' + icon('refresh-cw', 18) + '</button>' +
       '<button class="btn btn-secondary" data-action="cyc-files">' + icon('folder', 18) + 'Settlement files</button>' +
+      // Part 10.1 — every run for this exact tenant × network × cycle, pre-filtered.
+      '<a class="btn btn-secondary" data-route="#/dashboard/ops/runs?runTenant=' + t.id +
+      '&runNetwork=' + net.key + '&runCycle=' + snap.date + '&runRange=30">' + icon('activity', 18) + 'Runs for this cycle</a>' +
       '<button class="btn btn-primary" data-route="#/dashboard/ops/reconciliation?reconTenant=' + t.id + (snap.recon && snap.recon.cycleId ? '&reconCycle=' + snap.recon.cycleId : '') + '">' + icon('git-compare', 18) + 'View reconciliation</button>' +
       '</div>' + nav +
       '</div></div>';
@@ -754,6 +833,15 @@ window.CycleUI = function (kit) {
       viewSnapshot(S.cycle.tenantId, S.cycle.networkKey, S.cycle.date);
     },
     'cyc-download': function (t) { toast('Downloading ' + t.getAttribute('data-name')); },
+
+    /* Part 7.1 — the launcher is the only way to start a run, whether it is
+       opened from the Run Console or from a leg here. The guards are evaluated
+       inside the panel either way. */
+    'cyc-run-leg': function (t) {
+      var legKey = t.getAttribute('data-leg');
+      if (!window.RUNSUI) return;
+      window.RUNSUI.launcherFor(LEG_OP[legKey], S.cycle.tenantId, S.cycle.networkKey, S.cycle.date);
+    },
 
     /* Part D.6 — the manual assertion. Mandatory note, recorded against the
        leg, reflected on the Ops Home grid the moment the grid next paints. */
