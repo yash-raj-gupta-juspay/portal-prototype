@@ -3297,446 +3297,195 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .dl2 .ird-value.mono, .dl2-scope .ird-value.mono { font-size: 24px; }
 .dl2 .rjf-ird-stage.mono, .dl2-scope .rjf-ird-stage.mono { font-size: 18px; }
 
+
 /* =============================================================================
-   OBSERVABILITY, RCA & RUN CONTROLS (Ops Portal)
+   FILE PROCESSING DETAIL & FAILURE HINTS (Ops Portal)
    Appended last so these components resolve above the `.dl2` block at equal
-   specificity. No new colours: everything below resolves through the design
+   specificity. NO NEW COLOURS: everything below resolves through the design
    tokens already declared at the top of the `.dl2` scope.
    ============================================================================= */
 
-/* ---- Ops Home critical banner (Part 8.2) --------------------------------
-   The ONLY element permitted above the KPI cards, and only for a critical
-   anomaly. It reads as an interruption because it is one. */
-.ops-critical {
-  display: flex; align-items: center; gap: 14px;
-  padding: 16px 18px; margin-bottom: 18px;
-  background: var(--danger-bg); border: 1px solid var(--status-danger-fg);
-  border-left-width: 4px; border-radius: 10px; color: var(--danger-fg);
-}
-.ops-critical > svg, .ops-critical > i { flex: 0 0 auto; color: var(--danger-fg); }
-.ops-critical-body { flex: 1; min-width: 0; }
-.ops-critical-title { font-size: 15px; font-weight: 700; }
-.ops-critical-sub { font-size: 13px; margin-top: 2px; opacity: .9; }
-.ops-critical .btn { flex: 0 0 auto; }
-.qi-why {
-  display: flex; align-items: center; gap: 5px; margin-top: 4px;
-  font-size: 11.5px; color: var(--text-muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+/* ---- Recon File Management ---------------------------------------------- */
+/* Four cells, so the strip declares four columns — the shared default is
+   three, which would leave a fourth cell orphaned on its own row. */
+.amounts-panel.rf-counts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 1279px) { .amounts-panel.rf-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.rf-counts { margin-bottom: 16px; }
+.rf-counts .amount-cell .meta { font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rf-table tbody tr { cursor: pointer; }
+.rf-table tbody tr:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: -2px; }
+.rf-row-failed { background: var(--danger-bg); }
+.rf-row-failed:hover { background: var(--danger-bg); filter: brightness(.985); }
+.rf-row-running { background: var(--info-bg); }
+.rf-name { font-size: 13px; font-weight: 500; color: var(--text-strong); }
+.dl2 .rf-name.mono, .dl2-scope .rf-name.mono { font-size: 13px; }
+.rf-uuid { color: var(--text-faint); }
+.dl2 .rf-uuid.mono, .dl2-scope .rf-uuid.mono { font-size: 11.5px; }
+.rf-failed-step { color: var(--danger-fg); font-weight: 600; }
+.rf-code { color: var(--danger-fg); }
+.dl2 .rf-code.mono, .dl2-scope .rf-code.mono { font-size: 11.5px; }
+.rf-go { color: var(--text-faint); width: 28px; text-align: right; }
+/* Direction and step reached stay on one line so row heights match; the table
+   scrolls inside its own wrapper rather than the labels wrapping unevenly. */
+.rf-table td:nth-child(4), .rf-table td:nth-child(6) { white-space: nowrap; }
 
-/* =========================================================================
-   THE RCA CARD (Part 4)
-   One component, six surfaces. The variants change width and padding only —
-   never the five sections, their order or their labels.
-   ========================================================================= */
-.rca-card, .dl2-scope .rca-card {
-  border: 1px solid var(--border-default); border-radius: 10px;
-  background: var(--bg-card); overflow: hidden;
+/* ---- Panel header -------------------------------------------------------- */
+.fd-panel .sp-head { align-items: flex-start; }
+.fd-name { font-size: 15px; font-weight: 600; color: var(--text-strong); word-break: break-all; }
+.dl2 .fd-name.mono, .dl2-scope .fd-name.mono { font-size: 15px; }
+.fd-uuid { margin-top: 3px; color: var(--text-muted); word-break: break-all; }
+.dl2 .fd-uuid.mono, .dl2-scope .fd-uuid.mono { font-size: 11.5px; }
+.fd-overflow { position: relative; flex: 0 0 auto; }
+.fd-menu {
+  position: absolute; top: 34px; right: 0; z-index: 5; min-width: 190px;
+  background: var(--bg-card); border: 1px solid var(--border-default);
+  border-radius: 9px; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14); padding: 5px;
 }
-.rca-card.rca-failed { border-left: 4px solid var(--status-danger-fg); }
-.rca-card.rca-blocked { border-left: 4px solid var(--status-warning-fg); }
+.fd-menu button {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  background: none; border: 0; cursor: pointer; text-align: left;
+  padding: 8px 10px; border-radius: 6px;
+  font-size: 13px; color: var(--text-primary);
+}
+.fd-menu button:hover { background: var(--bg-subtle); }
 
-.rca-head {
-  display: flex; align-items: flex-start; gap: 12px;
-  padding: 16px 18px; background: var(--danger-bg);
+/* ---- Tabs ---------------------------------------------------------------- */
+.fd-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border-light); }
+.fd-tabs .fd-tab {
+  background: none; border: 0; cursor: pointer; padding: 9px 14px 11px;
+  font-size: 13.5px; font-weight: 500; color: var(--text-secondary);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
-.rca-blocked .rca-head { background: var(--warn-bg); }
-.rca-ic { flex: 0 0 auto; line-height: 0; color: var(--status-danger-fg); }
-.rca-blocked .rca-ic { color: var(--status-warning-fg); }
-.rca-head-body { flex: 1; min-width: 0; }
-.rca-title {
-  font-size: 16px; font-weight: 700; line-height: 1.3;
-  color: var(--status-danger-fg);
+.fd-tabs .fd-tab:hover { color: var(--text-primary); }
+.fd-tabs .fd-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.sp-body > .fd-tabs + .fd-tabbody { margin-top: 20px; }
+.fd-tabbody > * + * { margin-top: 20px; }
+.fd-section-title {
+  font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-muted); margin-bottom: 12px;
 }
-.rca-blocked .rca-title { color: var(--status-warning-fg); }
-.rca-ctx { font-size: 12.5px; margin-top: 3px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.rca-tags { display: flex; gap: 6px; flex-wrap: wrap; flex: 0 0 auto; }
-.rca-tag, .run-tag {
-  font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
-  padding: 2px 7px; border-radius: 4px;
-  background: var(--status-neutral-bg); color: var(--status-neutral-fg);
-}
-.rca-tag.duplicate, .run-tag.duplicate { background: var(--status-danger-bg); color: var(--status-danger-fg); }
-.rca-tag.overridden, .run-tag.overridden { background: var(--status-warning-bg); color: var(--status-warning-fg); }
-.rca-tag.voided, .run-tag.voided { background: var(--status-neutral-bg); color: var(--status-neutral-fg); text-decoration: line-through; }
+.fd-facts dd { word-break: break-word; }
+.fd-foot dt, .fd-foot dd { font-size: 13px; }
 
-.rca-sec { padding: 14px 18px; border-top: 1px solid var(--border-light); }
-.rca-sec-label {
-  font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
-  color: var(--text-muted); margin-bottom: 6px;
-}
-.rca-text { font-size: 13.5px; line-height: 1.55; color: var(--text-primary); margin: 0; }
-.rca-why-unknown .rca-text { color: var(--text-secondary); font-style: italic; }
-
-.rca-evidence {
-  margin: 0; padding: 12px 14px; border-radius: 8px;
+.fd-superseded {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 13px; border-radius: 8px; font-size: 12.5px; line-height: 1.5;
   background: var(--bg-subtle); border: 1px solid var(--border-light);
-  color: var(--text-primary); white-space: pre; overflow-x: auto;
-  line-height: 1.65; max-width: 100%;
+  color: var(--text-secondary);
 }
-.dl2 .rca-evidence.mono, .dl2-scope .rca-evidence.mono { font-size: 12.5px; }
-.rca-unknown .rca-evidence { border-color: var(--border-default); }
-.rca-ev-foot { display: flex; align-items: center; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
-.rca-trunc { margin-top: 6px; }
+.fd-superseded > svg, .fd-superseded > i { flex: 0 0 auto; color: var(--text-muted); }
+.dl2 .fd-superseded .mono, .dl2-scope .fd-superseded .mono { font-size: 12px; }
+.fd-mono-sm { word-break: break-all; }
+.dl2 .fd-mono-sm.mono, .dl2-scope .fd-mono-sm.mono { font-size: 12.5px; }
 
-.rca-todo { background: var(--bg-subtle); }
-.rca-actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
-.rca-override-note {
-  display: flex; gap: 8px; align-items: flex-start; margin-top: 10px;
-  padding: 10px 12px; border-radius: 8px; font-size: 12.5px;
-  background: var(--warn-bg); color: var(--warn-fg);
-}
-.rca-override-note.approved { background: var(--ok-bg); color: var(--ok-fg); }
-.rca-override-note.rejected { background: var(--danger-bg); color: var(--danger-fg); }
-.rca-override-note .meta { color: inherit; opacity: .85; margin-top: 3px; }
-
-/* Variants — density only. */
-.rca-inline .rca-head { padding: 13px 15px; }
-.rca-inline .rca-sec { padding: 12px 15px; }
-.rca-inline .rca-title { font-size: 15px; }
-.rca-panel { border: 0; border-radius: 0; border-left: 0; }
-.rca-panel.rca-failed { border-top: 3px solid var(--status-danger-fg); }
-.rca-panel.rca-blocked { border-top: 3px solid var(--status-warning-fg); }
-
-/* =========================================================================
-   RUN CONSOLE — list
-   ========================================================================= */
-.run-health .run-kpi.clickable { cursor: pointer; }
-.run-health .run-kpi.active { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
-.run-scope { margin: 0 0 12px; }
-.run-more { margin-top: 10px; }
-
-.run-anom {
-  display: flex; align-items: center; gap: 14px; cursor: pointer;
-  padding: 14px 16px; margin-bottom: 16px; border-radius: 10px;
-  background: var(--danger-bg); border: 1px solid var(--status-danger-fg);
-  border-left-width: 4px; color: var(--danger-fg);
-}
-.run-anom-body { flex: 1; min-width: 0; }
-.run-anom .meta { color: inherit; opacity: .85; }
-
-.run-table td { vertical-align: top; }
-.dl2 .run-table .run-id.mono { font-size: 13px; font-weight: 600; }
-.run-table .cell-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.run-row-failed > td:first-child { box-shadow: inset 3px 0 0 var(--status-danger-fg); }
-.run-row-blocked > td:first-child { box-shadow: inset 3px 0 0 var(--status-warning-fg); }
-.run-row-running > td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
-.run-row-void { opacity: .6; }
-.run-tags { display: inline-flex; gap: 5px; }
-.run-net {
-  display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 5px;
-  background: var(--status-neutral-bg); color: var(--text-primary);
-  font-size: 11.5px; font-weight: 600; white-space: nowrap;
-}
-.run-net-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
-.run-net-none { color: var(--text-muted); }
-
-/* ---- Override queue (Part 7.4) ------------------------------------------ */
-.run-ovr-card .role-bar { gap: 12px; }
-.ovr-list { display: flex; flex-direction: column; gap: 12px; }
-.ovr-row {
-  display: flex; gap: 16px; align-items: flex-start;
-  padding: 14px; border: 1px solid var(--border-default); border-radius: 9px;
-  background: var(--bg-subtle);
-}
-.ovr-row.decided { opacity: .8; background: var(--bg-card); }
-.ovr-main { flex: 1; min-width: 0; }
-.ovr-head { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.ovr-consequence {
-  display: flex; gap: 7px; align-items: flex-start; margin: 8px 0;
-  font-size: 12.5px; padding: 8px 10px; border-radius: 7px;
-  background: var(--danger-bg); color: var(--danger-fg);
-}
-.ovr-reason { font-size: 12.5px; color: var(--text-secondary); margin-top: 6px; font-style: italic; }
-.ovr-actions { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; flex-wrap: wrap; }
-.ovr-selfnote {
-  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
-  color: var(--warn-fg); background: var(--warn-bg); padding: 6px 10px; border-radius: 7px;
-}
-
-/* =========================================================================
-   RUN CONSOLE — detail
-   ========================================================================= */
-.run-head .page-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.dl2 .run-title .mono { font-size: 22px; font-weight: 700; }
-.run-head .head-actions { align-items: center; gap: 12px; }
-.run-detail-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
-
-.run-timeline { list-style: none; margin: 0; padding: 0; }
-.run-step { display: flex; gap: 12px; position: relative; padding-bottom: 16px; }
-.run-step:not(:last-child)::before {
-  content: ''; position: absolute; left: 9px; top: 24px; bottom: 0;
+/* ---- Step timeline (brief 3.3) ------------------------------------------
+   The existing vertical timeline pattern: circular status icons joined by a
+   connecting line. More rows, and each row can carry a block beneath it. */
+.fd-timeline { display: flex; flex-direction: column; }
+.fd-step { display: flex; gap: 12px; position: relative; padding-bottom: 18px; }
+.fd-step:last-child { padding-bottom: 0; }
+.fd-step::before {
+  content: ''; position: absolute; left: 10px; top: 24px; bottom: 2px;
   width: 2px; background: var(--border-default);
 }
-.rs-icon { flex: 0 0 20px; line-height: 0; color: var(--text-muted); z-index: 1; background: var(--bg-card); }
-.run-step.rs-succeeded .rs-icon { color: var(--ok-fg); }
-.run-step.rs-failed .rs-icon { color: var(--danger-fg); }
-.run-step.rs-blocked .rs-icon { color: var(--warn-fg); }
-.run-step.rs-running .rs-icon { color: var(--primary); }
-.rs-body { flex: 1; min-width: 0; }
-.rs-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.rs-name { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
-.run-step.rs-notrun .rs-name, .run-step.rs-notrun .rs-dur { color: var(--text-muted); font-weight: 500; }
-.rs-dur { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.fd-step:last-child::before { display: none; }
+.fd-step.success::before { background: var(--ok-fg); opacity: .32; }
+.fd-step.failed::before { background: var(--danger-fg); opacity: .32; }
+.fd-step-icon { flex: 0 0 22px; line-height: 0; margin-top: 1px; color: var(--text-faint); }
+.fd-step-icon svg, .fd-step-icon i { width: 18px; height: 18px; }
+.fd-step.success > .fd-step-icon { color: var(--ok-fg); }
+.fd-step.failed > .fd-step-icon { color: var(--danger-fg); }
+.fd-step.running > .fd-step-icon { color: var(--info-fg); }
+.fd-step-body { flex: 1; min-width: 0; }
+.fd-step-name { font-size: 14px; font-weight: 600; color: var(--text-strong); }
+.fd-step-meta { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+.fd-step.success > .fd-step-body > .fd-step-meta { color: var(--ok-fg); }
+.fd-step.failed > .fd-step-body > .fd-step-meta { color: var(--danger-fg); font-weight: 600; }
+.fd-step.running > .fd-step-body > .fd-step-meta { color: var(--info-fg); }
+/* Everything after a failure is greyed and reads "Not run" (brief 3.3).
+   Greyed, not invisible: --text-faint on white measures 2.19:1, which is below
+   what 13px type can carry, so these use --text-muted and let the faint tone
+   stay on the icon where it costs nothing to read. */
+.fd-step.skipped > .fd-step-body > .fd-step-name,
+.fd-step.pending > .fd-step-body > .fd-step-name { color: var(--text-muted); font-weight: 500; }
+.fd-step.skipped > .fd-step-body > .fd-step-meta,
+.fd-step.pending > .fd-step-body > .fd-step-meta { color: var(--text-muted); }
+.fd-step-counts { font-size: 12.5px; color: var(--text-secondary); margin-top: 3px; }
 
-.run-stage-detail {
-  margin-top: 8px; padding: 10px 12px; border-radius: 7px;
+/* Nested checks (brief 3.4) — same pattern, indented, with the arrow link. */
+.fd-substeps { margin-top: 12px; padding-left: 2px; border-left: 2px solid var(--border-light); }
+.fd-substeps .fd-step { padding-left: 12px; padding-bottom: 14px; }
+.fd-substeps .fd-step::before { display: none; }
+.fd-substeps .fd-step-name { font-size: 13.5px; font-weight: 500; }
+.fd-check-link {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 5px;
+  font-size: 12.5px; color: var(--primary); cursor: pointer;
+}
+
+/* ---- The failed-step inline block (brief 3.3, enhancement 3) -------------
+   The whole point of the brief. Hint, raw detail clamped to two lines, then
+   at most two actions. */
+.fd-fail {
+  margin-top: 12px; padding: 14px; border-radius: 8px;
+  background: var(--danger-bg); border-left: 3px solid var(--danger-fg);
+}
+.fd-fail-hint { font-size: 14px; line-height: 1.5; color: var(--text-primary); }
+.fd-fail-code { margin-top: 8px; color: var(--danger-fg); }
+.dl2 .fd-fail-code.mono, .dl2-scope .fd-fail-code.mono { font-size: 12px; }
+.fd-fail-detail {
+  margin-top: 10px; color: var(--text-secondary); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-word;
+}
+.dl2 .fd-fail-detail.mono, .dl2-scope .fd-fail-detail.mono { font-size: 13px; }
+.fd-fail-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.fd-fail-actions .btn { flex: 0 0 auto; }
+
+/* ---- Validation Details tab --------------------------------------------- */
+.fd-checks { display: flex; flex-direction: column; gap: 14px; }
+.fd-check {
+  padding: 14px; border-radius: 9px;
+  background: var(--bg-card); border: 1px solid var(--border-default);
+}
+.fd-check.failed { border-color: var(--danger-fg); }
+.fd-check-head { display: flex; align-items: flex-start; gap: 10px; }
+.fd-check-under { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.fd-check > .fd-step-meta { margin-top: 10px; }
+.fd-check.success > .fd-step-meta { color: var(--ok-fg); }
+.fd-check.failed > .fd-step-meta { color: var(--danger-fg); font-weight: 600; }
+
+/* ---- Entry points on the other two screens ------------------------------ */
+.cyc-runlink { margin-top: 14px; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--primary); cursor: pointer; }
+.dl2 .cyc-runlink .mono, .dl2-scope .cyc-runlink .mono { font-size: 12px; }
+.cyc-seefailed {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 7px 12px; border-radius: 7px; font-size: 12.5px; font-weight: 600;
   background: var(--danger-bg); color: var(--danger-fg);
+  border: 1px solid var(--danger-fg);
 }
-.run-step.rs-blocked .run-stage-detail { background: var(--warn-bg); color: var(--warn-fg); }
-.dl2 .rsd-code.mono, .rsd-code { font-size: 12px; font-weight: 700; letter-spacing: .02em; }
-.rsd-text { font-size: 12.5px; margin-top: 4px; line-height: 1.5; }
-
-.run-checks { margin-top: 8px; }
-.run-checks-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
-.run-check-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.run-check-list li {
-  display: grid; grid-template-columns: 18px minmax(0, 160px) minmax(0, 1fr);
-  gap: 8px; align-items: start; font-size: 12.5px; line-height: 1.45;
-}
-.run-check-list li > svg, .run-check-list li > i { margin-top: 1px; }
-.rc-pass > svg, .rc-pass > i { color: var(--ok-fg); }
-.rc-warn > svg, .rc-warn > i { color: var(--warn-fg); }
-.rc-block > svg, .rc-block > i { color: var(--danger-fg); }
-.rc-skip > svg, .rc-skip > i { color: var(--text-faint); }
-.rc-label { font-weight: 600; color: var(--text-primary); }
-.rc-msg { color: var(--text-secondary); }
-.rc-skip .rc-label, .rc-skip .rc-msg { color: var(--text-muted); }
-
-.run-details { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; }
-.run-kv { display: grid; grid-template-columns: minmax(0, 120px) minmax(0, 1fr); gap: 6px 14px; margin: 0; }
-.run-kv dt { font-size: 12px; color: var(--text-muted); }
-.run-kv dd { font-size: 12.5px; margin: 0; color: var(--text-primary); word-break: break-word; }
-.run-file + .run-file { margin-top: 16px; }
-.run-file-label {
-  font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--text-muted); margin-bottom: 6px;
-}
-.dl2 .run-s3.mono { font-size: 11.5px; }
-.run-failstage { color: var(--danger-fg); font-weight: 600; }
-.run-bad { color: var(--danger-fg); font-weight: 600; }
-
-.run-related { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; }
-.run-rel {
-  display: flex; align-items: center; gap: 9px; cursor: pointer;
-  padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-light);
-  font-size: 13px; color: var(--primary); background: var(--bg-card);
-}
-.run-rel:hover { background: var(--bg-subtle); border-color: var(--border-default); }
-.run-rel span { flex: 1; min-width: 0; color: var(--text-primary); }
-
-.run-log { padding: 0; overflow: hidden; }
-.run-log-head {
-  display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 16px 20px; background: none; border: 0; cursor: pointer; text-align: left;
-}
-.run-log-head .meta { margin-left: auto; }
-.run-log-body { padding: 0 20px 18px; }
-.run-log-body pre {
-  margin: 0; padding: 14px; border-radius: 8px; max-height: 460px; overflow: auto;
-  background: var(--bg-subtle); border: 1px solid var(--border-light);
-  white-space: pre; line-height: 1.6;
-}
-.dl2 .run-log-body pre.mono { font-size: 12px; }
-.run-log-foot { margin-top: 10px; }
-
-/* =========================================================================
-   THE RUN LAUNCHER (Part 7.1)
-   ========================================================================= */
-.rl-intro { margin-bottom: 18px; }
-.rl-sec-label {
-  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--text-muted); margin-bottom: 8px;
-}
-.rl-ops { display: flex; flex-direction: column; gap: 6px; margin-bottom: 20px; }
-.rl-op {
-  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
-  padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-light);
-}
-.rl-op:hover { background: var(--bg-subtle); }
-.rl-op.active { border-color: var(--primary); background: var(--primary-subtle-bg); }
-.rl-op input { margin-top: 3px; flex: 0 0 auto; accent-color: var(--primary); }
-.rl-op-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.rl-op-label { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
-.rl-op-blurb { font-size: 12px; color: var(--text-secondary); line-height: 1.45; }
-
-.rl-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-bottom: 20px; }
-.rl-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.rl-field > span { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
-.rl-na-note {
-  font-size: 12px; color: var(--text-muted); padding: 11px 12px;
-  border: 1px dashed var(--border-default); border-radius: 8px; line-height: 1.35;
-}
-
-/* The mandatory current-state block. It is the single most important element
-   on the panel, so it is the visually heaviest thing that is not a control. */
-.rl-state {
-  border: 1px solid var(--border-default); border-radius: 9px;
-  background: var(--bg-subtle); padding: 14px; margin-bottom: 16px;
-}
-.rl-state-head {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--text-muted); margin-bottom: 10px;
-}
-.rl-state-scope { text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 12px; color: var(--text-primary); }
-.rl-state-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
-.rl-state-list li {
-  display: grid; grid-template-columns: 18px minmax(0, 1fr) auto 16px;
-  gap: 8px; align-items: center; font-size: 12.5px;
-}
-.rl-state-list li > svg, .rl-state-list li > i { color: var(--text-faint); }
-.rls-done > svg, .rls-done > i { color: var(--ok-fg); }
-.rls-duplicate > svg, .rls-duplicate > i { color: var(--danger-fg); }
-.rls-failed > svg, .rls-failed > i { color: var(--danger-fg); }
-.rls-running > svg, .rls-running > i { color: var(--primary); }
-.rls-label { color: var(--text-primary); font-weight: 500; display: flex; align-items: center; gap: 6px; min-width: 0; }
-.rl-state-acq {
-  font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 700;
-  padding: 1px 5px; border-radius: 3px; background: var(--status-neutral-bg); color: var(--status-neutral-fg);
-}
-.rls-at { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
-.rls-none .rls-at { color: var(--text-muted); }
-.rls-link { line-height: 0; color: var(--primary); cursor: pointer; }
-.rls-note {
-  grid-column: 2 / -1; font-size: 11.5px; color: var(--danger-fg);
-  background: var(--danger-bg); padding: 3px 8px; border-radius: 5px; justify-self: start;
-}
-
-.rl-guards { display: flex; flex-direction: column; gap: 10px; }
-.rl-guard {
-  display: flex; gap: 10px; align-items: flex-start;
-  padding: 12px; border-radius: 8px; font-size: 12.5px; line-height: 1.5;
-}
-.rl-guard > svg, .rl-guard > i { flex: 0 0 auto; margin-top: 1px; }
-.rl-guard strong { display: block; margin-bottom: 2px; }
-.rl-guard.ok { background: var(--ok-bg); color: var(--ok-fg); }
-.rl-guard.warn { background: var(--warn-bg); color: var(--warn-fg); }
-.rl-guard.block { background: var(--danger-bg); color: var(--danger-fg); }
-.rl-guard-extra { margin-top: 4px; font-weight: 600; }
-.rl-allchecks { font-size: 12.5px; }
-.rl-allchecks summary { cursor: pointer; color: var(--text-secondary); padding: 4px 0; }
-.rl-allchecks .run-check-list li { grid-template-columns: 18px minmax(0, 150px) minmax(0, 1fr); }
-
-.rl-foot { display: flex; flex-direction: column; gap: 10px; width: 100%; }
-.rl-foot-reason {
-  display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px;
-  color: var(--danger-fg); background: var(--danger-bg); padding: 9px 11px; border-radius: 7px;
-}
-.rl-foot-btns { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
-.rl-counter { font-size: 12px; color: var(--text-muted); margin-top: 4px; display: block; }
-.rl-counter.ok { color: var(--ok-fg); }
-
-/* =========================================================================
-   DUPLICATE REMEDIATION (Part 8.3)
-   ========================================================================= */
-.dup-reasons { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
-.dup-reason {
-  display: flex; gap: 8px; align-items: center; font-size: 13px;
-  padding: 9px 12px; border-radius: 7px;
-  background: var(--danger-bg); color: var(--danger-fg);
-}
-.dup-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 20px; }
-.dup-table th[scope="row"] {
-  text-align: left; font-size: 12px; color: var(--text-muted);
-  font-weight: 600; white-space: nowrap;
-}
-.dup-table td { font-size: 13px; vertical-align: top; }
-.dup-table tr.dup-differs td { background: var(--warn-bg); }
-.dup-table tr.dup-differs th[scope="row"] { color: var(--warn-fg); }
-.dup-yes { display: inline-flex; align-items: center; gap: 5px; color: var(--ok-fg); font-weight: 600; }
-.dup-no { display: inline-flex; align-items: center; gap: 5px; color: var(--danger-fg); font-weight: 600; }
-.dup-assessment { font-size: 14px; line-height: 1.65; color: var(--text-primary); margin: 0 0 10px; }
-
-.dup-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-.dup-steps li {
-  display: flex; gap: 12px; align-items: center;
-  padding: 14px; border: 1px solid var(--border-light); border-radius: 9px;
-}
-.dup-steps li > svg, .dup-steps li > i { flex: 0 0 auto; color: var(--text-secondary); }
-.dup-steps li > div { flex: 1; min-width: 0; }
-.dup-steps li.done { background: var(--ok-bg); border-color: var(--ok-fg); }
-.dup-steps li.done > svg, .dup-steps li.done > i { color: var(--ok-fg); }
-.dup-prevention {
-  display: flex; gap: 10px; align-items: center; margin-top: 20px;
-  padding: 13px 16px; border-radius: 9px; font-size: 13px;
-  background: var(--ok-bg); color: var(--ok-fg);
-}
-.dup-prevention svg, .dup-prevention i { flex: 0 0 auto; }
-.run-note {
-  margin: 0; padding: 14px; border-radius: 8px; max-height: 420px; overflow: auto;
-  background: var(--bg-subtle); border: 1px solid var(--border-light);
-  white-space: pre; line-height: 1.6;
-}
-.dl2 .run-note.mono, .dl2-scope .run-note.mono { font-size: 12px; }
-.modal.wide { width: 720px; }
-
-/* =========================================================================
-   RCA ON THE OTHER FIVE SCREENS (Part 9)
-   Same component, five frames.
-   ========================================================================= */
-.cyc-rca { display: flex; flex-direction: column; gap: 10px; }
-.cyc-rca-link, .cyc-runlink, .rej-runlink a.btn-ghost {
-  display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px;
-  color: var(--primary); cursor: pointer;
-}
-.cyc-runlink { margin-top: 14px; }
-.cyc-critical {
-  display: flex; gap: 12px; align-items: center; cursor: pointer; margin-bottom: 14px;
-  padding: 13px 15px; border-radius: 9px; font-size: 13px; line-height: 1.5;
-  background: var(--danger-bg); color: var(--danger-fg);
-  border: 1px solid var(--status-danger-fg); border-left-width: 4px;
-}
-.cyc-critical-body { flex: 1; min-width: 0; }
-.cyc-critical svg, .cyc-critical i { flex: 0 0 auto; }
-
 .sf-why {
   display: inline-flex; align-items: center; gap: 4px; margin-top: 4px;
   background: none; border: 0; padding: 0; cursor: pointer;
   font-size: 11.5px; font-weight: 600; color: var(--primary);
 }
+.sf-row-clickable { cursor: pointer; }
+.sf-row-clickable:focus-visible { outline: 2px solid var(--primary-ring); outline-offset: -2px; }
 .sf-related { display: flex; flex-wrap: wrap; gap: 14px; margin: 12px 0 4px; }
 .sf-related a {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12.5px; color: var(--primary); cursor: pointer;
 }
-.sf-report-rca { margin: 12px 0 4px; }
-
-.rej-rca { display: block; }
 .rej-runlink {
   display: flex; align-items: center; gap: 10px; font-size: 12.5px;
   padding: 10px 14px; border-radius: 8px;
   background: var(--bg-subtle); border: 1px solid var(--border-light);
 }
 .rej-runlink > span { flex: 1; min-width: 0; }
-
-.recon-sys-break { border-color: var(--status-danger-fg); }
 .recon-net-break { border-color: var(--border-strong); }
-.recon-sys-break .card-title, .recon-net-break .card-title {
+.recon-net-break .card-title {
   display: flex; align-items: center; gap: 8px; color: var(--status-danger-fg);
 }
-.recon-cause-tag {
-  font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-  padding: 2px 7px; border-radius: 4px;
-  background: var(--status-danger-bg); color: var(--status-danger-fg);
-}
-.recon-cause-tag.network { background: var(--status-neutral-bg); color: var(--status-neutral-fg); }
 .recon-break-links { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-
-.cfg-run-rca { margin-top: 14px; }
-.cfg-run-rca-head {
-  display: flex; align-items: center; gap: 7px; margin-bottom: 8px;
-  font-size: 12.5px; font-weight: 600; color: var(--danger-fg);
-}
-.cfg-run-links { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; }
-.cfg-run-links a {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12.5px; color: var(--primary); cursor: pointer;
-}
 .cfg-run-hint { background: var(--info-bg); }
-
-/* ---- Narrow-desktop reflow ---------------------------------------------- */
-@media (max-width: 1400px) {
-  .run-detail-grid, .run-details, .dup-grid { grid-template-columns: minmax(0, 1fr); }
-  .rl-fields { grid-template-columns: minmax(0, 1fr); }
-}
+.dl2 .cfg-run-hint .mono, .dl2-scope .cfg-run-hint .mono { font-size: 12.5px; }

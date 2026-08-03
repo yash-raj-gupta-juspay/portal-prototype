@@ -101,19 +101,25 @@ window.SFILES = (function () {
     'hsbc-in|MPR': { delivery: 'Shared', validation: 'Validated' },
     'hsbc-in|MPF': { delivery: 'Shared', validation: 'Mismatch' },
     'hsbc-in|JV1': { delivery: 'Shared', validation: 'Validated' },
-    'hsbc-in|JV2': { delivery: 'Pending', validation: 'Validated' },
+    // Generation stopped at the fee rules, so no file exists to validate —
+    // "Pending + Validated" would have claimed a validation of nothing.
+    'hsbc-in|JV2': { delivery: 'Pending', validation: 'Not run' },
     'hsbc-sg|MPR': { delivery: 'Shared', validation: 'Validated' },
     'hsbc-sg|MPF': { delivery: 'Shared', validation: 'Validated' },
     'hsbc-sg|JV1': { delivery: 'Failed', validation: 'Not run' },
-    'hsbc-sg|JV2': { delivery: 'Shared', validation: 'Validated' }
-    // HSBC HK — all four Shared + Validated (falls through to the default)
+    'hsbc-sg|JV2': { delivery: 'Shared', validation: 'Validated' },
+    // The file is written and the transfer is still running at the observer's
+    // 09:00 — the in-progress case the file detail panel has to render.
+    'hsbc-hk|JV2': { delivery: 'Pending', validation: 'Not run' }
+    // HSBC HK MPR / MPF / JV1 — Shared + Validated (falls through to the default)
   };
 
   /* Prior dates: clean by default, with a handful of authored exceptions so
      stepping back through the date filter shows the full state vocabulary. */
   var PAST_STATES = {
     '3|hsbc-in|MPF': { delivery: 'Shared', validation: 'Mismatch' },
-    '4|hsbc-hk|JV2': { delivery: 'Pending', validation: 'Validated' },
+    // The schedule excluded the day, so nothing was due and nothing was made.
+    '4|hsbc-hk|JV2': { delivery: 'Pending', validation: 'Not run' },
     '5|yesbank|GEFU1': { delivery: 'Failed', validation: 'Not run' },
     '6|hsbc-sg|MPR': { delivery: 'Shared', validation: 'Validated', manual: true },
     '9|hsbc-in|JV2': { delivery: 'Failed', validation: 'Validated' },

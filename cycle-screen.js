@@ -446,67 +446,44 @@ window.CycleUI = function (kit) {
   }
 
   /* =======================================================================
-     OBSERVABILITY BRIEF PART 9 — RCA INLINE ON A FAILED LEG
-     A leg in a failed state stops showing its normal content and shows the
-     reason instead, using the same RCA component the Run Console uses. Nothing
-     about the card changes here: same five sections, same evidence cap, same
-     two-action limit. Only the frame around it differs.
+     FILE-DETAIL BRIEF PART 6 — "SEE WHAT FAILED →" ON A FAILED LEG
+     The third entry point into the one file detail panel. A leg in a failed
+     state gets a link that opens the panel for that leg's file, where the
+     failed step carries its hint, its raw error line and its way to the fix.
+
+     The link is rendered ONLY when the file record actually has a failed step.
+     Some legs fail for reasons that never touched the file pipeline — a batch
+     the network accepted and then rejected, or a leg that never ran because
+     the one before it failed. There is nothing a file-detail panel could
+     honestly show for those, so they get no link at all rather than a link to
+     a panel with nothing in it (Part 7).
      ======================================================================= */
-  function runFor(snap, legKey) {
-    if (!window.RUNS) return null;
-    return window.RUNS.runForLeg(snap.tenant.id, snap.network.key, snap.date, legKey);
+  function fileForLeg(snap, legKey) {
+    if (!window.PFILES) return null;
+    return window.PFILES.forLeg(snap.tenant.id, snap.network.key, snap.date, legKey);
   }
-  function failedRunFor(snap, legKey) {
-    if (!window.RUNS) return null;
-    return window.RUNS.failedRunForLeg(snap.tenant.id, snap.network.key, snap.date, legKey);
-  }
-  /* Returns the replacement body for a failed leg's card, or '' when the leg is
-     fine or when no run stands behind it (an older cycle the run model does not
-     reach) — in which case the card keeps the note it always had. */
-  function legRcaBlock(snap, legKey) {
-    var run = failedRunFor(snap, legKey);
-    if (!run || !kit.rca) return '';
-    return '<div class="cyc-rca">' + kit.rca.card(run, { variant: 'inline' }) +
-      '<a class="cyc-rca-link" data-route="#/dashboard/ops/runs/' + esc(run.runId) + '">' +
-      'View run ' + esc(run.runId) + ' ' + icon('arrow-right', 14) + '</a></div>';
+  function seeWhatFailed(snap, legKey) {
+    var leg = snap.byKey[legKey];
+    if (!leg || leg.state !== 'failed') return '';
+    var f = fileForLeg(snap, legKey);
+    if (!f || !window.PFILES.failedStep(f)) return '';
+    return '<a class="cyc-seefailed" data-action="cyc-file-detail" data-leg="' + esc(legKey) + '">' +
+      icon('file-warning', 15) + 'See what failed' + icon('arrow-right', 14) + '</a>';
   }
 
-  /* Part 8.2 · surface 2 — the inline critical callout on the clearing leg of
-     an affected cycle. */
-  function duplicateCallout(snap) {
-    if (!window.RUNS) return '';
-    var a = window.RUNS.anomalyFor(snap.tenant.id, snap.network.key, snap.date);
-    if (!a) return '';
-    return '<div class="cyc-critical" data-route="#/dashboard/ops/runs/duplicate/' + a.tenantId + '/' + a.networkKey + '/' + a.cycleDate + '">' +
-      icon('x-circle', 20) +
-      '<div class="cyc-critical-body"><strong>This cycle was staged twice.</strong> ' +
-      esc(a.runIds.join(' and ')) + ' each sent a clearing file to ' + esc(a.networkName) + '. ' +
-      esc(window.RUNS.assessment(a)) +
-      '</div><span class="btn btn-secondary btn-sm">Investigate ' + icon('arrow-right', 14) + '</span></div>';
-  }
-
-  /* Part 7.1 — "Run this leg" opens the same launcher the Run Console opens,
-     pre-selected on this leg, this tenant, this network and this cycle. There
-     is no second way to start a run. */
-  var LEG_OP = {
-    clearing: 'CLEARING_STAGE', settlement: 'SETTLEMENT_GENERATE',
-    incoming: 'INCOMING_PARSE', jv2: 'SETTLEMENT_GENERATE'
-  };
-  function runLegBtn(snap, legKey) {
-    if (!window.RUNSUI || !LEG_OP[legKey]) return '';
-    return '<button class="btn btn-secondary btn-sm" data-action="cyc-run-leg" data-leg="' + legKey + '" ' +
-      'title="Open the run launcher for this leg — the guards still apply">' +
-      icon('play', 15) + 'Run this leg</button>';
+  /* A leg links to the file behind it whether or not it failed. Omitted when
+     the leg has no file record. */
+  function runLink(snap, legKey) {
+    var f = fileForLeg(snap, legKey);
+    if (!f) return '';
+    return '<a class="cyc-runlink" data-action="cyc-file-detail" data-leg="' + esc(legKey) + '">' +
+      icon('list-checks', 14) + 'How <span class="mono">' + esc(f.name) + '</span> was processed ' +
+      icon('arrow-right', 13) + '</a>';
   }
 
   function clearingCard(snap) {
     var cur = snap.currency, cl = snap.clearing, leg = cl.leg;
-    // A failed leg shows the reason instead of the numbers — the numbers are
-    // about a file that does not exist.
-    var rca = legRcaBlock(snap, 'clearing');
-    if (rca) return cardBox('Clearing — outgoing to network' + statusChip(leg), duplicateCallout(snap) + rca, runLegBtn(snap, 'clearing'));
     var body =
-      duplicateCallout(snap) +
       '<div class="cyc-2col">' +
       kv([
         ['Transaction cohort', esc(snap.cohort.from) + ' → ' + esc(snap.cohort.to), 'Stated in the tenant’s own zone — the transactions genuinely happened on local time. Every processing time on this screen is IST.'],
@@ -528,22 +505,11 @@ window.CycleUI = function (kit) {
       '<div class="cyc-sub-title">Outgoing clearing file</div>' +
       fileRow(cl.file, cl.file.size + ' · ' + cl.file.checksum + ' · ' + cl.file.dest) +
       runLink(snap, 'clearing');
-    return cardBox('Clearing — outgoing to network' + statusChip(leg), body, runLegBtn(snap, 'clearing'));
-  }
-
-  /* Part 10.1 — a cycle-snapshot leg links to the run that produced it. */
-  function runLink(snap, legKey) {
-    var run = runFor(snap, legKey);
-    if (!run) return '';
-    return '<a class="cyc-runlink" data-route="#/dashboard/ops/runs/' + esc(run.runId) + '">' +
-      icon('activity', 14) + 'Run <span class="mono">' + esc(run.runId) + '</span> produced this ' + icon('arrow-right', 13) + '</a>';
+    return cardBox('Clearing — outgoing to network' + statusChip(leg), body, seeWhatFailed(snap, 'clearing'));
   }
 
   function settlementCard(snap) {
     var cur = snap.currency, st = snap.settlement, leg = st.leg;
-    var rcaS = legRcaBlock(snap, 'settlement');
-    if (rcaS) return cardBox('Settlement files — outgoing to acquirer' + statusChip(leg), rcaS,
-      markSentBtn(leg) + runLegBtn(snap, 'settlement'));
     var files = st.files.map(function (f) {
       return fileRow(f, f.desc + ' · ' + f.size + ' · ' + (f.generatedAt ? 'generated ' + f.generatedAt : 'not generated'));
     }).join('');
@@ -571,13 +537,11 @@ window.CycleUI = function (kit) {
           : files) +
       runLink(snap, 'settlement');
     return cardBox('Settlement files — outgoing to acquirer' + statusChip(leg), body,
-      markSentBtn(leg) + runLegBtn(snap, 'settlement'));
+      markSentBtn(leg) + seeWhatFailed(snap, 'settlement'));
   }
 
   function incomingCard(snap) {
     var cur = snap.currency, inc = snap.incoming, leg = inc.leg;
-    var rcaI = legRcaBlock(snap, 'incoming');
-    if (rcaI) return cardBox('Incoming — response from network' + statusChip(leg), rcaI, runLegBtn(snap, 'incoming'));
     var rej = inc.rejections;
     var rejRows = rej.rows.map(function (r) {
       return '<tr><td class="mono">' + r.arn + '</td><td class="num">' + fmt(r.amount, 2, cur) + '</td>' +
@@ -619,7 +583,7 @@ window.CycleUI = function (kit) {
       (inc.file ? fileRow(inc.file, inc.file.size + ' · ' + inc.file.checksum)
         : '<div class="meta">' + (leg.state === 'failed' ? 'No incoming file was produced for this cycle.' : 'Not received yet — cutoff ' + leg.cutoffLabel + ' IST ' + leg.cutoffDay + '.') + '</div>') +
       runLink(snap, 'incoming');
-    return cardBox('Incoming — response from network' + statusChip(leg), body, runLegBtn(snap, 'incoming'));
+    return cardBox('Incoming — response from network' + statusChip(leg), body, seeWhatFailed(snap, 'incoming'));
   }
 
   function jv2Card(snap) {
@@ -652,7 +616,8 @@ window.CycleUI = function (kit) {
           : leg.actual != null
             ? fileRow(j.file, j.file.size + ' · ' + j.file.dest)
             : '<div class="meta">Not generated yet — expected ' + leg.expectedLabel + ' IST on ' + U.prettyDate(C.dateAt(snap.date, leg.expected)) + ' (' + leg.expectedDay + '), cutoff ' + leg.cutoffLabel + '.</div>');
-    return cardBox('JV2 — next-cycle outgoing to acquirer' + statusChip(leg), body, markSentBtn(leg));
+    return cardBox('JV2 — next-cycle outgoing to acquirer' + statusChip(leg), body,
+      markSentBtn(leg) + seeWhatFailed(snap, 'jv2'));
   }
 
   /* ---- Part 6.3 — schedule reference panel -------------------------------- */
@@ -723,9 +688,9 @@ window.CycleUI = function (kit) {
       '<div class="head-actions">' +
       '<button class="icon-btn" data-action="cyc-refresh" title="Refresh" aria-label="Refresh">' + icon('refresh-cw', 18) + '</button>' +
       '<button class="btn btn-secondary" data-action="cyc-files">' + icon('folder', 18) + 'Settlement files</button>' +
-      // Part 10.1 — every run for this exact tenant × network × cycle, pre-filtered.
-      '<a class="btn btn-secondary" data-route="#/dashboard/ops/runs?runTenant=' + t.id +
-      '&runNetwork=' + net.key + '&runCycle=' + snap.date + '&runRange=30">' + icon('activity', 18) + 'Runs for this cycle</a>' +
+      // Every file this cycle's pipeline processed, with the step detail behind each.
+      '<a class="btn btn-secondary" data-route="#/dashboard/ops/reconciliation/files">' +
+      icon('file-search', 18) + 'Files for this cycle</a>' +
       '<button class="btn btn-primary" data-route="#/dashboard/ops/reconciliation?reconTenant=' + t.id + (snap.recon && snap.recon.cycleId ? '&reconCycle=' + snap.recon.cycleId : '') + '">' + icon('git-compare', 18) + 'View reconciliation</button>' +
       '</div>' + nav +
       '</div></div>';
@@ -834,13 +799,16 @@ window.CycleUI = function (kit) {
     },
     'cyc-download': function (t) { toast('Downloading ' + t.getAttribute('data-name')); },
 
-    /* Part 7.1 — the launcher is the only way to start a run, whether it is
-       opened from the Run Console or from a leg here. The guards are evaluated
-       inside the panel either way. */
-    'cyc-run-leg': function (t) {
-      var legKey = t.getAttribute('data-leg');
-      if (!window.RUNSUI) return;
-      window.RUNSUI.launcherFor(LEG_OP[legKey], S.cycle.tenantId, S.cycle.networkKey, S.cycle.date);
+    /* Part 6 — the third entry point into the one file detail panel. It opens
+       over the snapshot, so the leg the analyst was reading stays behind it. */
+    'cyc-file-detail': function (t) {
+      if (!window.PFILES || !kit.filePanel) return;
+      var f = window.PFILES.forLeg(S.cycle.tenantId, S.cycle.networkKey, S.cycle.date, t.getAttribute('data-leg'));
+      if (!f) return;
+      kit.filePanel.setOnChange(function () {
+        if (location.hash.indexOf('/cycle-snapshot/') >= 0) viewSnapshot(S.cycle.tenantId, S.cycle.networkKey, S.cycle.date);
+      });
+      kit.filePanel.open(f);
     },
 
     /* Part D.6 — the manual assertion. Mandatory note, recorded against the

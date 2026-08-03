@@ -11,7 +11,7 @@
   window.AppState = {
     portal: 'bank',
     sidebarCollapsed: false,
-    expanded: { merchants: true, reconciliation: true, 'ops-configs': true },
+    expanded: { merchants: true, reconciliation: true, 'ops-configs': true, 'ops-recon': true },
     active: { section: 'home', child: null },
     tabs: { feeConfigs: 'current', feeBreakdown: 'query', reports: 'library', profile: 'overview', merchantPerf: 'portfolio', disputes: 'All' },
     filters: {
@@ -32,9 +32,9 @@
     ops: {
       approvalTab: 'pending', approvalsTenant: 'all', approvalsSla: 'all',
       reconTenant: null, reconCycle: null,
-      // Deep-link targets (observability brief Part 10): an RCA action or a run's
-      // Related list can land on this screen already filtered to one cycle date,
-      // with the validation report for that row open.
+      // Deep-link targets: a failure block's action, or an Ops Home queue row,
+      // can land on this screen already filtered to one cycle date, with the
+      // validation report for that row open.
       filesTenant: 'hsbc-in', filesDate: null, filesOpenValidation: null,
       disputesTenant: 'all', disputesUrgency: '<7 days', disputesStage: 'all',
       onboardStep: 1, onboardFiles: [],
@@ -357,12 +357,16 @@
   var OPS_NAV = [
     { id: 'ops-home', label: 'Ops Home', icon: 'home', route: '#/dashboard/ops' },
     { id: 'ops-approvals', label: 'Fee Approvals', full: 'Fee Config Approvals', icon: 'check-square', route: '#/dashboard/ops/approvals' },
-    { id: 'ops-recon', label: 'Reconciliation', icon: 'git-compare', route: '#/dashboard/ops/reconciliation' },
+    {
+      // File-detail brief Part 6 — Recon File Management is where the file
+      // detail panel lives, and it is a child of Reconciliation rather than a
+      // section of its own. The brief adds no new sections.
+      id: 'ops-recon', label: 'Reconciliation', icon: 'git-compare', route: '#/dashboard/ops/reconciliation', children: [
+        { id: 'ops-recon-home', label: 'Reconciliation Home', noIcon: true, route: '#/dashboard/ops/reconciliation' },
+        { id: 'ops-recon-files', label: 'Recon Files', full: 'Recon File Management', noIcon: true, route: '#/dashboard/ops/reconciliation/files' }
+      ]
+    },
     { id: 'ops-files', label: 'Settlement Files', full: 'Settlement File Monitoring', icon: 'upload', route: '#/dashboard/ops/files' },
-    // Observability brief Part 6 — the Run Console sits between Settlement
-    // Files and Rejects: every operation that produced those files, and the
-    // root cause when one of them didn't.
-    { id: 'ops-runs', label: 'Runs', full: 'Run Console', icon: 'activity', route: '#/dashboard/ops/runs' },
     { id: 'ops-rejects', label: 'Rejects', icon: 'file-warning', route: '#/dashboard/ops/rejects' },
     { id: 'ops-onboarding', label: 'Bank Onboarding', icon: 'building', route: '#/dashboard/ops/onboarding' },
     {
@@ -1618,14 +1622,18 @@
     }
     if (!rest.length || head === 'home') { S.opsActive = 'ops-home'; renderSidebar(); return viewOpsHome(); }
     if (head === 'approvals') { S.opsActive = 'ops-approvals'; renderSidebar(); return rest[1] ? viewApprovalDetail(rest[1]) : viewApprovals(); }
-    if (head === 'reconciliation') { S.opsActive = 'ops-recon'; renderSidebar(); return viewOpsRecon(); }
+    if (head === 'reconciliation') {
+      S.opsActive = 'ops-recon';
+      // Recon File Management — the file detail panel's primary home, a child
+      // of Reconciliation rather than a section of its own (file-detail brief
+      // Part 6).
+      if (rest[1] === 'files') { S.opsChild = 'ops-recon-files'; renderSidebar(); return RFUI.route(); }
+      S.opsChild = 'ops-recon-home'; renderSidebar(); return viewOpsRecon();
+    }
     // Cycle Snapshot — the drill-in behind every Cross-Tenant Cycle Status cell.
     // It belongs to Ops Home, so the sidebar keeps Ops Home selected.
     if (head === 'cycle-snapshot') { S.opsActive = 'ops-home'; renderSidebar(); return CYCUI.route(rest.slice(1)); }
     if (head === 'files') { S.opsActive = 'ops-files'; renderSidebar(); return SFUI.route(); }
-    // Run Console — the list, the :runId detail, and the duplicate remediation
-    // view at runs/duplicate/:tenant/:network/:cycle.
-    if (head === 'runs') { S.opsActive = 'ops-runs'; renderSidebar(); return RUNUI.route(rest.slice(1)); }
     // Rejects — staging + incoming rejects across Visa and Mastercard. One
     // branch covers the overview and the :batchId drill-in; the correction
     // editor is a side panel over the batch, not a route of its own.
@@ -1686,31 +1694,15 @@
     // Settlement files carry two independent statuses now (§C.3): a delivery
     // failure and a validation mismatch are different problems, and the queue
     // says which one it is rather than collapsing them into "issue".
-    /* Part 9 / 10.1 — a queue row goes to the specific item, never a generic
-       list. Where a failing run is behind the issue, the row goes straight to
-       that run, which leads with its RCA card. */
+    /* A queue row goes to the specific item, never a generic list — the
+       Settlement File Monitoring screen filtered to that tenant and cycle,
+       where the row opens the file detail panel. */
     var fileQueue = window.SFILES.issues(7).slice(0, 5).map(function (f) {
       var bad = f.delivery === 'Failed';
       var what = bad ? pill('Delivery failed', 'danger') : (f.validation === 'Mismatch' ? pill('Validation mismatch', 'danger') : pill('Not shared', 'warning'));
-      var run = window.RUNS ? window.RUNS.runForFileRow(f) : null;
-      var route = run
-        ? '#/dashboard/ops/runs/' + run.runId
-        : '#/dashboard/ops/files?filesTenant=' + f.tenantId + '&filesDate=' + f.date;
-      var why = run ? '<div class="qi-why">' + icon('help-circle', 12) + 'Why? ' + esc(RCA.headline(run)) + '</div>' : '';
-      return '<div class="queue-item" data-route="' + route + '"><div class="qi-body"><div class="qi-title">' + tenantTag(f.tenantId) + ' · ' + f.type + '</div><div class="qi-meta">' + U.prettyDate(f.date) + ' · ' + what + '</div>' + why + '</div><span class="qi-arrow">' + icon('chevron-right', 16) + '</span></div>';
+      var route = '#/dashboard/ops/files?filesTenant=' + f.tenantId + '&filesDate=' + f.date;
+      return '<div class="queue-item" data-route="' + route + '"><div class="qi-body"><div class="qi-title">' + tenantTag(f.tenantId) + ' · ' + f.type + '</div><div class="qi-meta">' + U.prettyDate(f.date) + ' · ' + what + '</div></div><span class="qi-arrow">' + icon('chevron-right', 16) + '</span></div>';
     }).join('') || '<div class="meta">No file issues.</div>';
-
-    /* Part 8.2 — a critical anomaly is the ONLY thing permitted above the KPI
-       cards, and only while it is unresolved. Nothing else earns that slot. */
-    var criticalBanner = (window.RUNS ? window.RUNS.anomalies() : []).map(function (a) {
-      return '<div class="ops-critical" role="alert">' + icon('x-circle', 22) +
-        '<div class="ops-critical-body">' +
-        '<div class="ops-critical-title">' + esc(a.tenantName) + ' · ' + esc(a.networkName) + ' · ' + U.prettyDate(a.cycleDate) + ' was staged twice</div>' +
-        '<div class="ops-critical-sub">Two clearing files were sent to ' + esc(a.networkName) + ' for the same cycle.</div>' +
-        '</div>' +
-        '<button class="btn btn-secondary" data-route="#/dashboard/ops/runs/duplicate/' + a.tenantId + '/' + a.networkKey + '/' + a.cycleDate + '">' +
-        'Investigate ' + icon('arrow-right', 15) + '</button></div>';
-    }).join('');
 
     // rejections summary
     var rejBreak = O.tenants.map(function (t) {
@@ -1730,7 +1722,6 @@
 
     setView(
       pageHead('Operations Overview', 'Platform status across all four tenants for ' + U.prettyLong(D.TODAY) + '.') +
-      criticalBanner +
       '<div class="ops-status-strip">' + strip + '</div>' +
       // Round 3 §A.3 — KPI rows wrap on their own rather than overflowing:
       // repeat(auto-fit, minmax(240px, 1fr)) via .kpi-row.
@@ -1992,30 +1983,19 @@
       (cyc.provisional ? '<div class="meta mt-16">' + icon('info', 13) + ' Not a break — ' + (6 - cyc.incomingReceived) + ' incoming cycles are still outstanding. The residual is only meaningful once all six have arrived.</div>' : '') +
       residualBar(cyc, cur);
 
-    /* Observability brief Part 9 — a break has one of two kinds of cause. If one
-       of this cycle's runs actually failed, that is a SYSTEM cause and the RCA
-       card explains it inline, in the investigation panel, using the same
-       component every other screen uses. If every run succeeded, the cause is on
-       the network's side and the panel keeps the settlement-desk framing it has
-       always had. The two are never conflated: a system failure that read as a
-       network discrepancy is exactly how a break stays open for a week. */
-    var sysCause = (cyc.hasBreak && window.RUNS) ? window.RUNS.systemCauseForCycle(tid, cyc.date) : null;
-    var runsLink = '<a class="btn-ghost" data-route="#/dashboard/ops/runs?runTenant=' + tid +
-      '&runCycle=' + cyc.date + '&runRange=30">' + icon('activity', 14) + 'All runs for this cycle ' + icon('arrow-right', 13) + '</a>';
+    /* A break is investigated from the settlement desk's own framing. Where the
+       cycle's files are worth looking at, the link goes to Recon File
+       Management filtered to this tenant and cycle — the file detail panel is
+       where a processing failure explains itself, and there is no second
+       surface that says the same thing differently. */
+    var filesLink = '<a class="btn-ghost" data-route="#/dashboard/ops/reconciliation/files">' +
+      icon('file-search', 14) + 'Files processed for this cycle ' + icon('arrow-right', 13) + '</a>';
     var investigation = '';
-    if (cyc.hasBreak && sysCause && RCA) {
-      investigation = '<div class="card mt-16 recon-sys-break"><div class="card-title">' + icon('alert-octagon', 18) +
-        ' Break Investigation <span class="recon-cause-tag">system cause</span></div>' +
-        '<div class="meta mt-16">Residual of ' + fmt(cyc.residual, 2, cur) +
-        ' beyond the expected delta. This is not a network discrepancy — one of this cycle’s own runs failed, and the residual is its consequence.</div>' +
-        '<div class="mt-16">' + RCA.card(sysCause, { variant: 'inline' }) + '</div>' +
-        '<div class="mt-16 recon-break-links">' + runsLink +
-        '<button class="btn btn-primary btn-sm" data-action="open-investigation">' + icon('flag', 15) + 'Open investigation</button></div></div>';
-    } else if (cyc.hasBreak) {
+    if (cyc.hasBreak) {
       investigation = '<div class="card mt-16 recon-net-break"><div class="card-title">' + icon('alert-octagon', 18) +
-        ' Break Investigation <span class="recon-cause-tag network">network cause</span></div>' +
-        '<div class="meta mt-16">Residual of ' + fmt(cyc.residual, 2, cur) + ' beyond the expected delta. Every run for this cycle succeeded, so the difference sits on the network’s side. Contributing factor: <strong>Mastercard leg</strong> — settled amount is short of submitted less fees. Sample batches: MC-' + cyc.date.replace(/-/g, '') + '-03, MC-' + cyc.date.replace(/-/g, '') + '-07. No matching adjustment found in the scheme settlement report.</div>' +
-        '<div class="mt-16 recon-break-links">' + runsLink +
+        ' Break Investigation</div>' +
+        '<div class="meta mt-16">Residual of ' + fmt(cyc.residual, 2, cur) + ' beyond the expected delta. Contributing factor: <strong>Mastercard leg</strong> — settled amount is short of submitted less fees. Sample batches: MC-' + cyc.date.replace(/-/g, '') + '-03, MC-' + cyc.date.replace(/-/g, '') + '-07. No matching adjustment found in the scheme settlement report.</div>' +
+        '<div class="mt-16 recon-break-links">' + filesLink +
         '<button class="btn btn-primary btn-sm" data-action="open-investigation">' + icon('flag', 15) + 'Open investigation</button></div></div>';
     }
 
@@ -2358,13 +2338,13 @@
     opsFilterRow: opsFilterRow, opsToggle: opsToggle, sidePanel: sidePanel, opsTimeline: opsTimeline,
     skeletonRows: skeletonRows, fmtCr: fmtCr
   };
-  /* The RCA card (observability brief Part 4) is built once and handed to every
-     module through the same kit, which is what makes one component render
-     identically on six screens. It is assigned onto CFGKIT before the UI
-     modules are constructed, so `kit.rca` resolves for all of them. */
-  var RCA = window.RunRCA(CFGKIT);
-  CFGKIT.rca = RCA;
-  Object.keys(RCA.actions).forEach(function (k) { ACTIONS[k] = RCA.actions[k]; });
+  /* The file detail panel (file-detail brief Part 3) is built once and handed
+     to every module that opens it through the same kit. That is what makes one
+     component render identically in Recon File Management, Settlement File
+     Monitoring and Cycle Snapshot — there is no second implementation. */
+  var FDPANEL = window.FileDetailPanel(CFGKIT);
+  CFGKIT.filePanel = FDPANEL;
+  Object.keys(FDPANEL.actions).forEach(function (k) { ACTIONS[k] = FDPANEL.actions[k]; });
 
   var CFGUI = window.ConfigsUI(CFGKIT);
   var CFGQ = window.ConfigsQueue(CFGUI);
@@ -2380,9 +2360,9 @@
   // that the screen carries two status dimensions and five row actions.
   var SFUI = window.FilesUI(CFGKIT);
   Object.keys(SFUI.actions).forEach(function (k) { ACTIONS[k] = SFUI.actions[k]; });
-  // Run Console + launcher + duplicate remediation (observability brief).
-  var RUNUI = window.RunsUI(CFGKIT);
-  Object.keys(RUNUI.actions).forEach(function (k) { ACTIONS[k] = RUNUI.actions[k]; });
+  // Recon File Management — the file detail panel's primary home.
+  var RFUI = window.ReconFilesUI(CFGKIT, FDPANEL);
+  Object.keys(RFUI.actions).forEach(function (k) { ACTIONS[k] = RFUI.actions[k]; });
 
   function openAddUser() {
     el('overlay-mount').innerHTML = '<div class="overlay" data-action="close-overlay"><div class="modal" onclick="event.stopPropagation()">' +

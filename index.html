@@ -73,16 +73,17 @@
        files, no network dimension. files-data.js needs window.OPS. -->
   <script src="files-data.js"></script>
   <script src="files-screen.js"></script>
-  <!-- Observability, RCA & run controls (Ops Portal only).
-       runs-catalog.js is pure data and loads first; runs-data.js reads
-       window.CYCLES for the timing model and window.OPS for tenants, so it
-       comes after both; runs-rca.js is the single RCA card component that
-       every screen renders; runs-screen.js is the Run Console, the launcher
-       and the duplicate remediation view. -->
-  <script src="runs-catalog.js"></script>
-  <script src="runs-data.js"></script>
-  <script src="runs-rca.js"></script>
-  <script src="runs-screen.js"></script>
+  <!-- File processing detail & failure hints (Ops Portal only).
+       failure-hints.js is pure frontend data with no dependencies — it is the
+       error_code → plain-language lookup and needs no backend at all.
+       proc-files-data.js builds the step records and reads window.CYCLES and
+       window.SFILES, so it comes after both. file-detail-panel.js is the one
+       panel component; recon-files-screen.js is its primary home, a child of
+       Reconciliation. -->
+  <script src="failure-hints.js"></script>
+  <script src="proc-files-data.js"></script>
+  <script src="file-detail-panel.js"></script>
+  <script src="recon-files-screen.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
