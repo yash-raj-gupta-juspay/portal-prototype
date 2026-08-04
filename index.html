@@ -69,10 +69,18 @@
        cycle-data.js needs window.OPS, so it loads after ops-data.js. -->
   <script src="cycle-data.js"></script>
   <script src="cycle-screen.js"></script>
-  <!-- Settlement File Monitoring (refinement round 2 §C) — acquirer-specific
+  <!-- Acquirer Reports (refinement round 2 §C) — acquirer-specific
        files, no network dimension. files-data.js needs window.OPS. -->
   <script src="files-data.js"></script>
   <script src="files-screen.js"></script>
+  <!-- Clearing Files (clearing-staging brief Parts 1–3) — the dashboard as the
+       origin point for every clearing file staged to a network. There is no
+       network API: staging happens in VEP, and this section owns the file and
+       the record of what happened. clearing-data.js reads window.OPS for cycle
+       identity and window.CYCLES for the holiday calendar, so it loads after
+       both. -->
+  <script src="clearing-data.js"></script>
+  <script src="clearing-screen.js"></script>
   <!-- File processing detail & failure hints (Ops Portal only).
        failure-hints.js is pure frontend data with no dependencies — it is the
        error_code → plain-language lookup and needs no backend at all.

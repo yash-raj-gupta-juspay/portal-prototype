@@ -481,6 +481,29 @@ window.CycleUI = function (kit) {
       icon('arrow-right', 13) + '</a>';
   }
 
+  /* The CLR leg's file block. It names the file and its state, then hands off
+     to Clearing Files — which owns generate, stage, ack and the history. */
+  function clearingLink(snap) {
+    var rec = window.CLEARING.forCycle(snap.tenant.id, snap.network.key, snap.date);
+    if (!rec) {
+      // On-us has no network to stage into, so there is no clearing record.
+      var f = snap.clearing.file;
+      return '<div class="cyc-file"><span class="cyc-file-ic">' + icon('file-text', 16) + '</span>' +
+        '<div class="cyc-file-body"><div class="cyc-file-name">' + esc(f.name) + '</div>' +
+        '<div class="cyc-file-meta">' + esc(f.size + ' · ' + f.checksum + ' · ' + f.dest) + '</div></div></div>';
+    }
+    var st = window.CLEARING.STATES[rec.state];
+    return '<div class="cyc-file clr-leg-file" data-route="#/dashboard/ops/clearing/' + esc(rec.id) + '" ' +
+      'role="link" tabindex="0" title="' + esc('Open the clearing file record for ' + rec.id) + '">' +
+      '<span class="cyc-file-ic">' + icon('file-up', 16) + '</span>' +
+      '<div class="cyc-file-body"><div class="cyc-file-name mono">' + esc(rec.file ? rec.file.name : window.CLEARING.fileName(rec.tenantId, rec.networkKey, rec.date, 1)) + '</div>' +
+      '<div class="cyc-file-meta">' + (rec.stagedAt
+        ? 'Staged ' + esc(rec.stagedAt) + ' by ' + esc(rec.stagedBy)
+        : 'Not staged') + '</div></div>' +
+      pill(st.label, st.kind, st.icon) +
+      '<span class="cyc-file-go">' + icon('chevron-right', 16) + '</span></div>';
+  }
+
   function clearingCard(snap) {
     var cur = snap.currency, cl = snap.clearing, leg = cl.leg;
     var body =
@@ -503,7 +526,11 @@ window.CycleUI = function (kit) {
       '</div>' +
       (leg.note ? '<div class="callout danger mt-16">' + icon('x-circle', 20) + '<div class="callout-body">' + esc(leg.note) + '</div></div>' : '') +
       '<div class="cyc-sub-title">Outgoing clearing file</div>' +
-      fileRow(cl.file, cl.file.size + ' · ' + cl.file.checksum + ' · ' + cl.file.dest) +
+      /* Staging is not described inline here (clearing brief Part 2.4). The
+         clearing file, whether it has been staged, by whom and what the
+         network acknowledged all live on one record, and this is the link to
+         it — there is no second account of the same staging. */
+      clearingLink(snap) +
       runLink(snap, 'clearing');
     return cardBox('Clearing — outgoing to network' + statusChip(leg), body, seeWhatFailed(snap, 'clearing'));
   }
@@ -652,7 +679,7 @@ window.CycleUI = function (kit) {
     return '<div class="cyc-recon ' + r.kind + '">' +
       '<div class="cyc-recon-body">' +
       '<div class="cyc-recon-head">Reconciliation ' + pill(r.status, r.kind, r.kind === 'success' ? 'check' : (r.kind === 'danger' ? 'alert-octagon' : 'clock')) + '</div>' +
-      '<div class="meta">' + esc(r.note) + (r.residual ? ' Residual <span class="num cyc-strong">' + fmt(r.residual, 2, cur) + '</span>.' : '') + '</div>' +
+      '<div class="meta">' + esc(r.note) + (r.difference ? ' Difference <span class="num cyc-strong">' + fmt(r.difference, 2, cur) + '</span>.' : '') + '</div>' +
       '</div>' +
       '<button class="btn btn-secondary" data-route="' + link + '">' + icon('git-compare', 15) + 'View reconciliation</button>' +
       '</div>';
@@ -678,7 +705,9 @@ window.CycleUI = function (kit) {
       '<div>' +
       '<h1 class="page-title cyc-title">' + tenantTag(t.id, true) +
       '<span class="cyc-net-badge" style="background:' + net.color + '1A;color:' + net.color + ';border-color:' + net.color + '40">' + net.name + '</span></h1>' +
-      '<div class="subtitle">Cycle ' + U.prettyDate(snap.date) + ' · ' + snap.dow +
+      // Part 5.2 — the cycle is named by its identifier, with the date beneath.
+      '<div class="cyc-head-id">' + kit.cycleIdCell(snap.cycleId, snap.date) + '</div>' +
+      '<div class="subtitle">' + snap.dow +
       ' <span class="cyc-daytag" title="' + esc(DATE_TIP) + '">transaction date · cohort in ' + snap.tz.code + ' (' + snap.tz.offset + ')</span>' +
       (hol ? ' ' + pill(hol.name, hol.impact === 'Full holiday' ? 'danger' : 'warning', 'calendar-x') : '') + '</div>' +
       '<div class="meta cyc-nowline">Processing times IST · viewed ' + esc(snap.nowLabel) + '</div>' +
@@ -687,7 +716,7 @@ window.CycleUI = function (kit) {
       (snap.status ? '<div class="cyc-status"><div class="cyc-status-pill">' + pill(snap.status.text, snap.status.kind, snap.status.icon) + '</div><div class="meta cyc-status-line">' + esc(snap.status.line) + '</div></div>' : '') +
       '<div class="head-actions">' +
       '<button class="icon-btn" data-action="cyc-refresh" title="Refresh" aria-label="Refresh">' + icon('refresh-cw', 18) + '</button>' +
-      '<button class="btn btn-secondary" data-action="cyc-files">' + icon('folder', 18) + 'Settlement files</button>' +
+      '<button class="btn btn-secondary" data-action="cyc-files">' + icon('folder', 18) + 'Acquirer reports</button>' +
       // Every file this cycle's pipeline processed, with the step detail behind each.
       '<a class="btn btn-secondary" data-route="#/dashboard/ops/reconciliation/files">' +
       icon('file-search', 18) + 'Files for this cycle</a>' +

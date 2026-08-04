@@ -90,20 +90,14 @@ window.CYCLES = (function () {
      PART 3.1 — NETWORK AVAILABILITY MATRIX
      The single source of truth for which cells render at all. Six of the
      sixteen combinations do not exist and must never render as a status.
+
+     It now lives in ops-data.js, because the Reconciliation legs need it too
+     and ops-data.js loads first — a second copy here would be a second truth.
+     Re-exported below so every existing reader is unchanged.
      ========================================================================= */
-  var AVAILABILITY = {
-    yesbank: { visa: true, mc: true, rupay: true, onus: false },
-    'hsbc-in': { visa: true, mc: true, rupay: true, onus: false },
-    'hsbc-sg': { visa: true, mc: true, rupay: false, onus: false },
-    'hsbc-hk': { visa: true, mc: true, rupay: false, onus: true }
-  };
-  function enabled(tenantId, netKey) {
-    var row = AVAILABILITY[tenantId];
-    return !!(row && row[netKey]);
-  }
-  function networksFor(tenantId) {
-    return O.NETWORKS.filter(function (n) { return enabled(tenantId, n.key); });
-  }
+  var AVAILABILITY = O.AVAILABILITY;
+  var enabled = O.netEnabled;
+  var networksFor = O.netsFor;
 
   /* =========================================================================
      PART 4.2 — THE FOUR LEGS
@@ -505,6 +499,9 @@ window.CYCLES = (function () {
     var tz = tzOf(tenantId);
     var snap = {
       tenant: t, network: net, date: date,
+      // Part 5.2 — a cycle is identified, not dated. One snapshot is one
+      // tenant × network × cycle, which is exactly what the ID encodes.
+      cycleId: O.cycleId(tenantId, netKey, date, 1),
       dow: U.DOW[U.fromYmd(date).getUTCDay()],
       tz: tz, currency: t.currency,
       profile: base.profile, sched: base.sched,
@@ -601,14 +598,14 @@ window.CYCLES = (function () {
 
     /* ---- Reconciliation callout ------------------------------------------ */
     var reconPlan = base.recon;
-    var residual = reconPlan ? round2(netSettlement * (reconPlan.residualPctOfNet / 100)) : 0;
+    var difference = reconPlan ? round2(netSettlement * (reconPlan.residualPctOfNet / 100)) : 0;
     var reconCycle = O.cyclesByTenant[tenantId] ? O.cyclesByTenant[tenantId].find(function (c) { return c.date === date; }) : null;
     if (reconPlan) {
-      snap.recon = { status: reconPlan.status, kind: 'danger', residual: residual, note: 'Residual beyond the expected delta. Investigation open with the settlement desk.', cycleId: reconCycle ? reconCycle.id : null };
+      snap.recon = { status: reconPlan.status, kind: 'danger', difference: difference, note: 'Difference beyond the expected fees. Investigation open with the settlement desk.', cycleId: reconCycle ? reconCycle.id : null };
     } else if (jv2.state === 'pending' || jv2.state === 'inprogress') {
-      snap.recon = { status: 'Not yet run', kind: 'neutral', residual: 0, note: 'Two-way reconciliation runs once JV2 closes the cycle.', cycleId: reconCycle ? reconCycle.id : null };
+      snap.recon = { status: 'Not yet run', kind: 'neutral', difference: 0, note: 'Two-way reconciliation runs once JV2 closes the cycle.', cycleId: reconCycle ? reconCycle.id : null };
     } else {
-      snap.recon = { status: 'Clean', kind: 'success', residual: 0, note: 'Submitted position less the expected delta matches the settled position. No residual.', cycleId: reconCycle ? reconCycle.id : null };
+      snap.recon = { status: 'Clean', kind: 'success', difference: 0, note: 'Submitted position less the expected fees matches the settled position. No difference.', cycleId: reconCycle ? reconCycle.id : null };
     }
 
     snap.status = overallStatus(snap);

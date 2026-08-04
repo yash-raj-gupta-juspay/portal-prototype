@@ -1,5 +1,5 @@
 /* =============================================================================
-   Juspay Ops Portal — Settlement File Monitoring screen (refinement round 2 §C)
+   Juspay Ops Portal — Acquirer Reports screen (refinement round 2 §C)
 
    The screen answers two questions in this order:
      1. "Is anything wrong anywhere today?"  — the cross-acquirer overview strip,
@@ -87,50 +87,85 @@ window.FilesUI = function (kit) {
   }
 
   /* ---- §C.7 cross-acquirer overview strip --------------------------------- */
-  function miniRow(entry) {
-    var t = entry.tenant, s = entry.summary;
-    if (!entry.rows.length) {
-      return '<button type="button" class="sf-mini muted" disabled>' +
-        '<span class="sf-mini-name">' + tenantTag(t.id) + '</span>' +
-        '<span class="sf-mini-state">No files expected — bank holiday</span></button>';
-    }
-    var bad = s.failed || s.mismatch;
-    var warn = !bad && s.pending;
-    var bits = [s.shared + '/' + s.expected + ' shared'];
-    if (s.pending) bits.push(s.pending + ' pending');
-    if (s.failed) bits.push(s.failed + ' failed');
-    bits.push(s.mismatch ? s.mismatch + ' mismatch' : (s.notRun ? s.notRun + ' not validated' : 'all validated'));
-    var cls = bad ? 'bad' : (warn ? 'warn' : 'ok');
-    var active = S.ops.filesTenant === t.id ? ' active' : '';
-    return '<button type="button" class="sf-mini ' + cls + active + '" data-action="sf-pick-tenant" data-tenant="' + t.id + '" ' +
-      'title="' + esc('Filter the table below to ' + t.name) + '">' +
-      '<span class="sf-mini-name">' + tenantTag(t.id) + '</span>' +
-      // §A.3 — this label truncates with an ellipsis at tight widths, so the
-      // full text has to stay reachable rather than simply disappearing.
-      '<span class="sf-mini-state" title="' + esc(bits.join(' · ')) + '">' + esc(bits.join(' · ')) + '</span>' +
-      '<span class="sf-mini-go">' + icon('chevron-right', 14) + '</span></button>';
+  /* =======================================================================
+     PART 6.2 — DELIVERY TIMING AGAINST CUTOFF
+     The summary strip that used to sit here is gone (Part 6.1): files
+     expected / shared / pending / failed / mismatches all restated what the
+     table below already shows, row by row.
+
+     This is what the table cannot show. Volume trends live in the Bank Portal
+     and validation counts are in the table; how close to cutoff reports are
+     being delivered, over time, is visible nowhere else — and a line drifting
+     toward zero over several weeks is a breach being announced in advance.
+     One chart. There is no second one.
+     ======================================================================= */
+  var LINE_COLORS = ['#2563EB', '#7C3AED', '#0891B2', '#EA6C0B', '#197A45', '#DB2777'];
+
+  function trendChart() {
+    var tid = S.ops.filesTenant;
+    var t = F.deliveryTiming(tid, 30);
+    if (!t.series.length) return '';
+    return '<div class="sf-trend">' +
+      '<div class="sf-trend-note">Minutes before cutoff at delivery. Below the line means the cutoff was missed.' +
+      (tid === 'all' ? ' <span class="meta">Across all acquirers, the tightest margin each cycle.</span>' : '') +
+      '</div>' +
+      '<div class="sf-trend-canvas"><canvas id="sf-timing"></canvas></div>' +
+      '</div>';
   }
-  function overviewStrip(rg) {
-    var ov = F.overview(rg.from, rg.to), s = ov.summary;
-    function cell(label, value, kind, sub) {
-      return '<div class="amount-cell' + (kind ? ' ' + kind : '') + '">' +
-        '<span class="ac-label">' + label + '</span><span class="ac-value num">' + value + '</span>' +
-        (sub ? '<span class="meta">' + sub + '</span>' : '') + '</div>';
-    }
-    var counts = '<div class="amounts-panel sf-counts">' +
-      cell('Files expected', String(s.expected), '', 'all acquirers · ' + esc(rg.label)) +
-      cell('Shared with acquirer', String(s.shared), s.shared === s.expected ? 'good' : '', s.sharedPct + '% of expected') +
-      cell('Pending', String(s.pending), s.pending ? 'warn' : '', s.pending ? 'not yet delivered' : 'nothing waiting') +
-      cell('Failed', String(s.failed), s.failed ? 'danger' : '', s.failed ? 'delivery attempted, failed' : 'no delivery failures') +
-      cell('Validation mismatches', String(s.mismatch), s.mismatch ? 'danger' : '', s.mismatch ? 'file vs source discrepancy' : 'no discrepancies') +
-      '</div>';
-    var minis = ov.perTenant.map(miniRow).join('');
-    return '<div class="sf-overview">' +
-      '<div class="sf-ov-head"><span class="sf-ov-title">Across all acquirers</span>' +
-      '<span class="meta">' + esc(rg.label) + ' · independent of the tenant filter below</span></div>' +
-      counts +
-      '<div class="sf-minis">' + minis + '</div>' +
-      '</div>';
+
+  /* Any point at or below zero is a filled red dot — the cutoff was missed on
+     that cycle, and it has to be findable without reading the axis. */
+  function paintTrend() {
+    var tid = S.ops.filesTenant;
+    var t = F.deliveryTiming(tid, 30);
+    if (!t.series.length || !kit.chart) return;
+    kit.chart('sf-timing', {
+      type: 'line',
+      data: {
+        labels: t.dates.map(function (d) { var x = U.fromYmd(d); return x.getUTCDate() + ' ' + U.MON[x.getUTCMonth()]; }),
+        datasets: t.series.map(function (s, i) {
+          var color = LINE_COLORS[i % LINE_COLORS.length];
+          return {
+            label: s.type,
+            data: s.points,
+            borderColor: color,
+            backgroundColor: color,
+            borderWidth: 2,
+            tension: 0.25,
+            spanGaps: false,
+            pointRadius: s.points.map(function (p) { return p != null && p <= 0 ? 5 : 2; }),
+            pointBackgroundColor: s.points.map(function (p) { return p != null && p <= 0 ? '#B42318' : color; }),
+            pointBorderColor: s.points.map(function (p) { return p != null && p <= 0 ? '#B42318' : color; })
+          };
+        })
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { grid: { display: false }, ticks: { maxTicksLimit: 10, autoSkip: true } },
+          y: {
+            title: { display: true, text: 'minutes before cutoff' },
+            grid: {
+              color: function (c) { return c.tick && c.tick.value === 0 ? '#B42318' : '#EDEFF3'; },
+              lineWidth: function (c) { return c.tick && c.tick.value === 0 ? 2 : 1; }
+            }
+          }
+        },
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'line' } },
+          tooltip: {
+            callbacks: {
+              label: function (c) {
+                if (c.parsed.y == null) return c.dataset.label + ': not delivered';
+                var m = c.parsed.y;
+                return c.dataset.label + ': ' + (m <= 0 ? Math.abs(m) + ' min AFTER cutoff' : m + ' min before cutoff');
+              }
+            }
+          }
+        }
+      }
+    });
   }
 
   /* ---- filter row --------------------------------------------------------- */
@@ -247,7 +282,7 @@ window.FilesUI = function (kit) {
       '</div>';
   }
 
-  /* A settlement file row links to its own processing detail and to the cycle
+  /* An acquirer report row links to its own processing detail and to the cycle
      it belongs to. Each link is omitted when it has no destination. */
   function relatedRunLinks(row) {
     var links = [];
@@ -285,7 +320,7 @@ window.FilesUI = function (kit) {
 
   function table(rows) {
     if (!rows.length) {
-      return '<div class="card">' + emptyState('file-check', 'No settlement files in this view',
+      return '<div class="card">' + emptyState('file-check', 'No acquirer reports in this view',
         'Widen the date range or clear the tenant, file and status filters.',
         '<button class="btn btn-secondary" data-action="sf-clear">' + icon('rotate-ccw', 18) + 'Clear filters</button>') + '</div>';
     }
@@ -326,14 +361,15 @@ window.FilesUI = function (kit) {
     var tid = S.ops.filesTenant;
     var scope = tid === 'all' ? 'all acquirers' : O.tenantById[tid].name;
     setView(
-      kit.pageHead('Settlement File Monitoring',
-        'Whether each settlement file reached the acquirer, and whether its contents match the source.') +
-      overviewStrip(rg) +
+      kit.pageHead('Acquirer Reports',
+        'Whether each report reached the acquirer, and whether its contents match the source.') +
       filters() +
+      trendChart() +
       '<div class="sf-scope meta">Showing <strong>' + rows.length + '</strong> file' + (rows.length === 1 ? '' : 's') +
       ' · ' + esc(scope) + ' · ' + esc(rg.label) + '</div>' +
       table(rows)
     );
+    paintTrend();
   }
 
   /* Re-render only if this screen is still mounted — a validation run that

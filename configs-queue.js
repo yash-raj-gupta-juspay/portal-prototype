@@ -247,7 +247,7 @@ window.ConfigsQueue = function (ui) {
     setView(
       '<div class="page-head cfg-head">' +
       '<div><h1 class="page-title">Config Approvals</h1>' +
-      '<div class="subtitle">Maker-checker queue for platform configs across all three families · separate from the bank-proposed Fee Config Approvals queue</div></div>' +
+      '<div class="subtitle">Maker-checker queue for platform configs across all three families · separate from the bank-proposed Merchant Fees queue</div></div>' +
       api.roleBar() + '</div>' +
       tabBar +
       '<div class="filter-row">' +
@@ -277,7 +277,7 @@ window.ConfigsQueue = function (ui) {
   }
 
   /* =======================================================================
-     APPROVAL DETAIL — side-by-side diff (same pattern as Fee Config Approvals)
+     APPROVAL DETAIL — side-by-side diff (same pattern as Merchant Fees)
      ======================================================================= */
   function viewApprovalDetail(id) {
     var cfg = C.byId[id];

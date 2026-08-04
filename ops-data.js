@@ -75,6 +75,57 @@ window.OPS = (function () {
   var NETWORKS = D.NETWORKS;
   var NET_BY_KEY = D.NET_BY_KEY;
 
+  /* ---- Network availability matrix ---------------------------------------
+     Six of the sixteen tenant × network combinations do not exist. This lived
+     in cycle-data.js until the reconciliation legs needed it too — and
+     cycle-data.js loads later, so it moved up here rather than being copied.
+     window.CYCLES re-exports it, so every existing reader is unchanged. */
+  var AVAILABILITY = {
+    yesbank: { visa: true, mc: true, rupay: true, onus: false },
+    'hsbc-in': { visa: true, mc: true, rupay: true, onus: false },
+    'hsbc-sg': { visa: true, mc: true, rupay: false, onus: false },
+    'hsbc-hk': { visa: true, mc: true, rupay: false, onus: true }
+  };
+  function netEnabled(tenantId, netKey) {
+    var row = AVAILABILITY[tenantId];
+    return !!(row && row[netKey]);
+  }
+  function netsFor(tenantId) {
+    return NETWORKS.filter(function (n) { return netEnabled(tenantId, n.key); });
+  }
+
+  /* ---- Cycle identity (Part 5.2) ------------------------------------------
+     A cycle ID is an identifier, not a date. A date cannot distinguish two
+     cycles on the same day, which is exactly what multi-cycle incoming and
+     multi-cycle clearing produce. One builder, used by Reconciliation,
+     Clearing Files and Cycle Snapshot alike.
+       {TENANT}-{NETWORK}-{YYYYMMDD}-{NN}   e.g. HSBCHK-VISA-20251120-01 */
+  function tenantSlug(tenantId) {
+    return ((tenantById[tenantId] || {}).name || tenantId).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  }
+  function netSlug(netKey) {
+    return ((NET_BY_KEY[netKey] || {}).short || netKey).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  }
+  function cycleId(tenantId, netKey, date, nn) {
+    return tenantSlug(tenantId) + '-' + netSlug(netKey) + '-' + String(date).replace(/-/g, '') +
+      '-' + String(nn == null ? 1 : nn).padStart(2, '0');
+  }
+  /* The reverse: a cycle ID is the route key for Clearing Files, so it has to
+     resolve back to its parts without a lookup table. */
+  var SLUG_TO_TENANT = {}; tenants.forEach(function (t) { SLUG_TO_TENANT[tenantSlug(t.id)] = t.id; });
+  var SLUG_TO_NET = {}; NETWORKS.forEach(function (n) { SLUG_TO_NET[netSlug(n.key)] = n.key; });
+  function parseCycleId(id) {
+    var p = String(id || '').split('-');
+    if (p.length !== 4) return null;
+    var tenantId = SLUG_TO_TENANT[p[0]], netKey = SLUG_TO_NET[p[1]];
+    if (!tenantId || !netKey || !/^\d{8}$/.test(p[2])) return null;
+    return {
+      tenantId: tenantId, networkKey: netKey,
+      date: p[2].slice(0, 4) + '-' + p[2].slice(4, 6) + '-' + p[2].slice(6, 8),
+      seq: parseInt(p[3], 10) || 1
+    };
+  }
+
   /* ---- Fee approvals (~18 across tenants, maker-checker) ------------------ */
   var CARD = ['Credit', 'Debit'], REGION = ['Domestic', 'Cross-border'];
   function ruleKey(r) { return r.network + '|' + r.cardType + '|' + r.region + '|' + r.txnType; }
@@ -187,8 +238,14 @@ window.OPS = (function () {
       var subTotal = 0, setTotal = 0, icTotal = 0, schemeTotal = 0, adjTotal = 0, rejTotal = 0;
       var rejections = [];
 
-      NETWORKS.forEach(function (net) {
-        var gross = Math.round(base * net.share);
+      /* Only the networks this tenant actually runs. The shares renormalise
+         over that set, so a tenant without RuPay does not carry a phantom
+         RuPay clearing cycle on Leg 1. */
+      var NETS = netsFor(tenant.id);
+      var shareSum = NETS.reduce(function (s, n) { return s + n.share; }, 0) || 1;
+
+      NETS.forEach(function (net) {
+        var gross = Math.round(base * (net.share / shareSum));
         var count = Math.round(gross / net.ticket);
         var batches = rint(r, 3, 9);
         var ic = round2(gross * net.ic);
@@ -202,8 +259,10 @@ window.OPS = (function () {
       if (hasRej) {
         var stage = ci === n - 2 ? 'Awaiting re-clearing' : (ci === n - 3 ? 'Re-cleared' : 'Settled');
         var nrej = rint(r, 6, 14);
+        // Only networks this tenant runs can produce a rejection.
+        var REJ_NETS = NETS.map(function (x) { return x.key; });
         for (var k = 0; k < nrej; k++) {
-          var nk = pick(r, ['visa', 'mc', 'rupay']);
+          var nk = pick(r, REJ_NETS);
           var code = pick(r, REJECT_CODES);
           var amt = round2((tenant.currency === 'INR' ? 1500 + r() * 38000 : 60 + r() * 1400));
           legs[nk].rejAmt = round2(legs[nk].rejAmt + amt); legs[nk].rejCount += 1;
@@ -212,35 +271,39 @@ window.OPS = (function () {
         }
       }
 
-      var expectedDelta = round2(icTotal + schemeTotal + adjTotal + rejTotal);
+      // Part 5.1 — this is interchange plus scheme fees plus known adjustments
+      // (the rejection holdback among them). "Expected fees" says so; "Expected Δ"
+      // did not.
+      var expectedFees = round2(icTotal + schemeTotal + adjTotal + rejTotal);
       var brk = hasBreak ? round2(subTotal * (0.004 + r() * 0.006)) : 0;
-      // settled = submitted - expectedDelta - break
-      NETWORKS.forEach(function (net) {
+      // settled = submitted - expected fees - break
+      NETS.forEach(function (net) {
         var lg = legs[net.key];
         var netExpected = lg.interchange + lg.scheme + lg.adj + lg.rejAmt;
         var netBreak = hasBreak && net.key === 'mc' ? brk : 0;
         lg.settleAmt = round2(lg.subGross - netExpected - netBreak);
       });
 
-      /* ---- The batch model (§B.2) -----------------------------------------
-         Outgoing is ONE clearing batch per cycle. Incoming is not: the network
-         responds across six cycles over the processing window, and the settled
-         position is the aggregate of all six.
+      /* ---- The batch model (§B.2 / Part 5.3) -------------------------------
+         Both legs are multi-cycle. Clearing can be staged across more than one
+         cycle in a day, with the remainder empty; incoming arrives across up to
+         six cycles over the processing window, and the settled position is the
+         aggregate of whichever have landed.
 
-         The most recent settled cycle is deliberately left mid-flight — four of
-         six have landed — because a residual computed before the last two
-         arrive is not a break, it is an incomplete picture, and the screen has
-         to be able to say so. */
+         The most recent settled cycle is deliberately left mid-flight — two of
+         six have landed — because a difference computed before the rest arrive
+         is not a break, it is an incomplete picture, and the screen has to be
+         able to say so. */
       var provisional = (ci === n - 2);
       var INC_SHARE = [0.22, 0.19, 0.17, 0.16, 0.14, 0.12];
       var INC_AT = ['03:15', '05:40', '07:20', '09:05', '11:30', '14:10'];
-      var arrived = provisional ? 4 : 6;
+      var arrived = provisional ? 2 : 6;
       var arrivedShare = 0;
       for (var ai = 0; ai < arrived; ai++) arrivedShare += INC_SHARE[ai];
       arrivedShare = Math.round(arrivedShare * 10000) / 10000;
 
       var fullSettle = 0, fullCount = 0;
-      NETWORKS.forEach(function (net) { fullSettle += legs[net.key].settleAmt; fullCount += legs[net.key].setCount; });
+      NETS.forEach(function (net) { fullSettle += legs[net.key].settleAmt; fullCount += legs[net.key].setCount; });
       fullSettle = round2(fullSettle);
 
       var incomingCycles = INC_SHARE.map(function (share, k) {
@@ -255,24 +318,50 @@ window.OPS = (function () {
 
       // Only what has actually landed counts towards the settled position.
       if (provisional) {
-        NETWORKS.forEach(function (net) { legs[net.key].settleAmt = round2(legs[net.key].settleAmt * arrivedShare); });
+        NETS.forEach(function (net) { legs[net.key].settleAmt = round2(legs[net.key].settleAmt * arrivedShare); });
       }
-      NETWORKS.forEach(function (net) { setTotal += legs[net.key].settleAmt; });
+      NETS.forEach(function (net) { setTotal += legs[net.key].settleAmt; });
       setTotal = round2(setTotal);
-      var residual = round2(subTotal - setTotal - expectedDelta);
+      var difference = round2(subTotal - setTotal - expectedFees);
+
+      /* ---- Leg 1 · the clearing cycles staged for this date (Part 5.3) -----
+         One row per tenant × network × cycle sequence, each with its own ID.
+         Most days are one cycle per network. The provisional cycle carries the
+         authored two-cycle case: 01 staged, 02 cut but never staged — and an
+         unstaged cycle renders every figure as "—", never as zero. */
+      var clearingCycles = [];
+      NETS.forEach(function (net) {
+        var lg = legs[net.key];
+        clearingCycles.push({
+          id: cycleId(tenant.id, net.key, date, 1), seq: 1,
+          tenantId: tenant.id, networkKey: net.key, networkName: net.name, date: date,
+          staged: !isToday, count: lg.subCount, amount: lg.subGross,
+          stagedAt: isToday ? null : U.prettyDate(date) + ', 2' + (net.key === 'visa' ? '2:04' : '2:31') + ' IST'
+        });
+      });
+      if (provisional && NETS.length) {
+        clearingCycles.push({
+          id: cycleId(tenant.id, NETS[0].key, date, 2), seq: 2,
+          tenantId: tenant.id, networkKey: NETS[0].key, networkName: NETS[0].name, date: date,
+          staged: false, count: 0, amount: 0, stagedAt: null
+        });
+      }
 
       // corrections
       var corrections = [];
       if (hasCorr) {
-        var wrong = round2(legs.rupay.scheme * (1.4 + r() * 0.3));
-        corrections.push({ network: 'RuPay', field: 'Scheme Fee', originalValue: wrong, correctedValue: legs.rupay.scheme, nullifiedAt: U.prettyDate(U.addDays(date, 1)) + ', 09:14 IST', correctedAt: U.prettyDate(U.addDays(date, 1)) + ', 09:22 IST', reason: 'Scheme fee posted with an incorrect rate table (v2024.3); re-posted with the correct domestic rate.', by: 'settlement-engine / auto-recon' });
+        // The correction lands on the tenant's last network — RuPay where the
+        // tenant runs it, otherwise whichever network sits last in the matrix.
+        var corrNet = NETS[NETS.length - 1];
+        var wrong = round2(legs[corrNet.key].scheme * (1.4 + r() * 0.3));
+        corrections.push({ network: corrNet.name, field: 'Scheme Fee', originalValue: wrong, correctedValue: legs[corrNet.key].scheme, nullifiedAt: U.prettyDate(U.addDays(date, 1)) + ', 09:14 IST', correctedAt: U.prettyDate(U.addDays(date, 1)) + ', 09:22 IST', reason: 'Scheme fee posted with an incorrect rate table (v2024.3); re-posted with the correct domestic rate.', by: 'settlement-engine / auto-recon' });
       }
 
       // three-state (for current/today cycle grid)
       var states = {};
       // per-tenant today profile → drives both the cross-tenant matrix and the health strip
       var prof = { yesbank: 'partial', 'hsbc-in': 'settled', 'hsbc-sg': 'early', 'hsbc-hk': 'settled' }[tenant.id] || 'partial';
-      NETWORKS.forEach(function (net, ni) {
+      NETS.forEach(function (net, ni) {
         if (isToday) {
           var parsedDone, settledDone;
           if (prof === 'settled') { parsedDone = true; settledDone = true; }
@@ -289,14 +378,15 @@ window.OPS = (function () {
       return {
         id: 'ops-cyc-' + tenant.id + '-' + date,
         tenantId: tenant.id, date: date, dow: U.DOW[wd], currency: tenant.currency, isToday: isToday,
-        status: status, legs: legs, states: states,
-        // one outgoing clearing batch per cycle; incoming aggregated across six
-        outgoingBatches: 1,
+        status: status, legs: legs, states: states, networks: NETS,
+        // Both legs are multi-cycle: clearing across one or more staged cycles,
+        // incoming aggregated across up to six.
+        clearingCycles: clearingCycles, clearingStaged: clearingCycles.filter(function (c) { return c.staged; }).length,
         incomingCycles: incomingCycles, incomingReceived: arrived, incomingTotal: 6,
         provisional: provisional, expectedFullSettlement: fullSettle,
         submitted: round2(subTotal), settled: setTotal,
         interchange: icTotal, scheme: schemeTotal, adjustments: round2(adjTotal + rejTotal), rejectionHoldback: rejTotal,
-        expectedDelta: expectedDelta, residual: residual, hasBreak: hasBreak, brk: brk,
+        expectedFees: expectedFees, difference: difference, hasBreak: hasBreak, brk: brk,
         rejections: rejections, corrections: corrections, hasRej: hasRej, hasCorr: hasCorr
       };
     });
@@ -477,6 +567,10 @@ window.OPS = (function () {
     tenants: tenants, tenantById: tenantById, rates: rates, toINR: toINR,
     merchantsByTenant: merchantsByTenant, allMerchants: allMerchants, merchantById: merchantById,
     NETWORKS: NETWORKS, NET_BY_KEY: NET_BY_KEY,
+    // Network availability + cycle identity — one source of truth for the
+    // Reconciliation legs, Clearing Files and Cycle Snapshot alike.
+    AVAILABILITY: AVAILABILITY, netEnabled: netEnabled, netsFor: netsFor,
+    tenantSlug: tenantSlug, netSlug: netSlug, cycleId: cycleId, parseCycleId: parseCycleId,
     feeApprovals: feeApprovals,
     cyclesByTenant: cyclesByTenant, currentCycleByTenant: currentCycleByTenant, settledCycles: settledCycles, defaultRecon: defaultRecon,
     disputes: disputes, disputeById: disputeById,

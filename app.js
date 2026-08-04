@@ -210,6 +210,17 @@
      screen re-implements a header, a KPI card, a filter row or a side panel.
      ======================================================================== */
 
+  /* Part 5.2 — one way to print a cycle, everywhere it is referenced: the
+     identifier in monospace with the human date beneath it in muted text. A
+     date on its own is not an identifier — it cannot tell two cycles on the
+     same day apart, which is exactly what multi-cycle clearing and multi-cycle
+     incoming produce. */
+  function cycleIdCell(id, date, cls) {
+    return '<div class="cycle-id' + (cls ? ' ' + cls : '') + '">' +
+      '<span class="cycle-id-code mono">' + esc(id) + '</span>' +
+      (date ? '<span class="cycle-id-date">' + esc(U.prettyDate(date)) + '</span>' : '') + '</div>';
+  }
+
   // Part 3.1 — every screen opens the same way: title, one line of subtitle,
   // and at most one primary action on the right.
   function pageHead(title, subtitle, actions) {
@@ -238,7 +249,10 @@
   function opsSelect(action, value, options, aria) {
     return '<span class="ops-select"><select data-action="' + action + '" aria-label="' + esc(aria || action) + '">' +
       options.map(function (o) {
-        var v = (o instanceof Array) ? o[0] : o, l = (o instanceof Array) ? o[1] : o;
+        // Array.isArray, not `instanceof Array` — the latter is false for an
+        // array created in another realm, which silently renders every option
+        // as its own comma-joined source.
+        var v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : o;
         return '<option value="' + esc(v) + '"' + (String(value) === String(v) ? ' selected' : '') + '>' + esc(l) + '</option>';
       }).join('') + '</select>' + icon('chevron-down', 16) + '</span>';
   }
@@ -356,7 +370,7 @@
   // nested parent, matching the Bank Portal's Merchants / Reconciliation pattern.
   var OPS_NAV = [
     { id: 'ops-home', label: 'Ops Home', icon: 'home', route: '#/dashboard/ops' },
-    { id: 'ops-approvals', label: 'Fee Approvals', full: 'Fee Config Approvals', icon: 'check-square', route: '#/dashboard/ops/approvals' },
+    { id: 'ops-approvals', label: 'Merchant Fees', full: 'Merchant Fees', icon: 'check-square', route: '#/dashboard/ops/approvals' },
     {
       // File-detail brief Part 6 — Recon File Management is where the file
       // detail panel lives, and it is a child of Reconciliation rather than a
@@ -366,7 +380,11 @@
         { id: 'ops-recon-files', label: 'Recon Files', full: 'Recon File Management', noIcon: true, route: '#/dashboard/ops/reconciliation/files' }
       ]
     },
-    { id: 'ops-files', label: 'Settlement Files', full: 'Settlement File Monitoring', icon: 'upload', route: '#/dashboard/ops/files' },
+    // Clearing Files sits directly above Acquirer Reports: both are outgoing
+    // files, but only this one leaves through a person in the network's own
+    // software, which is why it needs its own record of what happened.
+    { id: 'ops-clearing', label: 'Clearing Files', full: 'Clearing Files', icon: 'file-up', route: '#/dashboard/ops/clearing' },
+    { id: 'ops-files', label: 'Acquirer Reports', full: 'Acquirer Reports', icon: 'upload', route: '#/dashboard/ops/files' },
     { id: 'ops-rejects', label: 'Rejects', icon: 'file-warning', route: '#/dashboard/ops/rejects' },
     { id: 'ops-onboarding', label: 'Bank Onboarding', icon: 'building', route: '#/dashboard/ops/onboarding' },
     {
@@ -1633,6 +1651,9 @@
     // Cycle Snapshot — the drill-in behind every Cross-Tenant Cycle Status cell.
     // It belongs to Ops Home, so the sidebar keeps Ops Home selected.
     if (head === 'cycle-snapshot') { S.opsActive = 'ops-home'; renderSidebar(); return CYCUI.route(rest.slice(1)); }
+    // Clearing Files — one record per tenant × network × cycle, and the
+    // :cycleId drill-in where generate / stage / ack all happen.
+    if (head === 'clearing') { S.opsActive = 'ops-clearing'; renderSidebar(); return CLRUI.route(rest.slice(1)); }
     if (head === 'files') { S.opsActive = 'ops-files'; renderSidebar(); return SFUI.route(); }
     // Rejects — staging + incoming rejects across Visa and Mastercard. One
     // branch covers the overview and the :batchId drill-in; the correction
@@ -1670,7 +1691,7 @@
         sub: 'Month to date · converted at 1 SGD = ₹61.5, 1 HKD = ₹10.7',
         title: 'Aggregated across tenants at 1 SGD = ₹61.5, 1 HKD = ₹10.7 (rates as of prototype date)'
       }) +
-      kpiCard({ tile: 'orange', icon: 'check-square', label: 'Fee approvals waiting', value: k.pendingApprovals, sub: 'Review queue ' + icon('arrow-right', 12), route: '#/dashboard/ops/approvals?approvalTab=pending' }) +
+      kpiCard({ tile: 'orange', icon: 'check-square', label: 'Merchant fee approvals', value: k.pendingApprovals, sub: 'Review queue ' + icon('arrow-right', 12), route: '#/dashboard/ops/approvals?approvalTab=pending' }) +
       kpiCard({ tile: 'purple', icon: 'life-buoy', label: 'Open disputes', value: k.openDisputes, sub: 'Across the portfolio ' + icon('arrow-right', 12), route: '#/dashboard/ops/disputes' });
 
     // cross-tenant cycle status grid — four legs per cell (CLR / STL / INC / JV2),
@@ -1695,14 +1716,27 @@
     // failure and a validation mismatch are different problems, and the queue
     // says which one it is rather than collapsing them into "issue".
     /* A queue row goes to the specific item, never a generic list — the
-       Settlement File Monitoring screen filtered to that tenant and cycle,
+       Acquirer Reports screen filtered to that tenant and cycle,
        where the row opens the file detail panel. */
-    var fileQueue = window.SFILES.issues(7).slice(0, 5).map(function (f) {
+    /* Clearing cycles in Ack overdue or Ack rejected join this same queue
+       (clearing brief Part 2.4) — no new queue. They sort above the report
+       rows because an unacknowledged clearing file is a cycle the network may
+       never have taken, which outranks a report that failed to deliver. */
+    var clrQueue = window.CLEARING.needsAttention(3).slice(0, 3).map(function (rec) {
+      var overdue = rec.state === 'ack_overdue';
+      var what = pill(overdue ? 'Ack overdue' : 'Ack rejected', 'danger', overdue ? 'alert-triangle' : 'x-circle');
+      return '<div class="queue-item" data-route="#/dashboard/ops/clearing/' + esc(rec.id) + '">' +
+        '<div class="qi-body"><div class="qi-title">' + tenantTag(rec.tenantId) + ' · ' + esc(rec.networkName) + ' clearing</div>' +
+        '<div class="qi-meta"><span class="mono qi-cycle">' + esc(rec.id) + '</span> · ' + what + '</div></div>' +
+        '<span class="qi-arrow">' + icon('chevron-right', 16) + '</span></div>';
+    }).join('');
+    var reportQueue = window.SFILES.issues(7).slice(0, 4).map(function (f) {
       var bad = f.delivery === 'Failed';
       var what = bad ? pill('Delivery failed', 'danger') : (f.validation === 'Mismatch' ? pill('Validation mismatch', 'danger') : pill('Not shared', 'warning'));
       var route = '#/dashboard/ops/files?filesTenant=' + f.tenantId + '&filesDate=' + f.date;
       return '<div class="queue-item" data-route="' + route + '"><div class="qi-body"><div class="qi-title">' + tenantTag(f.tenantId) + ' · ' + f.type + '</div><div class="qi-meta">' + U.prettyDate(f.date) + ' · ' + what + '</div></div><span class="qi-arrow">' + icon('chevron-right', 16) + '</span></div>';
-    }).join('') || '<div class="meta">No file issues.</div>';
+    }).join('');
+    var fileQueue = (clrQueue + reportQueue) || '<div class="meta">No outgoing file issues.</div>';
 
     // rejections summary
     var rejBreak = O.tenants.map(function (t) {
@@ -1729,9 +1763,11 @@
       '<div class="mt-16">' + matrix + '</div>' +
       '<div class="section-title mb-16 mt-24">Action queues</div>' +
       '<div class="grid grid-3">' +
-      '<div class="queue-col"><div class="qc-head">Fee Approvals <a class="btn-ghost" data-route="#/dashboard/ops/approvals">All ' + icon('arrow-right', 13) + '</a></div>' + feeQueue + '</div>' +
+      '<div class="queue-col"><div class="qc-head">Merchant Fees <a class="btn-ghost" data-route="#/dashboard/ops/approvals">All ' + icon('arrow-right', 13) + '</a></div>' + feeQueue + '</div>' +
       '<div class="queue-col"><div class="qc-head">Bank Onboarding in Progress <a class="btn-ghost" data-route="#/dashboard/ops/onboarding">All ' + icon('arrow-right', 13) + '</a></div>' + onbQueue + '</div>' +
-      '<div class="queue-col"><div class="qc-head">Settlement File Issues <a class="btn-ghost" data-route="#/dashboard/ops/files">All ' + icon('arrow-right', 13) + '</a></div>' + fileQueue + '</div>' +
+      '<div class="queue-col"><div class="qc-head">Outgoing File Issues ' +
+      '<span class="qc-links"><a class="btn-ghost" data-route="#/dashboard/ops/clearing">Clearing ' + icon('arrow-right', 13) + '</a>' +
+      '<a class="btn-ghost" data-route="#/dashboard/ops/files">Reports ' + icon('arrow-right', 13) + '</a></span></div>' + fileQueue + '</div>' +
       '</div>' +
       '<div class="mt-24">' + rejCard + '</div>' +
       '<div class="grid grid-2 mt-24">' +
@@ -1741,7 +1777,7 @@
     );
   }
 
-  /* ---- 5.2a Fee Config Approvals queue ------------------------------------ */
+  /* ---- 5.2a Merchant Fees queue ------------------------------------------- */
   function approvalStatusKind(s) { return { Pending: 'warning', Approved: 'success', Rejected: 'danger' }[s] || 'neutral'; }
 
   /* §A.2 — tenant summary tiles.
@@ -1763,7 +1799,7 @@
       }
       return '<button type="button" class="appr-tile' + (active ? ' active' : '') + (zero ? ' muted' : '') + '" ' +
         (zero ? 'disabled' : 'data-action="ops-approval-tile" data-tenant="' + id + '"') +
-        ' title="' + esc(zero ? name + ' has no pending fee approvals' : 'Filter the queue to ' + name) + '">' +
+        ' title="' + esc(zero ? name + ' has no pending merchant fee changes' : 'Filter the queue to ' + name) + '">' +
         '<span class="appr-tile-head">' + (id === 'all'
           ? '<span class="tenant-tag"><span class="tenant-dot" style="background:var(--text-tertiary)"></span>' + name + '</span>'
           : tenantTag(id)) + sla + '</span>' +
@@ -1822,7 +1858,7 @@
     if (S.ops.approvalsSla !== 'all') chips.push({ label: 'SLA: ' + S.ops.approvalsSla, action: 'ops-approval-sla-clear' });
 
     setView(
-      pageHead('Fee Config Approvals',
+      pageHead('Merchant Fees',
         'Approve or reject merchant fee changes submitted by bank users.') +
       approvalTiles() + tabBar +
       opsFilterRow({
@@ -1863,7 +1899,7 @@
     var plRows = a.pl.perNet.map(function (p) { return '<tr><td>' + p.network + '</td><td class="num" style="color:' + (p.delta >= 0 ? 'var(--chart-positive)' : 'var(--chart-negative)') + '">' + (p.delta >= 0 ? '+' : '') + fmt(p.delta, 0, a.pl.currency) + '</td></tr>'; }).join('');
 
     setView(
-      '<div class="breadcrumb"><a data-route="#/dashboard/ops/approvals">Fee Config Approvals</a><span class="sep">/</span><span>' + a.id + '</span></div>' +
+      '<div class="breadcrumb"><a data-route="#/dashboard/ops/approvals">Merchant Fees</a><span class="sep">/</span><span>' + a.id + '</span></div>' +
       pageHead(esc(a.merchant),
         tenantTag(a.tenantId, true) + ' · MID ' + a.mid + ' · submitted by ' + esc(a.submittedBy) + ' ' + a.submittedHoursAgo + 'h ago ' +
         (a.status === 'Pending' ? slaBadge(left) : pill(a.status, approvalStatusKind(a.status)))) +
@@ -1905,59 +1941,92 @@
     var statusKind = cyc.status === 'Break' ? 'danger' : (cyc.status === 'Under Investigation' ? 'warning' : (cyc.status === 'Provisional' ? 'info' : 'success'));
     var selectors = '<div class="filter-row">' +
       '<label class="field" style="flex-direction:row;align-items:center;gap:8px">Tenant ' + tenantSelect('recon-tenant', tid, false) + '</label>' +
-      '<label class="field" style="flex-direction:row;align-items:center;gap:8px">Cycle <select class="input" style="width:auto" data-action="recon-cycle">' + cycles.slice(0, 30).map(function (c) { return '<option value="' + c.id + '"' + (c.id === cyc.id ? ' selected' : '') + '>' + U.prettyDate(c.date) + (c.hasBreak ? ' · break' : (c.provisional ? ' · provisional' : (c.hasRej ? ' · rejections' : ''))) + '</option>'; }).join('') + '</select></label>' +
-      '<div class="chip"><span class="chip-label">Networks</span><span class="chip-value">All</span>' + icon('chevron-down', 15) + '</div></div>';
+      // The picker chooses a cycle DATE — a day's reconciliation, which spans
+      // every cycle staged and received on it. The cycles themselves are named
+      // by identifier inside the legs (Part 5.2), never by their date.
+      '<label class="field" style="flex-direction:row;align-items:center;gap:8px">Cycle date <select class="input" style="width:auto" data-action="recon-cycle">' + cycles.slice(0, 30).map(function (c) { return '<option value="' + c.id + '"' + (c.id === cyc.id ? ' selected' : '') + '>' + U.prettyDate(c.date) + (c.hasBreak ? ' · break' : (c.provisional ? ' · provisional' : (c.hasRej ? ' · rejections' : ''))) + '</option>'; }).join('') + '</select></label>' +
+      '</div>';
 
-    /* ---- The two legs (§B.3) ----------------------------------------------
-       Each leg says what it is and where the number comes from, in two lines
-       of muted text, because "Submitted position" alone left the analyst to
-       guess whether it meant our records or the network's. */
-    function legTable(kind) {
-      var rows = O.NETWORKS.map(function (net) {
-        var lg = cyc.legs[net.key];
-        return '<tr><td>' + net.name + '</td><td class="num">' + num(kind === 'sub' ? lg.subCount : lg.setCount) + '</td><td class="num">' + fmt(kind === 'sub' ? lg.subGross : lg.settleAmt, 2, cur) + '</td></tr>';
-      }).join('');
-      // §A.3 — every ops table scrolls inside its own container rather than
-      // widening the page, with the network column pinned while it does.
-      return '<div class="table-wrap"><table class="data"><thead><tr><th>Network</th><th class="num">Txns</th><th class="num">' + (kind === 'sub' ? 'Gross' : 'Settled so far') + '</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    /* ---- The two legs (§B.3 / Part 5.3) -----------------------------------
+       Each leg says what it is and where the number comes from, and BOTH now
+       break down per cycle rather than showing a single aggregate figure.
+       Clearing can be staged across more than one cycle with the rest empty;
+       incoming arrives across up to six. An empty cycle renders "—", never a
+       zero — "nothing arrived" and "zero arrived" are different facts. */
+    function dash() { return '<span class="recon-empty">—</span>'; }
+    /* Both legs carry a timestamp per cycle row. The year and the zone are the
+       same on every row of a single cycle's reconciliation, so they are dropped
+       here — what distinguishes the rows is the day and the clock. */
+    function shortStamp(at) {
+      if (!at) return '';
+      var p = String(at).split(', ');
+      return p[0].replace(/ \d{4}$/, '') + ' ' + (p[1] || '').replace(' IST', '');
     }
+
+    var clrRows = cyc.clearingCycles.map(function (cc) {
+      return '<tr class="' + (cc.staged ? '' : 'recon-cyc-empty') + '">' +
+        '<td>' + cycleIdCell(cc.id, cc.date) + '</td>' +
+        '<td class="num">' + (cc.staged ? num(cc.count) + ' txns' : dash()) + '</td>' +
+        '<td class="num">' + (cc.staged ? fmt(cc.amount, 2, cur) : dash()) + '</td>' +
+        '<td class="nowrap cell-sub" title="' + esc(cc.stagedAt || '') + '">' + (cc.staged
+          ? esc(shortStamp(cc.stagedAt))
+          : '<span class="recon-await">' + icon('circle-dashed', 12) + 'not staged</span>') + '</td>' +
+        '<td class="recon-cyc-go">' +
+        '<a data-route="#/dashboard/ops/clearing/' + esc(cc.id) + '" title="' + esc('Open the clearing file record for ' + cc.id) + '">' +
+        icon('arrow-right', 14) + '</a></td></tr>';
+    }).join('');
+    var clrStaged = cyc.clearingStaged;
+
     /* §B.2 — the six incoming cycles, so the analyst can see which have landed
        and which are still outstanding. */
     var incRows = cyc.incomingCycles.map(function (ic) {
-      return '<tr class="' + (ic.received ? '' : 'recon-inc-waiting') + '">' +
+      return '<tr class="' + (ic.received ? '' : 'recon-cyc-empty') + '">' +
         '<td class="nowrap">Cycle ' + ic.n + ' of 6</td>' +
-        '<td class="nowrap cell-sub">' + (ic.receivedAt ? esc(ic.receivedAt) : '<span class="recon-await">' + icon('clock', 12) + 'not received</span>') + '</td>' +
-        '<td class="num">' + (ic.received ? num(ic.count) : '—') + '</td>' +
-        '<td class="num">' + (ic.received ? fmt(ic.amount, 2, cur) : '—') + '</td></tr>';
+        '<td class="num">' + (ic.received ? num(ic.count) + ' txns' : dash()) + '</td>' +
+        '<td class="num">' + (ic.received ? fmt(ic.amount, 2, cur) : dash()) + '</td>' +
+        '<td class="nowrap cell-sub" title="' + esc(ic.receivedAt || '') + '">' +
+        (ic.receivedAt ? esc(shortStamp(ic.receivedAt)) : 'awaiting') + '</td>' +
+        '<td class="recon-cyc-mark">' + (ic.received
+          ? '<span class="recon-got">' + icon('check', 14) + '</span>'
+          : '<span class="recon-await">' + icon('circle', 12) + '</span>') + '</td></tr>';
     }).join('');
-    var provisionalBanner = cyc.provisional
-      ? '<div class="callout warn recon-provisional">' + icon('alert-triangle', 20) +
-      '<div class="callout-body"><strong>' + cyc.incomingReceived + ' of 6 incoming cycles received — reconciliation is provisional.</strong> ' +
-      'The residual below is the two outstanding cycles, not a confirmed break. It resolves when cycles ' +
-      (cyc.incomingReceived + 1) + ' and 6 land.</div></div>'
-      : '';
+
+    /* Part 5.3 — a difference computed on partial incoming is not a break, and
+       the UI must not present it as one. This sits directly above the break
+       math as well as inside Leg 2. */
+    function provisionalNote(cls) {
+      if (!cyc.provisional) return '';
+      return '<div class="callout info recon-provisional ' + (cls || '') + '">' + icon('info', 20) +
+        '<div class="callout-body"><strong><span class="num">' + cyc.incomingReceived + '</span> of <span class="num">6</span> incoming cycles received. This difference is provisional.</strong> ' +
+        'It resolves when cycles ' + (cyc.incomingReceived + 1) + '–6 land.</div></div>';
+    }
 
     var twoway = '<div class="twoway">' +
       '<div class="leg-card"><div class="leg-head">Leg 1 · Submitted to network</div>' +
-      '<div class="leg-src">The amount we cleared and submitted to the network for this cycle.<br>Source: our own clearing batch trailers (CTF / IPM / NPCI).</div>' +
-      '<div class="leg-batch">' + icon('package', 13) + '1 batch submitted this cycle</div>' +
-      legTable('sub') +
-      '<div class="row" style="justify-content:space-between;margin-top:12px;font-weight:600"><span>Total submitted</span><span class="num">' + fmt(cyc.submitted, 2, cur) + '</span></div></div>' +
+      '<div class="leg-src">The amount we cleared and submitted to the network.<br>Source: our own clearing batch trailers (CTF / IPM / NPCI).</div>' +
+      '<div class="leg-batch' + (clrStaged < cyc.clearingCycles.length ? ' warn' : '') + '">' + icon('package', 13) +
+      '<span class="num">' + clrStaged + '</span> of <span class="num">' + cyc.clearingCycles.length + '</span> clearing cycles staged</div>' +
+      '<div class="table-wrap"><table class="data recon-cyc"><thead><tr><th>Cycle</th><th class="num">Txns</th><th class="num">Value</th><th>Staged</th><th></th></tr></thead><tbody>' + clrRows + '</tbody></table></div>' +
+      '<div class="row recon-leg-total"><span>Total</span><span><span class="num">' + num(cyc.clearingCycles.reduce(function (s, c) { return s + (c.staged ? c.count : 0); }, 0)) + ' txns</span>' +
+      '<span class="num recon-total-val">' + fmt(cyc.submitted, 2, cur) + '</span></span></div></div>' +
 
       '<div class="leg-card"><div class="leg-head">Leg 2 · Settled by network</div>' +
-      '<div class="leg-src">The amount the network actually settled to the acquirer.<br>Source: network settlement reports (VSS TC46/TC58, GCMS, NPCI), aggregated across 6 incoming cycles.</div>' +
-      '<div class="leg-batch' + (cyc.provisional ? ' warn' : '') + '">' + icon('layers', 13) + 'Aggregated across 6 incoming cycles · ' + cyc.incomingReceived + ' of 6 received</div>' +
-      provisionalBanner +
-      legTable('set') +
-      '<div class="recon-inc-title">Incoming cycles</div>' +
-      '<div class="table-wrap"><table class="data recon-inc"><thead><tr><th>Cycle</th><th>Received</th><th class="num">Txns</th><th class="num">Amount</th></tr></thead><tbody>' + incRows + '</tbody></table></div>' +
-      '<div class="row" style="justify-content:space-between;margin-top:12px;font-weight:600"><span>Total settled' + (cyc.provisional ? ' so far' : '') + '</span><span class="num">' + fmt(cyc.settled, 2, cur) + '</span></div>' +
-      (cyc.provisional ? '<div class="meta" style="margin-top:4px">Expected once all six land: <span class="num">' + fmt(cyc.expectedFullSettlement, 2, cur) + '</span></div>' : '') +
+      '<div class="leg-src">The amount the network settled to the acquirer.<br>Source: network settlement reports (VSS TC46/TC58, GCMS, NPCI), across up to six incoming cycles.</div>' +
+      '<div class="leg-batch' + (cyc.provisional ? ' warn' : '') + '">' + icon('layers', 13) +
+      '<span class="num">' + cyc.incomingReceived + '</span> of <span class="num">6</span> incoming cycles received</div>' +
+      '<div class="table-wrap"><table class="data recon-cyc"><thead><tr><th>Cycle</th><th class="num">Txns</th><th class="num">Value</th><th>Received</th><th></th></tr></thead><tbody>' + incRows + '</tbody></table></div>' +
+      '<div class="row recon-leg-total"><span>Total</span><span><span class="num">' +
+      num(cyc.incomingCycles.reduce(function (s, c) { return s + (c.received ? c.count : 0); }, 0)) + ' txns</span>' +
+      '<span class="num recon-total-val">' + fmt(cyc.settled, 2, cur) + '</span>' +
+      '<span class="recon-total-note">' + cyc.incomingReceived + ' of 6 received</span></span></div>' +
+      (cyc.provisional ? '<div class="meta" style="margin-top:6px">Expected once all six land: <span class="num">' + fmt(cyc.expectedFullSettlement, 2, cur) + '</span></div>' : '') +
       '</div>' +
       '</div>';
 
-    // expected delta
-    var icRows = O.NETWORKS.map(function (net) { return '<tr><td>' + net.name + '</td><td class="num">' + fmt(cyc.legs[net.key].interchange, 2, cur) + '</td><td class="num">' + fmt(cyc.legs[net.key].scheme, 2, cur) + '</td></tr>'; }).join('');
+    // Expected fees (Part 5.1) — interchange plus scheme fees plus known
+    // adjustments. The old label said "Expected Δ", which named the arithmetic
+    // rather than the thing.
+    var icRows = cyc.networks.map(function (net) { return '<tr><td>' + net.name + '</td><td class="num">' + fmt(cyc.legs[net.key].interchange, 2, cur) + '</td><td class="num">' + fmt(cyc.legs[net.key].scheme, 2, cur) + '</td></tr>'; }).join('');
     /* §B.1 — the rejection holdback is an aggregate line in settlement math;
        the Rejects section is where those transactions can actually be worked.
        The link carries this tenant, this cycle date and the incoming family, so
@@ -1968,20 +2037,30 @@
       'title="Open Rejects filtered to ' + esc(t.name) + ', cycle ' + U.prettyDate(cyc.date) + ', incoming rejects">' +
       'View rejections ' + icon('arrow-right', 12) + '</a>';
 
-    var expected = cardBox('Expected delta', '<div class="grid grid-2"><div class="table-wrap"><table class="data"><thead><tr><th>Network</th><th class="num">Interchange</th><th class="num">Scheme Fee</th></tr></thead><tbody>' + icRows + '</tbody></table></div>' +
-      '<div><dl class="def-list"><dt>Total interchange</dt><dd class="num">' + fmt(cyc.interchange, 2, cur) + '</dd><dt>Total scheme fees</dt><dd class="num">' + fmt(cyc.scheme, 2, cur) + '</dd><dt>Known adjustments</dt><dd class="num">' + fmt(cyc.adjustments, 2, cur) + '</dd><dt>Rejection holdback</dt><dd class="num recon-holdback">' + fmt(cyc.rejectionHoldback, 2, cur) + rejLink + '</dd></dl><div class="row" style="justify-content:space-between;font-weight:700;border-top:1px solid var(--border-subtle);padding-top:10px"><span>Total expected delta</span><span class="num">' + fmt(cyc.expectedDelta, 2, cur) + '</span></div></div></div>');
+    // Part 5.1 — the breakdown line says what "expected fees" is made of,
+    // right under the figure, rather than leaving it to be inferred.
+    var feesBreakdown = '<div class="meta recon-fees-breakdown">Interchange <span class="num">' + fmt(cyc.interchange, 0, cur) +
+      '</span> · Scheme fees <span class="num">' + fmt(cyc.scheme, 0, cur) +
+      '</span> · Adjustments <span class="num">' + fmt(cyc.adjustments, 0, cur) + '</span></div>';
 
-    // break math
-    function term(lbl, val) { return '<div class="bf-term"><span class="bf-label">' + lbl + '</span><span class="bf-val">' + val + '</span></div>'; }
-    // A residual computed before all six incoming cycles land is provisional,
-    // not a break (§B.2) — it must never render in break red.
-    var residualCls = cyc.residual > 0 ? (cyc.provisional ? 'provisional' : 'break') : 'zero';
-    var breakBlock = '<div class="break-formula">' + term('Submitted', fmt(cyc.submitted, 0, cur)) + '<span class="bf-op">−</span>' +
-      term('Settled' + (cyc.provisional ? ' (4 of 6)' : ''), fmt(cyc.settled, 0, cur)) + '<span class="bf-op">−</span>' +
-      term('Expected Δ', fmt(cyc.expectedDelta, 0, cur)) + '<span class="bf-op">=</span>' +
-      '<div class="bf-term"><span class="bf-label">' + (cyc.provisional ? 'Provisional gap' : 'Residual') + '</span><span class="bf-val bf-residual ' + residualCls + '">' + fmt(cyc.residual, 2, cur) + '</span></div></div>' +
-      (cyc.provisional ? '<div class="meta mt-16">' + icon('info', 13) + ' Not a break — ' + (6 - cyc.incomingReceived) + ' incoming cycles are still outstanding. The residual is only meaningful once all six have arrived.</div>' : '') +
-      residualBar(cyc, cur);
+    var expected = cardBox('Expected fees', '<div class="grid grid-2"><div class="table-wrap"><table class="data"><thead><tr><th>Network</th><th class="num">Interchange</th><th class="num">Scheme Fee</th></tr></thead><tbody>' + icRows + '</tbody></table></div>' +
+      '<div><dl class="def-list"><dt>Total interchange</dt><dd class="num">' + fmt(cyc.interchange, 2, cur) + '</dd><dt>Total scheme fees</dt><dd class="num">' + fmt(cyc.scheme, 2, cur) + '</dd><dt>Known adjustments</dt><dd class="num">' + fmt(cyc.adjustments, 2, cur) + '</dd><dt>Rejection holdback</dt><dd class="num recon-holdback">' + fmt(cyc.rejectionHoldback, 2, cur) + rejLink + '</dd></dl><div class="row" style="justify-content:space-between;font-weight:700;border-top:1px solid var(--border-subtle);padding-top:10px"><span>Total expected fees</span><span class="num">' + fmt(cyc.expectedFees, 2, cur) + '</span></div></div></div>');
+
+    // break math — Submitted − Settled − Expected fees = Difference (Part 5.1)
+    function term(lbl, val, sub) {
+      return '<div class="bf-term"><span class="bf-label">' + lbl + '</span><span class="bf-val">' + val + '</span>' +
+        (sub || '') + '</div>';
+    }
+    // A difference computed before all six incoming cycles land is provisional,
+    // not a break (Part 5.3) — it must never render in break red.
+    var diffCls = cyc.difference > 0 ? (cyc.provisional ? 'provisional' : 'break') : 'zero';
+    var breakBlock = provisionalNote('mb-16') +
+      '<div class="break-formula">' + term('Submitted', fmt(cyc.submitted, 0, cur)) + '<span class="bf-op">−</span>' +
+      term('Settled' + (cyc.provisional ? ' (' + cyc.incomingReceived + ' of 6)' : ''), fmt(cyc.settled, 0, cur)) + '<span class="bf-op">−</span>' +
+      term('Expected fees', fmt(cyc.expectedFees, 0, cur), feesBreakdown) + '<span class="bf-op">=</span>' +
+      '<div class="bf-term"><span class="bf-label">Difference</span><span class="bf-val bf-residual ' + diffCls + '">' + fmt(cyc.difference, 2, cur) + '</span></div></div>' +
+      (cyc.provisional ? '<div class="meta mt-16">' + icon('info', 13) + ' Not a break — ' + (6 - cyc.incomingReceived) + ' incoming cycles are still outstanding. The difference is only meaningful once all six have arrived.</div>' : '') +
+      differenceBar(cyc, cur);
 
     /* A break is investigated from the settlement desk's own framing. Where the
        cycle's files are worth looking at, the link goes to Recon File
@@ -1994,7 +2073,7 @@
     if (cyc.hasBreak) {
       investigation = '<div class="card mt-16 recon-net-break"><div class="card-title">' + icon('alert-octagon', 18) +
         ' Break Investigation</div>' +
-        '<div class="meta mt-16">Residual of ' + fmt(cyc.residual, 2, cur) + ' beyond the expected delta. Contributing factor: <strong>Mastercard leg</strong> — settled amount is short of submitted less fees. Sample batches: MC-' + cyc.date.replace(/-/g, '') + '-03, MC-' + cyc.date.replace(/-/g, '') + '-07. No matching adjustment found in the scheme settlement report.</div>' +
+        '<div class="meta mt-16">Difference of ' + fmt(cyc.difference, 2, cur) + ' beyond the expected fees. Contributing factor: <strong>Mastercard leg</strong> — settled amount is short of submitted less fees. Sample batches: MC-' + cyc.date.replace(/-/g, '') + '-03, MC-' + cyc.date.replace(/-/g, '') + '-07. No matching adjustment found in the scheme settlement report.</div>' +
         '<div class="mt-16 recon-break-links">' + filesLink +
         '<button class="btn btn-primary btn-sm" data-action="open-investigation">' + icon('flag', 15) + 'Open investigation</button></div></div>';
     }
@@ -2019,7 +2098,10 @@
       pageHead('Two-Way Reconciliation', 'What we submitted to the network against what the network settled.') +
       selectors +
       '<div class="amounts-panel" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:20px">' +
-      amountCell('Cycle', U.prettyDate(cyc.date), '') + amountCell('Cycle ID', cyc.id.split('-').slice(-3).join('-'), '') + amountCell('Currency', cur, '') + '<div class="amount-cell"><span class="ac-label">Status</span><span>' + pill(cyc.status, statusKind) + '</span></div></div>' +
+      amountCell('Cycle date', U.prettyDate(cyc.date), '') +
+      amountCell('Clearing cycles', cyc.clearingStaged + ' of ' + cyc.clearingCycles.length + ' staged', '') +
+      amountCell('Currency', cur, '') +
+      '<div class="amount-cell"><span class="ac-label">Status</span><span>' + pill(cyc.status, statusKind) + '</span></div></div>' +
       twoway +
       '<div class="mt-24">' + expected + '</div>' +
       '<div class="section-title mb-16 mt-24">Break math</div>' + breakBlock + investigation +
@@ -2027,22 +2109,22 @@
       (corrSection ? '<div class="mt-24">' + corrSection + '</div>' : '')
     );
   }
-  function residualBar(c, cur) {
+  function differenceBar(c, cur) {
     var total = c.submitted || 1;
     function w(v) { return Math.max(0, (v / total) * 100); }
     return '<div class="residual-bar-wrap"><div class="residual-bar">' +
       '<div class="residual-seg" style="width:' + w(c.settled).toFixed(2) + '%;background:#22C55E">Settled ' + fmt(c.settled, 0, cur) + '</div>' +
-      '<div class="residual-seg" style="width:' + w(c.expectedDelta).toFixed(2) + '%;background:#EAB308" title="Expected delta ' + fmt(c.expectedDelta, 0, cur) + '"></div>' +
-      (c.residual > 0 ? '<div class="residual-seg" style="width:' + Math.max(w(c.residual), 6).toFixed(2) + '%;background:' + (c.provisional ? '#EAB308' : '#EF4444') + '" title="' + (c.provisional ? 'Awaiting ' : 'Residual ') + fmt(c.residual, 0, cur) + '"></div>' : '') +
-      '</div><div class="wf-legend" style="margin-top:12px"><span class="lg"><span class="sw" style="background:#22C55E"></span>Settled ' + fmt(c.settled, 0, cur) + '</span><span class="lg"><span class="sw" style="background:#EAB308"></span>Expected Δ ' + fmt(c.expectedDelta, 0, cur) + '</span>' +
-      (c.residual > 0
+      '<div class="residual-seg" style="width:' + w(c.expectedFees).toFixed(2) + '%;background:#EAB308" title="Expected fees ' + fmt(c.expectedFees, 0, cur) + '"></div>' +
+      (c.difference > 0 ? '<div class="residual-seg" style="width:' + Math.max(w(c.difference), 6).toFixed(2) + '%;background:' + (c.provisional ? '#EAB308' : '#EF4444') + '" title="' + (c.provisional ? 'Awaiting ' : 'Difference ') + fmt(c.difference, 0, cur) + '"></div>' : '') +
+      '</div><div class="wf-legend" style="margin-top:12px"><span class="lg"><span class="sw" style="background:#22C55E"></span>Settled ' + fmt(c.settled, 0, cur) + '</span><span class="lg"><span class="sw" style="background:#EAB308"></span>Expected fees ' + fmt(c.expectedFees, 0, cur) + '</span>' +
+      (c.difference > 0
         ? (c.provisional
-          ? '<span class="lg"><span class="sw" style="background:#EAB308"></span>Awaiting ' + fmt(c.residual, 0, cur) + ' — ' + (6 - c.incomingReceived) + ' incoming cycles outstanding</span>'
-          : '<span class="lg"><span class="sw" style="background:#EF4444"></span>Residual ' + fmt(c.residual, 0, cur) + ' — the break</span>')
-        : '<span class="lg">Fully reconciled — no residual</span>') + '</div></div>';
+          ? '<span class="lg"><span class="sw" style="background:#EAB308"></span>Awaiting ' + fmt(c.difference, 0, cur) + ' — ' + (6 - c.incomingReceived) + ' incoming cycles outstanding</span>'
+          : '<span class="lg"><span class="sw" style="background:#EF4444"></span>Difference ' + fmt(c.difference, 0, cur) + ' — the break</span>')
+        : '<span class="lg">Fully reconciled — no difference</span>') + '</div></div>';
   }
 
-  /* ---- 5.4 Settlement File Monitoring -------------------------------------
+  /* ---- 5.4 Acquirer Reports -----------------------------------------------
      Rebuilt as its own module (files-data.js + files-screen.js) in refinement
      round 2 §C: the network dimension is gone, the row key is
      tenant × cycle date × file type, and each row carries two independent
@@ -2335,13 +2417,14 @@
     // Ops component library (overhaul Part 2.4 / 3.1 / 3.3) — one implementation,
     // reused by every Ops module.
     pageHead: pageHead, kpiCard: kpiCard, tableCard: tableCard, opsSelect: opsSelect,
+    cycleIdCell: cycleIdCell, chart: chart,
     opsFilterRow: opsFilterRow, opsToggle: opsToggle, sidePanel: sidePanel, opsTimeline: opsTimeline,
     skeletonRows: skeletonRows, fmtCr: fmtCr
   };
   /* The file detail panel (file-detail brief Part 3) is built once and handed
      to every module that opens it through the same kit. That is what makes one
-     component render identically in Recon File Management, Settlement File
-     Monitoring and Cycle Snapshot — there is no second implementation. */
+     component render identically in Recon File Management, Acquirer Reports
+     and Cycle Snapshot — there is no second implementation. */
   var FDPANEL = window.FileDetailPanel(CFGKIT);
   CFGKIT.filePanel = FDPANEL;
   Object.keys(FDPANEL.actions).forEach(function (k) { ACTIONS[k] = FDPANEL.actions[k]; });
@@ -2356,10 +2439,13 @@
   // Cross-Tenant Cycle Status grid (Ops Home) + Cycle Snapshot drill-in.
   var CYCUI = window.CycleUI(CFGKIT);
   Object.keys(CYCUI.actions).forEach(function (k) { ACTIONS[k] = CYCUI.actions[k]; });
-  // Settlement File Monitoring (refinement round 2 §C) — its own module now
+  // Acquirer Reports (refinement round 2 §C) — its own module now
   // that the screen carries two status dimensions and five row actions.
   var SFUI = window.FilesUI(CFGKIT);
   Object.keys(SFUI.actions).forEach(function (k) { ACTIONS[k] = SFUI.actions[k]; });
+  // Clearing Files — the dashboard's record of a staging it cannot observe.
+  var CLRUI = window.ClearingUI(CFGKIT);
+  Object.keys(CLRUI.actions).forEach(function (k) { ACTIONS[k] = CLRUI.actions[k]; });
   // Recon File Management — the file detail panel's primary home.
   var RFUI = window.ReconFilesUI(CFGKIT, FDPANEL);
   Object.keys(RFUI.actions).forEach(function (k) { ACTIONS[k] = RFUI.actions[k]; });
@@ -2409,8 +2495,11 @@
     // Rejects: 'rej-i-*' actions are live-typing bindings — they update the
     // model and re-render only the affected region, so the input keeps focus.
     if (a.indexOf('rej-i-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
-    // Settlement File Monitoring: 'sf-i-*' are live-typing bindings too.
+    // Acquirer Reports: 'sf-i-*' are live-typing bindings too.
     if (a.indexOf('sf-i-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
+    // Clearing Files: 'clr-i-*' are live-typing bindings — the list search box
+    // and the regenerate reason, whose character count updates as you type.
+    if (a.indexOf('clr-i-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
     // Run Console: 'run-i-*' are live-typing bindings (search box, the override
     // reason counter, the void note) — they re-render only what changed so the
     // field keeps focus.
@@ -2424,8 +2513,10 @@
     if (a.indexOf('cfgc-') === 0) { ACTIONS[a](t); return; }
     // Rejects: 'rej-c-*' actions are select / checkbox / date bindings.
     if (a.indexOf('rej-c-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
-    // Settlement File Monitoring: selects, date inputs and the upload file picker.
+    // Acquirer Reports: selects, date inputs and the upload file picker.
     if (a.indexOf('sf-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
+    // Clearing Files: selects, date inputs and the ack file picker.
+    if (a.indexOf('clr-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }
     // Run Console: 'run-c-*' are selects, date inputs and the launcher's
     // operation radios.
     if (a.indexOf('run-c-') === 0 && ACTIONS[a]) { ACTIONS[a](t); return; }

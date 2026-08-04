@@ -2,7 +2,7 @@
    Juspay Ops Portal — File detail panel (file-detail brief Part 3)
 
    ONE COMPONENT, THREE ENTRY POINTS (Part 6). Recon File Management is its
-   home; Settlement File Monitoring opens it on a row click; Cycle Snapshot
+   home; Acquirer Reports opens it on a row click; Cycle Snapshot
    opens it from a failed leg's "See what failed →". There is no second
    implementation and no look-alike anywhere.
 

@@ -1,5 +1,5 @@
 /* =============================================================================
-   Juspay Ops Portal — Settlement File Monitoring data (refinement round 2 §C)
+   Juspay Ops Portal — Acquirer Reports data (refinement round 2 §C)
 
    THE ROW KEY IS tenant × cycle date × file type. There is no network here.
    Settlement files are acquirer artifacts: HSBC IN produces one MPR for the
@@ -73,6 +73,29 @@ window.SFILES = (function () {
   /* Generation slot per file type — the generator runs them in sequence in the
      early hours of the cycle date, which is why JV2 always lands last. */
   var SLOT = { MPR: 0, GEFU1: 0, MPF: 1, GEFU2: 1, JV1: 2, JV2: 3 };
+
+  /* =========================================================================
+     PART 6.2 — THE DELIVERY CUTOFF
+     Each report has a contractual time by which the acquirer must have it,
+     held as minutes from midnight on the cycle date. The margin — cutoff minus
+     the delivery time — is the one number on this screen that predicts a
+     future breach, and it is the only thing the chart plots.
+     ========================================================================= */
+  var CUTOFF_MIN = { MPR: 6 * 60, GEFU1: 6 * 60, MPF: 7 * 60, GEFU2: 7 * 60, JV1: 8 * 60, JV2: 9 * 60 };
+  function cutoffOf(type) { return CUTOFF_MIN[type] == null ? 6 * 60 : CUTOFF_MIN[type]; }
+
+  /* Authored drift (Part 9.3). HSBC IN's MPF has been delivered later every
+     week for a month and has already crossed the cutoff twice. Nothing else on
+     this screen shows that — a single late delivery looks identical to a
+     delivery that is late every cycle. The share time is derived FROM the
+     margin, so the chart and the "Shared at" column can never disagree. */
+  var DRIFT = {
+    'hsbc-in|MPF': function (dayIdx) {
+      if (dayIdx === 4) return -12;     // cutoff missed
+      if (dayIdx === 11) return -25;    // cutoff missed
+      return Math.round(120 - (29 - dayIdx) * 3.6);
+    }
+  };
 
   /* ---- status vocabularies (§C.3) ---------------------------------------- */
   var DELIVERY = {
@@ -197,9 +220,16 @@ window.SFILES = (function () {
     var slot = SLOT[type] == null ? 0 : SLOT[type];
     var genH = 2 + Math.floor(slot / 2), genM = rint(r, 4, 52) + (slot % 2) * 30;
     if (genM > 59) { genH += 1; genM -= 60; }
-    var shareMin = genM + rint(r, 18, 46);
-    var shareH = genH + Math.floor(shareMin / 60);
-    shareMin = shareMin % 60;
+
+    /* Delivery time is derived from the margin against the cutoff, not the
+       other way round, so the chart and this row always tell one story. */
+    var cutoff = cutoffOf(type);
+    var drift = DRIFT[key];
+    var margin = drift
+      ? drift(dayIdx)
+      : cutoff - (genH * 60 + genM + rint(r, 18, 46));
+    var shareAbs = cutoff - margin;
+    var shareH = Math.floor(shareAbs / 60), shareMin = shareAbs % 60;
 
     var generatedAt = stamp(date, genH, genM);
     var shared = st.delivery === 'Shared';
@@ -212,6 +242,11 @@ window.SFILES = (function () {
       validation: st.validation,
       generatedAt: generatedAt,
       sharedAt: shared ? stamp(date, shareH, shareMin) : null,
+      // Minutes before the cutoff at delivery — negative means the cutoff was
+      // missed. Null when the file was never delivered: "not delivered" is not
+      // a timing of zero.
+      cutoffMin: cutoff, deliveredMin: shared ? shareAbs : null,
+      marginMin: shared ? margin : null,
       size: (0.4 + r() * 7.2).toFixed(1) + ' MB',
       checksum: 'sha256:' + Array.from({ length: 8 }, function () { return '0123456789abcdef'[rint(r, 0, 15)]; }).join('') + '…',
       dest: '/out/' + tenantId + '/' + type.toLowerCase() + '/',
@@ -275,6 +310,34 @@ window.SFILES = (function () {
   function rowById(id) {
     var date = id.split('|')[1];
     return rowsForDate(date).find(function (r) { return r.id === id; }) || null;
+  }
+
+  /* =========================================================================
+     PART 6.2 — DELIVERY TIMING AGAINST CUTOFF, LAST 30 CYCLES
+     One series per report type. A point is the margin in minutes; null where
+     nothing was delivered that cycle, so the line breaks rather than dropping
+     to a zero that never happened.
+
+     With every tenant in scope the point is the TIGHTEST margin across the
+     acquirers that produce that report — averaging would hide the breach,
+     which is the one thing this chart exists to show.
+     ========================================================================= */
+  function deliveryTiming(tenantId, days) {
+    var n = days || 30;
+    var dates = [];
+    for (var i = n - 1; i >= 0; i--) dates.push(U.addDays(TODAY, -i));
+    var types = typesForFilter(tenantId);
+    var series = types.map(function (ft) {
+      var points = dates.map(function (d) {
+        var rows = rowsForDate(d).filter(function (r) {
+          return r.type === ft && (tenantId === 'all' || r.tenantId === tenantId) && r.marginMin != null;
+        });
+        if (!rows.length) return null;
+        return rows.reduce(function (m, r) { return Math.min(m, r.marginMin); }, Infinity);
+      });
+      return { type: ft, cutoff: cutoffOf(ft), points: points };
+    }).filter(function (s) { return s.points.some(function (p) { return p != null; }); });
+    return { dates: dates, series: series };
   }
   /* Tenants with no rows on this date because their country is on holiday. */
   function holidayTenants(from, to) {
@@ -371,7 +434,7 @@ window.SFILES = (function () {
     return { from: from, to: to, all: all, summary: summarise(all), perTenant: per, holidayTenants: holidayTenants(from, to) };
   }
 
-  /* Rows needing attention — the Ops Home "Settlement File Issues" queue. */
+  /* Rows needing attention — the Ops Home "Acquirer Report Issues" queue. */
   function issues(days) {
     var to = TODAY, from = U.addDays(TODAY, -(days || 7) + 1);
     return rowsForRange(from, to).filter(function (f) {
@@ -389,6 +452,7 @@ window.SFILES = (function () {
     markShared: markShared, replaceFile: replaceFile,
     validationOutcome: validationOutcome, validationDurationMs: validationDurationMs, finishValidation: finishValidation,
     summarise: summarise, overview: overview, issues: issues,
+    cutoffOf: cutoffOf, deliveryTiming: deliveryTiming,
     fileName: fileName, nowStamp: nowStamp
   };
 })();

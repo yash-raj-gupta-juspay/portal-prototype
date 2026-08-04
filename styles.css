@@ -703,10 +703,6 @@ tr.file-holiday { background: #FFFBEB; }
    Every colour below resolves to a Phase 1/2 token (or an rgba/tint of one).
    No new palette entries, no font-size scale changes.
    ============================================================================= */
-:root {
-  --cfg-pane-h: calc(100vh - var(--topbar-h) - 172px);
-}
-
 /* ---- Page head with the role bar ---------------------------------------- */
 .cfg-head { align-items: flex-start; }
 .role-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
@@ -727,14 +723,13 @@ tr.file-holiday { background: #FFFBEB; }
 }
 .tip:hover::after { opacity: 1; transform: none; }
 
-/* ---- Split pane (Part 8.1) ---------------------------------------------- */
-.cfg-split { display: grid; grid-template-columns: minmax(300px, 35%) minmax(0, 1fr); gap: 18px; align-items: start; }
-.cfg-split.collapsed { grid-template-columns: 52px minmax(0, 1fr); }
-.cfg-pane { border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-card); min-width: 0; max-height: var(--cfg-pane-h); overflow-y: auto; overflow-x: hidden; }
-.cfg-rail { border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-subtle); padding: 12px 8px; display: flex; flex-direction: column; align-items: center; gap: 12px; height: var(--cfg-pane-h); }
-.cfg-rail .rail-label { writing-mode: vertical-rl; font-size: 12px; color: var(--text-secondary); font-weight: 500; letter-spacing: .3px; }
-.cfg-collapse-btn { display: inline-flex; align-items: center; gap: 7px; margin-top: 14px; background: transparent; border: 1px solid var(--border-default); border-radius: 6px; padding: 6px 12px; font-size: 13px; color: var(--text-secondary); }
-.cfg-collapse-btn:hover { background: var(--bg-subtle); color: var(--text-primary); }
+/* ---- Editor shell (Part 8 of the clearing-staging brief) -----------------
+   The split pane is gone: the editor is the content width. The list survives
+   only inside the Browse all configurations disclosure, where it is allowed to
+   be a list because nothing is competing with it for room. */
+.cfg-full { display: block; }
+.cfg-pane { border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-card); min-width: 0; overflow-x: hidden; }
+.cfg-full > .cfg-editor { max-height: none; }
 
 /* ---- List pane ----------------------------------------------------------- */
 .cfg-pane-head { position: sticky; top: 0; z-index: 6; background: var(--bg-card); padding: 14px; border-bottom: 1px solid var(--border-default); display: flex; flex-direction: column; gap: 10px; }
@@ -1005,7 +1000,6 @@ tr.fee-expand td { background: var(--bg-subtle); padding: 0 !important; }
 .ver-pick input { accent-color: var(--primary); }
 
 @media (max-width: 1280px) {
-  .cfg-split { grid-template-columns: minmax(260px, 32%) minmax(0, 1fr); }
   .cfg-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sp-resolved { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
@@ -1924,7 +1918,7 @@ table.data th.sortable.sorted svg { color: var(--primary); }
    already exist; every rule composes the Part 2.2 palette.
    ============================================================================= */
 
-/* ---- §A.2 Fee Config Approvals — tenant summary tiles -------------------- */
+/* ---- §A.2 Merchant Fees — tenant summary tiles --------------------------- */
 .appr-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
 .appr-tile { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; text-align: left;
   background: #fff; border: 1px solid var(--border-default); border-radius: 8px; padding: 14px 16px;
@@ -2922,7 +2916,7 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 }
 .cfg-browse-head .meta { margin-left: auto; font-weight: 400; }
 .cfg-browse-head:hover { color: var(--primary); }
-.cfg-browse-body .cfg-list { width: 100%; max-width: none; }
+.cfg-browse-body .cfg-list { width: 100%; max-width: none; max-height: 520px; overflow-y: auto; }
 .cfg-browse-body { padding-bottom: 20px; }
 
 .cfg-task-hint {
@@ -3489,3 +3483,248 @@ input.sf-file { padding: 8px 12px; font-size: 13px; }
 .recon-break-links { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .cfg-run-hint { background: var(--info-bg); }
 .dl2 .cfg-run-hint .mono, .dl2-scope .cfg-run-hint .mono { font-size: 12.5px; }
+
+/* =============================================================================
+   PART 5 — RECONCILIATION CLARITY
+   Cycle identity, and the per-cycle breakdown on both legs.
+   ============================================================================= */
+
+/* Part 5.2 — a cycle is printed the same way everywhere it is referenced:
+   identifier in monospace, human date beneath in muted text.
+   `.dl2 .mono` pins 14px at 0-2-0, so the size here has to be written at the
+   same specificity or it silently loses. */
+.cycle-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dl2 .cycle-id-code, .dl2-scope .cycle-id-code, .cycle-id .cycle-id-code {
+  font-size: 13px; font-weight: 600; color: var(--text-strong); white-space: nowrap;
+}
+.cycle-id-date { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+.dl2 .cycle-id.lg .cycle-id-code, .dl2-scope .cycle-id.lg .cycle-id-code,
+.cycle-id.lg .cycle-id-code { font-size: 18px; }
+
+/* Part 5.3 — per-cycle rows on both legs. An empty cycle is greyed and its
+   figures render as an em dash, never as a zero: "nothing arrived" and
+   "zero arrived" are different facts. */
+table.data.recon-cyc tbody td { padding: 9px 12px; font-size: 14px; vertical-align: middle; }
+.recon-cyc-empty td { background: var(--bg-subtle); color: var(--text-tertiary); }
+.recon-empty { color: var(--text-muted); font-weight: 600; }
+.recon-cyc-go a { display: inline-flex; align-items: center; color: var(--primary); cursor: pointer; }
+.recon-cyc-mark { text-align: center; }
+.recon-got { display: inline-flex; color: var(--ok-fg); }
+.recon-got svg { width: 14px; height: 14px; }
+.recon-cyc-mark .recon-await svg { width: 12px; height: 12px; color: var(--text-faint); }
+.recon-leg-total {
+  justify-content: space-between; align-items: baseline; gap: 12px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-default);
+  font-weight: 600;
+}
+.recon-leg-total > span:last-child { display: inline-flex; align-items: baseline; gap: 14px; flex-wrap: wrap; justify-content: flex-end; }
+.recon-leg-total { flex-wrap: wrap; }
+.recon-total-val { font-weight: 700; }
+.recon-total-note { font-size: 12px; font-weight: 500; color: var(--text-muted); }
+
+/* Part 5.1 — what "expected fees" is made of, directly under the figure. */
+.break-formula .recon-fees-breakdown { font-size: 11.5px; margin-top: 4px; text-align: center; }
+.cyc-head-id { margin: 6px 0 2px; }
+
+/* =============================================================================
+   PART 8 — PLATFORM CONFIGS: FILTER ROW REPLACES THE LIST PANE
+   ============================================================================= */
+.cfg-filter-count { margin-left: auto; white-space: nowrap; }
+.cfg-filter-new { flex-shrink: 0; }
+
+/* When the filters land on more than one config, the choice is a row of chips
+   — not a pane. A pane would take the width back. */
+.cfg-picks { display: flex; align-items: flex-start; gap: 12px; margin: 0 0 16px; }
+.cfg-picks-label {
+  flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .4px; padding-top: 7px;
+}
+.cfg-picks-row { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.cfg-pick {
+  display: inline-flex; align-items: center; gap: 7px; max-width: 320px;
+  padding: 5px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 500;
+  background: var(--bg-card); border: 1px solid var(--border-default); color: var(--text-primary);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cfg-pick:hover { background: var(--bg-subtle); border-color: var(--border-strong); }
+.cfg-pick.active {
+  background: var(--primary-subtle-bg); border-color: var(--primary); color: var(--primary-subtle-fg); font-weight: 600;
+}
+.cfg-pick-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--neutral-fg); }
+.cfg-pick-dot.success { background: var(--ok-fg); }
+.cfg-pick-dot.info { background: var(--info-fg); }
+.cfg-pick-dot.warning { background: var(--warn-fg); }
+.cfg-pick-dot.danger { background: var(--danger-fg); }
+.cfg-pick-dot.neutral { background: var(--text-faint); }
+
+/* The disclosure keeps its list, at the bottom, below the editor. */
+.cfg-full + .cfg-browse { margin-top: 24px; }
+
+/* =============================================================================
+   PARTS 1–3 — CLEARING FILES
+   The dashboard is the origin point for every clearing file staged to a
+   network, and the record of what happened to it. It never depicts the staging
+   itself, because it cannot see it.
+   ============================================================================= */
+
+/* ---- list ---------------------------------------------------------------- */
+table.data.clr-table tbody td { vertical-align: middle; }
+/* The file name is never truncated. It is the control (Part 2.3): the operator
+   compares this string against what VEP's picker shows, and an ellipsis eats
+   the version suffix — precisely the end that distinguishes a re-cut from the
+   original. The table scrolls inside its own card instead, as every other ops
+   table does. */
+.dl2 .clr-filename, .dl2-scope .clr-filename { font-size: 12px; white-space: nowrap; }
+.clr-file-col { white-space: nowrap; }
+.clr-go { width: 34px; text-align: right; color: var(--text-faint); }
+.clr-go { width: 34px; text-align: right; color: var(--text-faint); }
+table.data.clr-table tbody tr:hover .clr-go { color: var(--primary); }
+/* The em dash is a fact — "nothing here" — so it has to be legible; --text-faint
+   renders it at 2.2:1, which reads as a rendering artefact rather than a value. */
+.clr-empty { color: var(--text-muted); font-weight: 600; }
+.clr-by {
+  display: inline-block; margin-left: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .3px;
+  background: var(--neutral-bg); color: var(--neutral-fg); border-radius: 999px; padding: 1px 6px;
+}
+/* Rows needing attention carry a left border in their status colour. */
+.clr-row-rejected td:first-child { box-shadow: inset 3px 0 0 var(--danger-fg); }
+.clr-row-overdue td:first-child { box-shadow: inset 3px 0 0 var(--warn-fg); }
+/* A regeneration is permanent, and so is its tag. */
+.clr-regen-tag {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700;
+  letter-spacing: .3px; border-radius: 999px; padding: 1px 8px;
+  background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-fg);
+}
+.clr-regen-tag svg { width: 11px; height: 11px; }
+
+/* ---- detail head + progress strip ---------------------------------------- */
+.clr-head { align-items: flex-start; }
+.clr-head .head-actions { align-items: center; gap: 12px; }
+.clr-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* Five steps across the top — the step-timeline component, turned horizontal. */
+.clr-strip {
+  display: flex; align-items: flex-start; gap: 0; flex-wrap: nowrap;
+  border: 1px solid var(--border-light); border-radius: 12px; background: var(--bg-card);
+  padding: 18px 20px; margin-bottom: 20px; overflow-x: auto;
+}
+.clr-step { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 108px; flex: 0 0 auto; }
+.clr-step-icon { display: inline-flex; color: var(--text-faint); }
+.clr-step-icon svg { width: 18px; height: 18px; }
+.clr-step-label { font-size: 12.5px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.clr-step-at { font-size: 11px; color: var(--text-muted); white-space: nowrap; min-height: 15px; font-variant-numeric: tabular-nums; }
+.clr-step.done .clr-step-icon, .clr-step.done .clr-step-label { color: var(--ok-fg); }
+.clr-step.done .clr-step-at { color: var(--text-muted); }
+.clr-step.active .clr-step-icon, .clr-step.active .clr-step-label { color: var(--warn-fg); }
+.clr-step.bad .clr-step-icon, .clr-step.bad .clr-step-label { color: var(--danger-fg); }
+/* Downloaded is context, not a gate — it never carries the weight of a step
+   that has to happen. */
+.clr-step.soft .clr-step-label { font-weight: 500; }
+.clr-strip-line { flex: 1 1 auto; height: 2px; min-width: 24px; margin-top: 9px; background: var(--border-default); }
+.clr-strip-line.lit { background: var(--ok-fg); opacity: .45; }
+
+/* ---- the file block — the centre of the screen --------------------------- */
+.clr-file-block { padding: 20px 22px; }
+.clr-file-block.empty { padding: 8px; }
+.dl2 .clr-file-name, .dl2-scope .clr-file-name {
+  font-size: 17px; font-weight: 600; color: var(--text-strong);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; word-break: break-all;
+}
+.clr-file-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 32px; margin-top: 18px;
+}
+.clr-kv { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+.clr-kv-label {
+  flex: 0 0 108px; font-size: 12px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.clr-kv-value { font-size: 14px; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
+.clr-kv.wide { grid-column: 1 / -1; }
+.dl2 .clr-s3, .dl2-scope .clr-s3 { font-size: 12.5px; }
+.clr-file-actions {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border-light);
+}
+.clr-stage-btn { margin-left: auto; }
+
+/* ---- run parameters — collapsed, copyable, plain key=value --------------- */
+.clr-params { border: 1px solid var(--border-light); border-radius: 12px; background: var(--bg-card); margin-top: 16px; }
+.clr-params-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 14px 18px;
+  background: none; border: 0; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-primary);
+}
+.clr-params-head .meta { margin-left: auto; font-weight: 400; }
+.clr-params-body { padding: 0 18px 16px; }
+.dl2 .clr-params-pre, .dl2-scope .clr-params-pre {
+  margin: 0; padding: 14px 16px; border-radius: 8px; font-size: 12.5px; line-height: 1.7;
+  background: var(--bg-subtle); border: 1px solid var(--border-light); color: var(--text-primary);
+  white-space: pre; overflow-x: auto;
+}
+.clr-params-foot { display: flex; justify-content: flex-end; margin-top: 10px; }
+
+/* ---- already staged — this REPLACES the generate action ------------------ */
+.clr-already { align-items: flex-start; margin-bottom: 20px; }
+.clr-already-line { margin-top: 4px; line-height: 1.55; }
+.clr-already-act { margin-top: 12px; }
+.clr-regen-form { margin-top: 14px; }
+.clr-regen-form textarea.input { min-height: 84px; }
+.clr-regen-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.clr-regen-btns { display: inline-flex; gap: 10px; }
+.clr-count { font-size: 12px; font-weight: 600; color: var(--danger-fg); }
+.clr-count.ok { color: var(--ok-fg); }
+.clr-regen-note { margin-top: 10px; }
+
+/* ---- acknowledgement ----------------------------------------------------- */
+.clr-ack { padding: 18px 22px; margin-top: 16px; }
+.clr-ack-head { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; }
+.clr-ack.accepted { border-color: var(--ok-fg); }
+.clr-ack.accepted .clr-ack-head { color: var(--ok-fg); }
+.clr-ack.rejected { border-color: var(--danger-fg); background: var(--danger-bg); }
+.clr-ack.rejected .clr-ack-head { color: var(--danger-fg); }
+.clr-ack.overdue { border-color: var(--warn-fg); background: var(--warn-bg); }
+.clr-ack.overdue .clr-ack-head { color: var(--warn-fg); }
+.clr-ack-line { margin-top: 8px; font-size: 13px; line-height: 1.6; color: var(--text-primary); }
+.clr-ack-reason { margin-top: 12px; font-size: 13px; line-height: 1.6; color: var(--danger-fg); font-weight: 500; }
+.clr-ack-act { margin-top: 14px; }
+.clr-ack-upload { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.clr-inline-link { display: inline-flex; align-items: center; gap: 4px; color: var(--primary); cursor: pointer; font-size: 12.5px; }
+.clr-manual-tag {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700;
+  border-radius: 999px; padding: 1px 8px; margin-left: 6px;
+  background: #fff; color: var(--warn-fg); border: 1px dashed var(--warn-fg);
+}
+.clr-manual-tag svg { width: 11px; height: 11px; }
+
+/* ---- entry points on other screens --------------------------------------- */
+.clr-leg-file { cursor: pointer; }
+.clr-leg-file:hover { background: var(--bg-subtle); }
+.cyc-file-go { display: inline-flex; color: var(--text-faint); }
+.qc-links { display: inline-flex; gap: 12px; }
+.dl2 .qi-cycle, .dl2-scope .qi-cycle { font-size: 11.5px; }
+
+@media (max-width: 1279px) {
+  .clr-file-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* =============================================================================
+   PART 6 — ACQUIRER REPORTS: ONE TREND, NO METRIC CARDS
+   ============================================================================= */
+.sf-trend {
+  border: 1px solid var(--border-light); border-radius: 12px; background: var(--bg-card);
+  padding: 16px 18px 12px; margin-bottom: 16px;
+}
+.sf-trend-note { font-size: 13px; color: var(--text-secondary); margin-bottom: 10px; }
+.sf-trend-canvas { position: relative; height: 200px; }
+
+/* ---- Part 7 — the Re-rejected view -------------------------------------- */
+.rej-attempt-col { width: 92px; }
+table.data.rej-rerejected tbody td { vertical-align: top; }
+/* Ten columns of transaction detail: the two prose columns are held to one
+   line each with the full text on hover, so rows stay scannable at the height
+   the attempt badge needs and nothing else. */
+table.data.rej-rerejected .rej-merch,
+table.data.rej-rerejected .reason-cell .reason-text {
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+table.data.rej-rerejected .reason-cell .reason-text { max-width: 200px; display: block; }

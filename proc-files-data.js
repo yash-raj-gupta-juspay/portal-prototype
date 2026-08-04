@@ -349,7 +349,7 @@ window.PFILES = (function () {
 
   /* Settlement. Keyed tenant|file-type|cycle-date — settlement files have no
      network dimension and nothing here may introduce one. These override the
-     step list derived from a Settlement File Monitoring row. */
+     step list derived from an Acquirer Reports row. */
   var SETTLEMENT_FAILS = {
     // Part 9 · No fee rule matched → Apply fee rules
     'hsbc-in|JV2|2025-11-21': {
@@ -503,7 +503,7 @@ window.PFILES = (function () {
     };
   }
 
-  /* Settlement records are derived from a Settlement File Monitoring row so the
+  /* Settlement records are derived from an Acquirer Reports row so the
      two screens can never disagree about a file's delivery state. */
   function buildSettlement(row) {
     var key = row.tenantId + '|' + row.type + '|' + row.date;

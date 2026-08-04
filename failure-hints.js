@@ -174,7 +174,7 @@ window.FailureHints = (function () {
     DELIVERY_FAILED: {
       hint: 'The report was generated but couldn’t be delivered to the acquirer.',
       action: {
-        label: 'Open Settlement File Monitoring →',
+        label: 'Open Acquirer Reports →',
         route: '#/dashboard/ops/files',
         context: ['tenant', 'date']
       },

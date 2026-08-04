@@ -7,7 +7,7 @@
 
    It is a child of Reconciliation, not a section of its own. The brief is
    explicit that this build adds no new sections; the panel is one component
-   with three doors, and this is the first of them. Settlement File Monitoring
+   with three doors, and this is the first of them. Acquirer Reports
    and Cycle Snapshot are the other two, and both open the same component on
    the same records.
 

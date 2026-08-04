@@ -155,7 +155,11 @@ window.RejectsUI = function (kit) {
     return R.batches.filter(function (b) {
       if (tenantFilterActive() && !F.tenants[b.tenantId]) return false;
       if (F.network !== 'all' && b.network !== F.network) return false;
-      if (F.family !== 'all' && b.family !== F.family) return false;
+      // 'rerejected' spans both families — the batch survives when it holds a
+      // transaction on attempt 2 or higher.
+      if (F.family === 'rerejected') {
+        if (!b.txns.some(function (t) { return t.attempts > 1; })) return false;
+      } else if (F.family !== 'all' && b.family !== F.family) return false;
       if (!dateInRange(b.cycleDate)) return false;
       if (F.reason !== 'all' && !b.txns.some(function (t) { return t.reasonCode === F.reason; })) return false;
       if (F.bq) {
@@ -233,7 +237,7 @@ window.RejectsUI = function (kit) {
       out.push({ label: 'Tenant: ' + ((O.tenantById[tid] || {}).name || tid), action: 'rej-tenant', data: ' data-id="' + tid + '"' });
     });
     if (F.network !== 'all') out.push({ label: 'Network: ' + F.network, action: 'rej-clear-network' });
-    if (F.family !== 'all') out.push({ label: 'Type: ' + (F.family === 'staging' ? 'Staging' : 'Incoming'), action: 'rej-clear-family' });
+    if (F.family !== 'all') out.push({ label: 'Type: ' + (F.family === 'staging' ? 'Staging' : (F.family === 'incoming' ? 'Incoming' : 'Re-rejected')), action: 'rej-clear-family' });
     if (F.reason !== 'all') out.push({ label: 'Reason: ' + R.reasonText(F.reason), action: 'rej-clear-reason' });
     if (F.dateMode !== 'all') out.push({ label: 'Cycle date: ' + dateLabel(), action: 'rej-clear-date' });
     return out;
@@ -265,7 +269,11 @@ window.RejectsUI = function (kit) {
       filters: [
         { action: 'rej-c-tenant-one', value: tenantVal, label: 'Tenant', options: [['all', 'All tenants']].concat(O.tenants.map(function (t) { return [t.id, t.name]; })) },
         { action: 'rej-c-network', value: F.network, label: 'Network', options: [['all', 'All networks'], 'Visa', 'Mastercard', 'RuPay'] },
-        { action: 'rej-c-family', value: F.family, label: 'Type', options: [['all', 'Staging and incoming'], ['staging', 'Staging'], ['incoming', 'Incoming']] },
+        // Part 7 — Re-rejected is not a family in the same sense; it is a
+        // staging or incoming reject that has failed again. Operationally it is
+        // the set the analyst most needs to isolate, so it belongs in the same
+        // control rather than beside it.
+        { action: 'rej-c-family', value: F.family, label: 'Type', options: [['all', 'Staging and incoming'], ['staging', 'Staging'], ['incoming', 'Incoming'], ['rerejected', 'Re-rejected']] },
         { action: 'rej-c-reason', value: F.reason, label: 'Reason code', options: reasonOpts }
       ],
       preset: {
@@ -309,13 +317,68 @@ window.RejectsUI = function (kit) {
       '<th></th></tr></thead><tbody>' + rows + '</tbody></table>');
   }
 
+  /* =======================================================================
+     PART 7 — THE RE-REJECTED VIEW
+     Every other Type value narrows the batch list. This one cannot: a
+     re-reject is a transaction that came back after a resubmission, and the
+     analyst needs the transactions themselves — across both families, worst
+     first. So the overview swaps its batch table for a transaction table,
+     sorted by attempt count descending.
+     ======================================================================= */
+  function reRejectedTxns(list) {
+    var out = [];
+    list.forEach(function (b) {
+      b.txns.forEach(function (t) {
+        if (t.attempts > 1) out.push({ b: b, t: t });
+      });
+    });
+    return out.sort(function (x, y) {
+      if (y.t.attempts !== x.t.attempts) return y.t.attempts - x.t.attempts;
+      if (x.b.cycleDate !== y.b.cycleDate) return x.b.cycleDate < y.b.cycleDate ? 1 : -1;
+      return O.toINR(y.t.amount, y.t.currency) - O.toINR(x.t.amount, x.t.currency);
+    });
+  }
+
+  function reRejectedTable(list) {
+    var rows = reRejectedTxns(list);
+    if (!rows.length) {
+      return '<div class="card">' + emptyState('check-circle', 'Nothing has come back twice',
+        'No transaction in this view is on attempt 2 or higher. Widen the date range or clear the tenant and network filters.',
+        '<button class="btn btn-secondary" data-action="rej-reset">' + icon('rotate-ccw', 18) + 'Clear filters</button>') + '</div>';
+    }
+    var body = rows.map(function (x) {
+      var t = x.t, b = x.b;
+      return '<tr class="clickable rej-row-rerejected" data-route="' + ROUTE + '/' + b.id + '">' +
+        '<td class="num rej-attempt-col"><span class="rej-attempt" title="Rejected ' + t.attempts +
+        ' times — each resubmission came back">' + icon('rotate-ccw', 11) + '<span class="num">' + t.attempts + '</span></span></td>' +
+        '<td>' + arnCell(t.arn) + '<div class="cell-sub num">' + U.prettyDate(t.txnDate) + ' · ' + esc(t.txnTime) + ' IST</div></td>' +
+        '<td>' + tenantTag(b.tenantId) + '</td>' +
+        '<td>' + netBadge(b.network) + '</td>' +
+        '<td>' + familyPill(b.family) + '</td>' +
+        '<td><div class="cell-main rej-merch" title="' + esc(t.merchant) + '">' + esc(t.merchant) + '</div>' +
+        '<div class="cell-sub mono">' + esc(t.mid) + '</div></td>' +
+        '<td class="num nowrap">' + moneyOf(t) + '</td>' +
+        '<td title="' + esc(R.reasonText(t.reasonCode) + ' (' + t.reasonCode + ')') + '">' + reasonCell(t) + '</td>' +
+        '<td class="nowrap">' + statusPill(t, false) + '</td>' +
+        '<td class="nowrap"><span class="rej-open-link">Open batch' + icon('arrow-right', 14) + '</span></td>' +
+        '</tr>';
+    }).join('');
+    return '<div class="meta mb-16">' + icon('rotate-ccw', 13) +
+      ' <strong class="num">' + rows.length + '</strong> transaction' + (rows.length === 1 ? '' : 's') +
+      ' on attempt 2 or higher, across staging and incoming, worst first.</div>' +
+      '<div class="table-card"><div class="table-wrap"><table class="data rej-rerejected"><thead><tr>' +
+      '<th class="num">Attempt</th><th>ARN</th><th>Tenant</th><th>Network</th><th>Type</th>' +
+      '<th>Merchant</th><th class="num">Amount</th><th>Reason</th><th>Status</th><th></th>' +
+      '</tr></thead><tbody>' + body + '</tbody></table></div></div>';
+  }
+
   function viewOverview() {
     var list = filteredBatches();
     setView(
       pageHead('Rejects', 'Transactions the card networks refused. Fix them, then regenerate the file.') +
       summaryStrip(list) +
       filterRow() +
-      '<div class="mt-16">' + batchTable(list) + '</div>'
+      '<div class="mt-16">' + (F.family === 'rerejected' ? reRejectedTable(list) : batchTable(list)) + '</div>'
     );
   }
 
@@ -1553,7 +1616,7 @@ window.RejectsUI = function (kit) {
     return '<div class="modal-head"><div class="section-title">Mark as submitted</div>' +
       '<button class="icon-btn" data-action="rej-modal-close" aria-label="Close">' + icon('x', 16) + '</button></div>' +
       '<div class="meta mb-16">Records that this file was shared with the network out-of-band. The included transactions move to ' +
-      '<strong>Resubmitted</strong> and the file history carries a <em>manually marked</em> tag against your name — same pattern as a manual override in Settlement File Monitoring.</div>' +
+      '<strong>Resubmitted</strong> and the file history carries a <em>manually marked</em> tag against your name — same pattern as a manual override in Acquirer Reports.</div>' +
       '<label class="field">Note <span class="req">required</span>' +
       '<textarea class="input" rows="3" placeholder="e.g. Shared with the Mastercard clearing team over the incident bridge at 14:05 — automated S3 pickup is down for this cycle." ' +
       'data-action="rej-i-ms-note">' + esc(note) + '</textarea></label>' +

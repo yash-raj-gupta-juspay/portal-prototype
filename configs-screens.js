@@ -1,6 +1,10 @@
 /* =============================================================================
    Juspay Ops Portal — Platform Configs: the three family screens (Phase 3)
-   Split-pane list + dual-mode editor, applied three times (Part 4).
+   Filter row + full-width dual-mode editor, applied three times (Part 4, and
+   Part 8 of the clearing-staging brief, which removed the left list pane).
+   The list survives only inside the Browse all configurations disclosure at
+   the bottom of the page — the width belongs to the ruler, the two-column
+   mappings and the field tables, which is what was cramped.
    window.ConfigsUI(kit) → { route, actions, api }
    ============================================================================= */
 window.ConfigsUI = function (kit) {
@@ -20,7 +24,6 @@ window.ConfigsUI = function (kit) {
     tab: { 'network-file': 'layout', settlement: 'content', 'incoming-parsing': 'pipeline' },
     mode: 'form',
     rawFormat: 'json',
-    listCollapsed: false,
     filters: {
       'network-file': { q: '', tenant: 'all', facet: 'all', state: 'all' },
       settlement: { q: '', tenant: 'all', facet: 'all', state: 'all' },
@@ -57,7 +60,7 @@ window.ConfigsUI = function (kit) {
   var CHILD = { 'network-file': 'ops-cfg-network', settlement: 'ops-cfg-settlement', 'incoming-parsing': 'ops-cfg-incoming' };
   function famRoute(fam, id) { return '#/dashboard/ops/configs/' + SEG[fam] + (id ? '/' + id : ''); }
 
-  /* ---- State pills — same vocabulary as Fee Config Approvals (Part 8.2) -- */
+  /* ---- State pills — same vocabulary as Merchant Fees (Part 8.2) -------- */
   /* Part 5.6 — plain status vocabulary. The maker-checker states themselves are
      unchanged; only what they are called on screen is. */
   var STATE_PILL = {
@@ -113,7 +116,7 @@ window.ConfigsUI = function (kit) {
   function selIn(path, val, opts, o) {
     o = o || {};
     var body = opts.map(function (op) {
-      var v = (op instanceof Array) ? op[0] : op, l = (op instanceof Array) ? op[1] : op;
+      var v = Array.isArray(op) ? op[0] : op, l = Array.isArray(op) ? op[1] : op;
       return '<option value="' + esc(v) + '"' + (String(val) === String(v) ? ' selected' : '') + '>' + esc(l) + '</option>';
     }).join('');
     return '<select class="input' + (o.cls ? ' ' + o.cls : '') + '"' + (o.disabled ? ' disabled' : '') +
@@ -348,21 +351,21 @@ window.ConfigsUI = function (kit) {
     return '<div class="cfg-pane cfg-list" id="cfgListPane">' +
       '<div class="cfg-pane-head">' +
       '<div class="row" style="gap:8px;align-items:center;justify-content:space-between">' +
-      '<div class="cfg-count"><button class="icon-btn xs" data-action="cfg-toggle-list" title="Collapse list pane" aria-label="Collapse list pane">' + icon('chevrons-left', 14) + '</button>' +
+      '<div class="cfg-count">' +
       '<strong class="num">' + list.length + '</strong> of <span class="num">' +
       (fam === 'settlement' ? C.settlementItems().length : C.byFamily(fam).length) + '</span> ' +
       (fam === 'settlement' ? 'reports' : 'configs') + '</div>' +
       '<button class="btn btn-primary btn-sm" data-action="cfg-new">' + icon('plus', 14) + 'Create new</button>' +
       '</div>' +
       '<div class="chip search-chip cfg-search">' + icon('search', 15) +
-      '<input class="input" placeholder="Search by name" value="' + esc(f.q) + '" data-action="cfgi-list-q" />' +
+      '<input class="input" placeholder="Search by name" value="' + esc(f.q) + '" data-action="cfgi-browse-q" />' +
       '</div>' +
       '<div class="cfg-filters">' +
-      '<select class="input" data-action="cfgc-list-tenant"><option value="all">All entities</option>' +
+      '<select class="input" data-action="cfgc-browse-tenant"><option value="all">All entities</option>' +
       C.TENANTS.map(function (t) { return '<option value="' + t.key + '"' + (f.tenant === t.key ? ' selected' : '') + '>' + t.key + '</option>'; }).join('') + '</select>' +
-      '<select class="input" data-action="cfgc-list-facet"><option value="all">All ' + facetLabel.toLowerCase() + 's</option>' +
+      '<select class="input" data-action="cfgc-browse-facet"><option value="all">All ' + facetLabel.toLowerCase() + 's</option>' +
       facetOptions(fam).map(function (o) { return '<option value="' + o[0] + '"' + (f.facet === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' +
-      '<select class="input" data-action="cfgc-list-state"><option value="all">All states</option>' +
+      '<select class="input" data-action="cfgc-browse-state"><option value="all">All states</option>' +
       C.STATES.map(function (s) { return '<option value="' + s + '"' + (f.state === s ? ' selected' : '') + '>' + STATE_PILL[s][0] + '</option>'; }).join('') + '</select>' +
       '</div></div>' +
       '<div class="cfg-list-body">' + table + '</div></div>';
@@ -2031,8 +2034,19 @@ window.ConfigsUI = function (kit) {
     if (cfg.subType === 'preprocessor') return ipPreprocessor();
     return ipPipeline();
   }
-  function editorPane() {
+  function editorPane(list) {
     var cfg = current();
+    /* Part 8.2 — when the filters match nothing there is nothing to open, and
+       the page says so where the editor would have been. */
+    if (list && !list.length) {
+      return '<div class="cfg-pane cfg-editor" id="cfgEditorPane">' +
+        emptyState('search-x', 'No configuration matches these filters',
+          'Clear a filter to bring the list back, or start a new draft for what is missing.',
+          '<div class="row" style="gap:10px;justify-content:center">' +
+          '<button class="btn btn-secondary" data-action="cfg-filters-clear">' + icon('rotate-ccw', 15) + 'Clear filters</button>' +
+          '<button class="btn btn-primary" data-action="cfg-new">' + icon('plus', 15) + 'New config</button></div>') +
+        '</div>';
+    }
     if (!cfg && S.cfg.family === 'settlement') {
       var it = stItem();
       if (it) {
@@ -2059,7 +2073,7 @@ window.ConfigsUI = function (kit) {
     }
     if (!cfg) {
       return '<div class="cfg-pane cfg-editor" id="cfgEditorPane">' +
-        emptyState('file-plus', 'No config selected', 'Pick a config from the list on the left, or create a new draft.',
+        emptyState('file-plus', 'No config selected', 'Use the filters above to pick one, or create a new draft.',
           '<button class="btn btn-primary" data-action="cfg-new">' + icon('plus', 15) + 'Create new</button>') + '</div>';
     }
     return '<div class="cfg-pane cfg-editor" id="cfgEditorPane">' +
@@ -2197,28 +2211,70 @@ window.ConfigsUI = function (kit) {
     }
     var f = C.familyById[fam];
     var SUB = {
-      'network-file': 'Define the files we send to card networks, field by field.',
-      settlement: 'Define what acquirer reports contain, when they run, and what they charge.',
-      'incoming-parsing': 'Define how the files we receive from networks are read.'
+      'network-file': 'Field layouts and data mappings for outgoing clearing files.',
+      settlement: 'What acquirer reports contain, when they run, and what they charge.',
+      'incoming-parsing': 'How the files we receive from networks are read.'
     };
+    var list = filtered(fam);
     setView(
       '<div class="page-head cfg-head">' +
       '<div><a class="rej-back" data-route="#/dashboard/ops/configs">' + icon('arrow-left', 15) + 'Platform Configs</a>' +
       '<h1 class="page-title">' + esc(f.label) + '</h1>' +
       '<div class="subtitle">' + esc(SUB[fam] || f.blurb) + '</div></div>' +
       '<div class="head-actions">' + roleBar() + '</div></div>' +
-      '<div class="cfg-split' + (S.cfg.listCollapsed ? ' collapsed' : '') + '" id="cfgSplit">' +
-      (S.cfg.listCollapsed
-        ? '<div class="cfg-rail"><button class="icon-btn" data-action="cfg-toggle-list" title="Expand list" aria-label="Expand config list">' + icon('chevrons-right', 16) + '</button><span class="rail-label">' + esc(f.short) + ' configs</span></div>'
-        : listPane(fam)) +
-      editorPane() +
-      '</div>' +
-      '<button class="cfg-collapse-btn" data-action="cfg-toggle-list" title="' + (S.cfg.listCollapsed ? 'Expand' : 'Collapse') + ' list pane">' +
-      icon(S.cfg.listCollapsed ? 'chevrons-right' : 'chevrons-left', 15) + (S.cfg.listCollapsed ? 'Show list' : 'Collapse list') + '</button>' +
+      // Part 8.2 — the filter row selects which config is open. There is no
+      // list pane: the editor gets the whole content width.
+      filterRow(fam, list) +
+      chipSelector(fam, list) +
+      '<div class="cfg-full" id="cfgSplit">' + editorPane(list) + '</div>' +
+      browseSection() +
       (S.cfg.history.open ? historyPanel() : '') +
       (S.cfg.drawer ? drawerPanel() : '')
     );
     mount();
+  }
+
+  /* =======================================================================
+     PART 8.2 · FILTER ROW + INLINE CHIP SELECTOR
+     The split pane is gone. Choosing a config is a filter, not a browse: the
+     four controls narrow to one record and that record is what the editor
+     below holds. When they narrow to several, a row of chips picks between
+     them — a row, not a pane, because the width belongs to the editor.
+     ======================================================================= */
+  function filterRow(fam, list) {
+    var fl = S.cfg.filters[fam];
+    var facetLabel = fam === 'network-file' ? 'Network' : (fam === 'settlement' ? 'Report' : 'Source');
+    var total = fam === 'settlement' ? C.settlementItems().length : C.byFamily(fam).length;
+    return kit.opsFilterRow({
+      search: { placeholder: 'Search by name', action: 'cfgi-list-q', value: fl.q || '' },
+      filters: [
+        { action: 'cfgc-list-facet', value: fl.facet, label: facetLabel, options: [['all', 'All ' + facetLabel.toLowerCase() + 's']].concat(facetOptions(fam)) },
+        { action: 'cfgc-list-tenant', value: fl.tenant, label: 'Entity', options: [['all', 'All entities']].concat(C.TENANTS.map(function (t) { return [t.key, t.key]; })) },
+        { action: 'cfgc-list-state', value: fl.state, label: 'State', options: [['all', 'All states']].concat(C.STATES.map(function (s) { return [s, STATE_PILL[s][0]]; })) }
+      ],
+      refresh: 'cfg-filters-clear',
+      extra: '<span class="cfg-filter-count meta"><strong class="num">' + list.length + '</strong> of <span class="num">' + total + '</span> ' +
+        (fam === 'settlement' ? 'reports' : 'configs') + '</span>' +
+        '<button class="btn btn-primary btn-sm cfg-filter-new" data-action="cfg-new">' + icon('plus', 14) + 'New config</button>'
+    });
+  }
+
+  function chipSelector(fam, list) {
+    if (list.length < 2) return '';
+    var selId = S.cfg.selected[fam];
+    var chips = list.slice(0, 60).map(function (x) {
+      var id = fam === 'settlement' ? x.key : x.configId;
+      var label = fam === 'settlement' ? x.report + ' · ' + x.tenantId : x.name;
+      var st = fam === 'settlement' ? itemState(x) : x.state;
+      return '<button type="button" class="cfg-pick' + (id === selId ? ' active' : '') + '" ' +
+        'data-action="cfg-select" data-id="' + esc(id) + '" title="' + esc(label) + '">' +
+        '<span class="cfg-pick-dot ' + esc(STATE_PILL[st][1]) + '"></span>' + esc(label) + '</button>';
+    }).join('');
+    return '<div class="cfg-picks">' +
+      '<span class="cfg-picks-label">' + list.length + ' match' + (list.length === 1 ? '' : 'es') + '</span>' +
+      '<div class="cfg-picks-row">' + chips +
+      (list.length > 60 ? '<span class="meta">+' + (list.length - 60) + ' more — narrow the filters</span>' : '') +
+      '</div></div>';
   }
 
   /* =======================================================================
@@ -2269,6 +2325,8 @@ window.ConfigsUI = function (kit) {
       '<span class="task-card-desc">' + t.desc + '</span></span>' +
       icon('chevron-right', 18) + '</button>';
   }
+
+  function repaintHere() { if (S.opsChild) renderFamily(S.cfg.family); else renderLanding(); }
 
   function browseSection() {
     var fam = S.cfg.browseFam || 'network-file';
@@ -2676,15 +2734,29 @@ window.ConfigsUI = function (kit) {
     },
     'cfgi-list-q': function (t) {
       S.cfg.filters[S.cfg.family].q = t.value;
-      var n = el('cfgListPane');
-      if (n) { n.outerHTML = listPane(S.cfg.family); if (window.lucide) lucide.createIcons(); }
+      renderFamily(S.cfg.family);
       var i = el('view').querySelector('[data-action=cfgi-list-q]');
       if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
     },
+    /* Browse-all disclosure: the same list, its own filter scope, repainting
+       whichever screen it happens to be sitting on (landing or family). */
+    'cfgi-browse-q': function (t) {
+      S.cfg.filters[S.cfg.browseFam].q = t.value;
+      repaintHere();
+      var i = el('view').querySelector('[data-action=cfgi-browse-q]');
+      if (i) { i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+    },
+    'cfgc-browse-tenant': function (t) { S.cfg.filters[S.cfg.browseFam].tenant = t.value; repaintHere(); },
+    'cfgc-browse-facet': function (t) { S.cfg.filters[S.cfg.browseFam].facet = t.value; repaintHere(); },
+    'cfgc-browse-state': function (t) { S.cfg.filters[S.cfg.browseFam].state = t.value; repaintHere(); },
     'cfgc-list-tenant': function (t) { S.cfg.filters[S.cfg.family].tenant = t.value; renderFamily(S.cfg.family); },
     'cfgc-list-facet': function (t) { S.cfg.filters[S.cfg.family].facet = t.value; renderFamily(S.cfg.family); },
     'cfgc-list-state': function (t) { S.cfg.filters[S.cfg.family].state = t.value; renderFamily(S.cfg.family); },
-    'cfg-toggle-list': function () { S.cfg.listCollapsed = !S.cfg.listCollapsed; renderFamily(S.cfg.family); },
+    'cfg-filters-clear': function () {
+      var fl = S.cfg.filters[S.cfg.family];
+      fl.q = ''; fl.tenant = 'all'; fl.facet = 'all'; fl.state = 'all';
+      renderFamily(S.cfg.family);
+    },
     /* ---- Task-based landing (Part 5.1) ---- */
     'cfg-task': function (t) {
       var task = TASK_BY_ID[t.getAttribute('data-task')];
@@ -2701,7 +2773,10 @@ window.ConfigsUI = function (kit) {
       S.cfg.browseOpen = !S.cfg.browseOpen;
       if (S.opsChild) renderFamily(S.cfg.family); else renderLanding();
     },
-    'cfg-browse-fam': function (t) { S.cfg.browseFam = t.getAttribute('data-fam'); renderLanding(); },
+    'cfg-browse-fam': function (t) {
+      S.cfg.browseFam = t.getAttribute('data-fam');
+      if (S.opsChild) renderFamily(S.cfg.family); else renderLanding();
+    },
 
     /* ---- Layout ruler (Part 5.3) ----
        Clicking an unexplained gap opens the add-field form pre-filled with that
