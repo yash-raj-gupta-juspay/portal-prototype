@@ -278,11 +278,13 @@ window.CFGCORE = (function () {
         tip = '<strong>Fields overlap here — ' + s.len + ' character' + (s.len === 1 ? '' : 's') + '</strong>' +
           s.fields.map(function (f) { return '<span class="bt-row">' + esc(f.name) + ' · ' + f.start + '–' + (f.start + f.length - 1) + '</span>'; }).join('');
       } else if (s.kind === 'gap') {
+        /* Part 1.2 — no instructional click text. A live gap is a button with
+           a "+" label, a pointer cursor and a hover state; that is the whole
+           affordance, and a sentence saying so would be redundant. */
         tip = '<strong>Nothing declared here</strong><span class="bt-row">characters ' + s.start + '–' + s.end +
-          ' · ' + s.len + ' long</span>' +
-          (live ? '<span class="bt-row">Click to add a field here.</span>' : '<span class="bt-row">Declare a filler field to close it.</span>');
+          ' · ' + s.len + ' long</span>';
         if (live) {
-          attrs = ' data-action="cfg-gap" data-rt="' + rt + '" data-start="' + s.start + '" data-len="' + s.len + '"' +
+          attrs = ' data-action="' + (opts.gapAction || 'cfg-gap') + '" data-rt="' + rt + '" data-start="' + s.start + '" data-len="' + s.len + '"' +
             ' role="button" tabindex="0" aria-label="Add a field at characters ' + s.start + ' to ' + s.end + '"';
           cls += ' clickable';
         }

@@ -28,7 +28,7 @@ window.CycleUI = function (kit) {
   var ROUTE = '#/dashboard/ops/cycle-snapshot';
 
   // In-memory only — no storage, no timers.
-  S.cycle = { rejOpen: false, schedOpen: false, gridDate: C.CYCLE_TODAY };
+  S.cycle = { rejOpen: false, schedOpen: false, gridDate: C.CYCLE_TODAY, gridExpanded: false };
 
   function snapRoute(tenantId, netKey, date) { return ROUTE + '/' + tenantId + '/' + netKey + '/' + date; }
   function paintIcons() { if (window.lucide) window.lucide.createIcons(); }
@@ -148,12 +148,80 @@ window.CycleUI = function (kit) {
       '</div>';
   }
 
+  /* =======================================================================
+     PART 2.1 — THE GRID SHOWS AT MOST FOUR TENANTS
+
+     New acquirers keep arriving, and a grid that grows a row per acquirer
+     stops being scannable somewhere around six. So it caps at four, chosen by
+     priority rather than by size:
+
+       1. any tenant with a leg in Failed, Delayed or Ack overdue — ALWAYS in,
+          displacing the healthiest visible tenant
+       2. remaining slots by transaction volume, descending
+
+     The consequence is the point: a problem tenant is never hidden behind a
+     "show more" affordance. The attention-flagging is structural rather than a
+     separate banner, and the muted count line above the grid can only ever
+     appear when every hidden tenant is nominal.
+     ======================================================================= */
+  var GRID_MAX = 4;
+  function tenantHasIssue(tenantId, date) {
+    return C.networksFor(tenantId).some(function (n) {
+      var base = C.legsFor(tenantId, n.key, date);
+      return !!base && (base.legs || []).some(function (l) {
+        return l.state === 'failed' || l.state === 'delayed';
+      });
+    });
+  }
+  function tenantVolume(tenantId) {
+    var cyc = O.currentCycleByTenant[tenantId];
+    return cyc ? O.toINR(cyc.submitted, cyc.currency) : 0;
+  }
+  function gridTenants(date) {
+    var all = O.tenants.map(function (t) {
+      return { t: t, issue: tenantHasIssue(t.id, date), vol: tenantVolume(t.id) };
+    });
+    if (S.cycle.gridExpanded || all.length <= GRID_MAX) {
+      return { shown: all.map(function (x) { return x.t; }), hidden: [], hiddenIssue: false };
+    }
+    var byVol = all.slice().sort(function (a, b) { return b.vol - a.vol; });
+    var issues = byVol.filter(function (x) { return x.issue; });
+    var healthy = byVol.filter(function (x) { return !x.issue; });
+    // Issues first, in volume order, then healthy tenants fill what is left.
+    var shown = issues.slice(0, GRID_MAX);
+    shown = shown.concat(healthy.slice(0, Math.max(0, GRID_MAX - shown.length)));
+    var shownIds = {}; shown.forEach(function (x) { shownIds[x.t.id] = 1; });
+    var hidden = all.filter(function (x) { return !shownIds[x.t.id]; });
+    // Keep the display order stable — the tenant list's own order, not the
+    // volume ranking, so a tenant does not jump rows between cycle dates.
+    var order = {}; O.tenants.forEach(function (t, i) { order[t.id] = i; });
+    shown.sort(function (a, b) { return order[a.t.id] - order[b.t.id]; });
+    return {
+      shown: shown.map(function (x) { return x.t; }),
+      hidden: hidden.map(function (x) { return x.t; }),
+      hiddenIssue: hidden.some(function (x) { return x.issue; })
+    };
+  }
+  /* Rendered only when every hidden tenant is nominal — an issue is never
+     behind this line, because the rule above already promoted it. */
+  function hiddenLine(sel) {
+    if (S.cycle.gridExpanded) {
+      return '<div class="cyc-more"><button class="cyc-more-btn" data-action="cyc-collapse">' +
+        'Show the ' + GRID_MAX + ' highest-priority tenants</button></div>';
+    }
+    if (!sel.hidden.length) return '';
+    return '<div class="cyc-more"><button class="cyc-more-btn" data-action="cyc-expand" ' +
+      'title="' + esc(sel.hidden.map(function (t) { return t.name; }).join(' · ')) + '">' +
+      '<span class="num">' + sel.hidden.length + '</span> more tenant' + (sel.hidden.length === 1 ? '' : 's') +
+      ' · all nominal</button></div>';
+  }
+
   /* ---- the grid itself ---------------------------------------------------- */
-  function gridTable(date) {
+  function gridTable(date, tenants) {
     var head = '<tr><th class="cyc-th cyc-th-tenant">Tenant</th>' + O.NETWORKS.map(function (n) {
       return '<th class="cyc-th"><span class="cyc-net"><span class="cyc-net-dot" style="background:' + n.color + '"></span>' + n.short + '</span></th>';
     }).join('') + '</tr>';
-    var rows = O.tenants.map(function (t) {
+    var rows = tenants.map(function (t) {
       var prof = C.profileFor(t.id);
       return '<tr><th scope="row" class="cyc-tenant">' + tenantTag(t.id) +
         '<span class="cyc-tenant-sched" title="' + esc(prof.label + ' — ' + prof.dayNote) + '">' +
@@ -163,9 +231,10 @@ window.CycleUI = function (kit) {
     return '<div class="cyc-grid-wrap"><table class="cyc-grid"><thead>' + head + '</thead><tbody>' + rows + '</tbody></table></div>';
   }
 
-  /* Part D.3 — four short lines. Everything the old legend spelled out about
-     cutoffs and timezone arithmetic is now either in the tooltip or encoded in
-     the T+n tag, so it no longer needs a paragraph under the grid. */
+  /* Part 1.1 — a legend, and nothing else. The two instructional lines that
+     used to sit here (times in IST, click any cell) are gone: the timezone
+     belongs to the column header and the tooltip, and clickability is announced
+     by the cell's own hover state, never by a sentence. */
   function legend() {
     var legendStates = ['complete', 'pending', 'delayed', 'failed'].map(function (k) {
       var m = C.STATE_META[k];
@@ -179,16 +248,16 @@ window.CycleUI = function (kit) {
       '<span class="cyc-lg-key">JV2</span> journal voucher 2' +
       '</div>' +
       '<div class="cyc-lg-row">' + legendStates + '</div>' +
-      '<div class="cyc-lg-row meta">Times in IST. <span class="cyc-lg-key">T+n</span> shows the leg’s position in each tenant’s own cycle.</div>' +
-      '<div class="cyc-lg-row meta">Click any cell for the full cycle snapshot.</div>' +
       '</div>';
   }
 
   function gridInner() {
     var date = S.cycle.gridDate;
+    var sel = gridTenants(date);
     return '<div class="cyc-sec-head">' +
       '<div class="section-title">Cross-tenant cycle status</div>' + dateStepper() + '</div>' +
-      cardBox('', gridTable(date) + legend());
+      hiddenLine(sel) +
+      cardBox('', gridTable(date, sel.shown) + legend());
   }
 
   /* The component Ops Home embeds. Stepping the date repaints this mount only,
@@ -481,29 +550,81 @@ window.CycleUI = function (kit) {
       icon('arrow-right', 13) + '</a>';
   }
 
+  /* =======================================================================
+     PART 2.4 — A PROBLEM LEG LINKS TO WHERE IT CAN BE ACTED ON
+
+     A leg that is delayed or failed says so, but saying so is not enough: the
+     place the issue can be understood and worked is a different screen, and
+     the operator should not have to reconstruct the filter by hand. Each link
+     carries the tenant, the network and the cycle so the destination arrives
+     already narrowed to this one problem.
+
+     A healthy leg gets no link — there is nothing at the other end of it.
+     ======================================================================= */
+  var LEG_TARGET = {
+    clearing: function (snap) {
+      return {
+        label: 'Open the outgoing file for this cycle',
+        href: '#/dashboard/ops/network-files/outgoing/' + encodeURIComponent(snap.cycleId)
+      };
+    },
+    incoming: function (snap) {
+      return {
+        label: 'Open the incoming file for this cycle',
+        href: '#/dashboard/ops/network-files/incoming/' + encodeURIComponent(snap.cycleId)
+      };
+    },
+    settlement: function (snap) {
+      return {
+        label: 'Open Acquirer Reports for this tenant and date',
+        href: '#/dashboard/ops/files?filesTenant=' + snap.tenant.id + '&filesDate=' + snap.date
+      };
+    },
+    jv2: function (snap) {
+      return {
+        label: 'Open Acquirer Reports for this tenant and date',
+        href: '#/dashboard/ops/files?filesTenant=' + snap.tenant.id + '&filesDate=' + snap.date
+      };
+    }
+  };
+  function problemLink(snap, legKey) {
+    var leg = snap.byKey[legKey];
+    if (!leg || (leg.state !== 'failed' && leg.state !== 'delayed')) return '';
+    var build = LEG_TARGET[legKey];
+    if (!build) return '';
+    var target = build(snap);
+    return '<a class="cyc-problemlink" data-route="' + esc(target.href) + '">' +
+      icon('arrow-right-circle', 15) + esc(target.label) + ' →</a>';
+  }
+
   /* The CLR leg's file block. It names the file and its state, then hands off
-     to Clearing Files — which owns generate, stage, ack and the history. */
+     to Network Files → Outgoing — which owns the staging record, the guard and
+     the history. There is no second account of the same staging here. */
   function clearingLink(snap) {
-    var rec = window.CLEARING.forCycle(snap.tenant.id, snap.network.key, snap.date);
+    var rec = window.NETFILES.forCycle('outgoing', snap.tenant.id, snap.network.key, snap.date);
     if (!rec) {
-      // On-us has no network to stage into, so there is no clearing record.
+      // On-us has no network to stage into, so there is no outgoing record.
       var f = snap.clearing.file;
       return '<div class="cyc-file"><span class="cyc-file-ic">' + icon('file-text', 16) + '</span>' +
         '<div class="cyc-file-body"><div class="cyc-file-name">' + esc(f.name) + '</div>' +
         '<div class="cyc-file-meta">' + esc(f.size + ' · ' + f.checksum + ' · ' + f.dest) + '</div></div></div>';
     }
-    var st = window.CLEARING.STATES[rec.state];
-    return '<div class="cyc-file clr-leg-file" data-route="#/dashboard/ops/clearing/' + esc(rec.id) + '" ' +
-      'role="link" tabindex="0" title="' + esc('Open the clearing file record for ' + rec.id) + '">' +
+    var st = window.NETFILES.OUT_STATES[rec.state];
+    return '<div class="cyc-file clr-leg-file" data-route="#/dashboard/ops/network-files/outgoing/' + esc(rec.id) + '" ' +
+      'role="link" tabindex="0" title="' + esc('Open the outgoing file record for ' + rec.id) + '">' +
       '<span class="cyc-file-ic">' + icon('file-up', 16) + '</span>' +
-      '<div class="cyc-file-body"><div class="cyc-file-name mono">' + esc(rec.file ? rec.file.name : window.CLEARING.fileName(rec.tenantId, rec.networkKey, rec.date, 1)) + '</div>' +
-      '<div class="cyc-file-meta">' + (rec.stagedAt
-        ? 'Staged ' + esc(rec.stagedAt) + ' by ' + esc(rec.stagedBy)
+      '<div class="cyc-file-body"><div class="cyc-file-name mono">' + esc(rec.file ? rec.file.name : window.NETFILES.outFileName(rec.tenantId, rec.networkKey, rec.date, 1)) + '</div>' +
+      '<div class="cyc-file-meta">' + (rec.startedAt
+        ? 'Staging started ' + esc(rec.startedAt) + ' by ' + esc(rec.startedBy)
         : 'Not staged') + '</div></div>' +
       pill(st.label, st.kind, st.icon) +
       '<span class="cyc-file-go">' + icon('chevron-right', 16) + '</span></div>';
   }
 
+  /* PART 2.5 — the four detail cards carry timing, amounts, transaction count,
+     the files, and the problem link. Batches submitted and batches held back
+     are gone: they are internal mechanics that do not help anyone assess a
+     cycle. */
   function clearingCard(snap) {
     var cur = snap.currency, cl = snap.clearing, leg = cl.leg;
     var body =
@@ -517,19 +638,12 @@ window.CycleUI = function (kit) {
       ]) +
       kv([
         ['Gross amount cleared', '<span class="num">' + fmt(cl.gross, 2, cur) + '</span>'],
-        ['Transaction count', '<span class="num">' + num(cl.count) + '</span>'],
-        ['Batches submitted', '<span class="num">' + cl.batches + '</span>'],
-        ['Batches held back', cl.heldBack
-          ? '<span class="num">' + cl.heldBack.count + '</span> · ' + fmt(cl.heldBack.amount, 2, cur) + '<div class="meta">' + esc(cl.heldBack.reason) + '</div>'
-          : 'None']
+        ['Transaction count', '<span class="num">' + num(cl.count) + '</span>']
       ]) +
       '</div>' +
       (leg.note ? '<div class="callout danger mt-16">' + icon('x-circle', 20) + '<div class="callout-body">' + esc(leg.note) + '</div></div>' : '') +
+      problemLink(snap, 'clearing') +
       '<div class="cyc-sub-title">Outgoing clearing file</div>' +
-      /* Staging is not described inline here (clearing brief Part 2.4). The
-         clearing file, whether it has been staged, by whom and what the
-         network acknowledged all live on one record, and this is the link to
-         it — there is no second account of the same staging. */
       clearingLink(snap) +
       runLink(snap, 'clearing');
     return cardBox('Clearing — outgoing to network' + statusChip(leg), body, seeWhatFailed(snap, 'clearing'));
@@ -556,6 +670,7 @@ window.CycleUI = function (kit) {
       '</div>' +
       (leg.note ? '<div class="callout danger mt-16">' + icon('x-circle', 20) + '<div class="callout-body">' + esc(leg.note) + '</div></div>' : '') +
       manualCallout(leg) +
+      problemLink(snap, 'settlement') +
       '<div class="cyc-sub-title" id="snap-files">Settlement files delivered to the acquirer</div>' +
       (leg.manual
         ? '<div class="meta">Delivery asserted manually — the platform has no transfer record for these files.</div>'
@@ -573,6 +688,7 @@ window.CycleUI = function (kit) {
     var rejRows = rej.rows.map(function (r) {
       return '<tr><td class="mono">' + r.arn + '</td><td class="num">' + fmt(r.amount, 2, cur) + '</td>' +
         '<td><div class="cell-main">' + r.reasonCode + '</div><div class="cell-sub">' + esc(r.reasonDesc) + '</div></td>' +
+        '<td class="nowrap">' + U.prettyDate(r.reclearOn || U.addDays(r.receivedOn, 1)) + '</td>' +
         '<td class="nowrap">' + U.prettyDate(r.expectedSettlement) + '</td></tr>';
     }).join('');
     var rejBlock = rej.count
@@ -580,8 +696,9 @@ window.CycleUI = function (kit) {
       '<button class="btn-ghost" data-action="cyc-rej-toggle">' + icon(S.cycle.rejOpen ? 'chevron-down' : 'chevron-right', 14) +
       (S.cycle.rejOpen ? 'Hide rejection details' : 'View rejection details') + '</button>' +
       (S.cycle.rejOpen
-        ? '<div class="table-wrap mt-16"><table class="data"><thead><tr><th>ARN</th><th class="num">Amount</th><th>Reason</th><th>Expected settlement (T+2)</th></tr></thead><tbody>' + rejRows + '</tbody></table></div>' +
-        '<div class="meta mt-16">Rejected records are deducted from this cycle’s settlement, re-cleared on T+1 and settle on T+2.</div>'
+        /* Part 1.1 — the explanatory line under this table is gone; the
+           re-clear and settle dates are already columns in it. */
+        ? '<div class="table-wrap mt-16"><table class="data"><thead><tr><th>ARN</th><th class="num">Amount</th><th>Reason</th><th>Re-cleared (T+1)</th><th>Expected settlement (T+2)</th></tr></thead><tbody>' + rejRows + '</tbody></table></div>'
         : '') + '</div>'
       : '<div class="meta">No rejections in this cycle’s incoming file.</div>';
 
@@ -605,6 +722,7 @@ window.CycleUI = function (kit) {
       ]) +
       '</div>' +
       (leg.note ? '<div class="callout ' + (leg.state === 'failed' ? 'danger' : 'warn') + ' mt-16">' + icon(leg.meta.icon, 20) + '<div class="callout-body">' + esc(leg.note) + '</div></div>' : '') +
+      problemLink(snap, 'incoming') +
       '<div class="cyc-sub-title">Rejections</div>' + rejBlock +
       '<div class="cyc-sub-title">Incoming file</div>' +
       (inc.file ? fileRow(inc.file, inc.file.size + ' · ' + inc.file.checksum)
@@ -635,6 +753,7 @@ window.CycleUI = function (kit) {
       '</div>' +
       (leg.note ? '<div class="callout danger mt-16">' + icon('x-circle', 20) + '<div class="callout-body">' + esc(leg.note) + '</div></div>' : '') +
       manualCallout(leg) +
+      problemLink(snap, 'jv2') +
       '<div class="cyc-sub-title">JV2 file</div>' +
       (leg.manual
         ? '<div class="meta">Delivery asserted manually — the platform has no transfer record for this file.</div>'
@@ -717,9 +836,9 @@ window.CycleUI = function (kit) {
       '<div class="head-actions">' +
       '<button class="icon-btn" data-action="cyc-refresh" title="Refresh" aria-label="Refresh">' + icon('refresh-cw', 18) + '</button>' +
       '<button class="btn btn-secondary" data-action="cyc-files">' + icon('folder', 18) + 'Acquirer reports</button>' +
-      // Every file this cycle's pipeline processed, with the step detail behind each.
-      '<a class="btn btn-secondary" data-route="#/dashboard/ops/reconciliation/files">' +
-      icon('file-search', 18) + 'Files for this cycle</a>' +
+      // The two network files this cycle produced, each with its step detail.
+      '<a class="btn btn-secondary" data-route="#/dashboard/ops/network-files/outgoing/' + encodeURIComponent(snap.cycleId) + '">' +
+      icon('arrow-left-right', 18) + 'Network files</a>' +
       '<button class="btn btn-primary" data-route="#/dashboard/ops/reconciliation?reconTenant=' + t.id + (snap.recon && snap.recon.cycleId ? '&reconCycle=' + snap.recon.cycleId : '') + '">' + icon('git-compare', 18) + 'View reconciliation</button>' +
       '</div>' + nav +
       '</div></div>';
@@ -856,7 +975,10 @@ window.CycleUI = function (kit) {
     'cyc-mark-cancel': function () { el('overlay-mount').innerHTML = ''; },
     'cyc-date-prev': function () { stepGrid(-1); },
     'cyc-date-next': function () { stepGrid(1); },
-    'cyc-date-today': function () { S.cycle.gridDate = C.CYCLE_TODAY; repaintGrid(); }
+    'cyc-date-today': function () { S.cycle.gridDate = C.CYCLE_TODAY; repaintGrid(); },
+    // Part 2.1 — the hidden-tenant count expands the grid to every tenant.
+    'cyc-expand': function () { S.cycle.gridExpanded = true; repaintGrid(); },
+    'cyc-collapse': function () { S.cycle.gridExpanded = false; repaintGrid(); }
   };
 
   return {

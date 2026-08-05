@@ -82,7 +82,9 @@ window.CYCLES = (function () {
     yesbank: { code: 'IST', offset: 'UTC+5:30' },
     'hsbc-in': { code: 'IST', offset: 'UTC+5:30' },
     'hsbc-sg': { code: 'SGT', offset: 'UTC+8' },
-    'hsbc-hk': { code: 'HKT', offset: 'UTC+8' }
+    'hsbc-hk': { code: 'HKT', offset: 'UTC+8' },
+    'hsbc-au': { code: 'AEDT', offset: 'UTC+11' },
+    'hsbc-my': { code: 'MYT', offset: 'UTC+8' }
   };
   function tzOf(tenantId) { return TZ[tenantId] || TZ['hsbc-in']; }
 
@@ -167,8 +169,8 @@ window.CYCLES = (function () {
     apac: {
       id: 'apac',
       label: 'Asia-Pacific schedule',
-      tenants: 'HSBC SG · HSBC HK',
-      dayNote: 'SGT / HKT runs 2.5h ahead of IST, so clearing and settlement fire on the transaction date itself in IST.',
+      tenants: 'HSBC SG · HSBC HK · HSBC MY · HSBC AU',
+      dayNote: 'SGT / HKT / MYT runs 2.5h ahead of IST and AEDT 5.5h ahead, so clearing and settlement fire on the transaction date itself in IST.',
       legs: {
         clearing: legSched(22 * 60, 'Clearing file to network'),
         settlement: legSched(22 * 60 + 30, 'MPR, MPF and JV1 delivered to the acquirer'),
@@ -179,7 +181,7 @@ window.CYCLES = (function () {
   };
   var PROFILE_OF = {
     yesbank: 'indian', 'hsbc-in': 'indian',
-    'hsbc-sg': 'apac', 'hsbc-hk': 'apac'
+    'hsbc-sg': 'apac', 'hsbc-hk': 'apac', 'hsbc-au': 'apac', 'hsbc-my': 'apac'
   };
   function profileFor(tenantId) { return PROFILES[PROFILE_OF[tenantId] || 'indian']; }
   function scheduleFor(tenantId) { return profileFor(tenantId).legs; }
@@ -215,6 +217,19 @@ window.CYCLES = (function () {
       visa: P({ at: T_(22, 1) }, { at: T_(22, 29) }, { at: IN_(2, 52) }),
       mc: P({ at: T_(22, 6) }, { at: T_(22, 34) }, { at: IN_(3, 8) }),
       onus: P({ at: T_(21, 52) }, { at: T_(22, 18) }, { at: IN_(2, 34) })
+    },
+    'hsbc-au': {
+      visa: P({ at: T_(21, 49) }, { at: T_(22, 21) }, { at: IN_(2, 44) }),
+      mc: P({ at: T_(21, 56) }, { at: T_(22, 27) }, { at: IN_(3, 1) })
+    },
+    /* Part 10 — HSBC MY is the tenant the Ops Home promotion rule exists for.
+       It sits outside the visible four on volume, and its incoming has not
+       landed: Visa is 2h 12m past its 05:00 cutoff and Mastercard has never
+       arrived at all. A tenant in that state is never hidden behind a
+       "show more" affordance. */
+    'hsbc-my': {
+      visa: P({ at: T_(22, 8) }, { at: T_(22, 37) }, { at: IN_(7, 12) }),
+      mc: P({ at: T_(22, 14) }, { at: T_(22, 41) }, {})
     }
   };
 
@@ -468,6 +483,10 @@ window.CYCLES = (function () {
       rows.push({
         arn: '74' + rint(r, 100, 999) + '••••••' + rint(r, 1000, 9999),
         amount: amt, reasonCode: code[0], reasonDesc: code[1],
+        // Both dates are columns on the snapshot's rejection table now, so the
+        // sentence that used to explain the T+1 / T+2 rhythm beneath it is gone
+        // (Part 1.1) and the row carries the facts itself.
+        receivedOn: date, reclearOn: U.addDays(date, 1),
         expectedSettlement: U.addDays(date, 2)
       });
     }
@@ -599,13 +618,18 @@ window.CYCLES = (function () {
     /* ---- Reconciliation callout ------------------------------------------ */
     var reconPlan = base.recon;
     var difference = reconPlan ? round2(netSettlement * (reconPlan.residualPctOfNet / 100)) : 0;
-    var reconCycle = O.cyclesByTenant[tenantId] ? O.cyclesByTenant[tenantId].find(function (c) { return c.date === date; }) : null;
+    /* The recon row is per tenant × network × cycle now (Part 4.3), so the
+       snapshot links to its own network's row rather than to the day. */
+    var reconCycle = { id: O.cycleId(tenantId, netKey, date, 1) };
     if (reconPlan) {
-      snap.recon = { status: reconPlan.status, kind: 'danger', difference: difference, note: 'Difference beyond the expected fees. Investigation open with the settlement desk.', cycleId: reconCycle ? reconCycle.id : null };
-    } else if (jv2.state === 'pending' || jv2.state === 'inprogress') {
-      snap.recon = { status: 'Not yet run', kind: 'neutral', difference: 0, note: 'Two-way reconciliation runs once JV2 closes the cycle.', cycleId: reconCycle ? reconCycle.id : null };
+      /* Refinement Part 4.1 — the reconciliation is gross submitted against
+         gross received. There is no fee subtraction and no residual, so a
+         difference here is a genuine break with nothing to explain it away. */
+      snap.recon = { status: 'Difference found', kind: 'danger', difference: difference, note: 'Gross received does not match gross submitted. Investigation open with the settlement desk.', cycleId: reconCycle ? reconCycle.id : null };
+    } else if (snap.incoming.leg.state !== 'complete') {
+      snap.recon = { status: 'Awaiting incoming', kind: 'neutral', difference: 0, note: 'Reconciliation runs automatically once the incoming file is parsed and pushed to tables.', cycleId: reconCycle ? reconCycle.id : null };
     } else {
-      snap.recon = { status: 'Clean', kind: 'success', difference: 0, note: 'Submitted position less the expected fees matches the settled position. No difference.', cycleId: reconCycle ? reconCycle.id : null };
+      snap.recon = { status: 'Reconciled', kind: 'success', difference: 0, note: 'Gross received matches gross submitted exactly.', cycleId: reconCycle ? reconCycle.id : null };
     }
 
     snap.status = overallStatus(snap);

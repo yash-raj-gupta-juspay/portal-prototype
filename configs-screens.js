@@ -710,7 +710,7 @@ window.ConfigsUI = function (kit) {
         '<div class="table-wrap"><table class="data cfg-field-table" data-dnd-table="' + path + '.fields"><thead><tr>' +
         '<th></th><th class="num">#</th><th>Field name</th><th class="num">Starts at</th><th class="num">Length</th><th>Content type</th>' +
         '<th>' + srcHeader() + '</th><th>Notes</th><th></th>' +
-        '</tr></thead><tbody>' + (rows || '<tr><td colspan="9" class="meta" style="padding:18px">No fields yet — click a gap in the ruler above, or use Add field.</td></tr>') + '</tbody></table></div>' +
+        '</tr></thead><tbody>' + (rows || '<tr><td colspan="9" class="meta" style="padding:18px">No fields yet.</td></tr>') + '</tbody></table></div>' +
         '<div class="mt-16 row" style="gap:10px;align-items:center">' +
         addBtn('Add field', 'cfg-arr-add', 'data-path="' + path + '.fields" data-tpl="field"') +
         '<button class="btn btn-secondary btn-sm" data-action="cfg-autopack-run" data-rt="' + i + '" ' +
@@ -1238,14 +1238,16 @@ window.ConfigsUI = function (kit) {
 
     return '<div class="sched-preview" id="cfgSchedPreview">' +
       '<div class="sp-head">' + icon('calendar-search', 18) + '<strong>Next 5 runs</strong>' +
-      '<span class="meta">Recalculates on every change · ' + esc(tz || '—') + '</span>' +
+      '<span class="meta">Recalculates on every change · ' + esc(tz || '—') +
+      ' · holidays from the ' + esc(C.TZ_COUNTRY[tz] || '—') + ' calendar</span>' +
       '<label class="field inline" style="margin-left:auto">Starting from <input class="input w-160" type="date" value="' + esc(sample) + '" data-action="cfgc-sample" /></label>' +
       '</div>' +
       '<div class="table-wrap"><table class="data"><thead><tr>' +
       '<th>Runs on</th><th>Covers transactions from</th><th>to</th><th></th>' +
+      /* Part 1.1 — the sentence that used to sit under this table is gone.
+         Where the holidays come from belongs beside the timezone in the header,
+         not in a line beneath the visual. */
       '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
-      '<div class="meta hint-row mt-16">' + icon('info', 14) +
-      '<span>Bank holidays come from the platform calendar for ' + esc(C.TZ_COUNTRY[tz] || '—') + '.</span></div>' +
       '</div>';
   }
 
@@ -1343,10 +1345,12 @@ window.ConfigsUI = function (kit) {
         return '<td class="mono">' + esc(sampleValueFor(c.column)[r]) + '</td>';
       }).join('') + '</tr>';
     }
-    return '<div class="cfg-section-title mt-24">What the file would look like</div>' +
+    /* Part 1.1 — no line beneath the table. That these are three illustrative
+       rows is said in the section title, where it belongs. */
+    return '<div class="cfg-section-title mt-24">What the file would look like ' +
+      '<span class="meta">— three illustrative rows</span></div>' +
       '<div class="sample-out"><div class="table-wrap"><table class="data sample-out-table"><thead><tr>' + head + '</tr></thead>' +
-      '<tbody>' + body + '</tbody></table></div>' +
-      '<div class="meta mt-16">' + icon('info', 14) + ' Three illustrative rows with the column names this config produces.</div></div>';
+      '<tbody>' + body + '</tbody></table></div></div>';
   }
 
   function stContent() {
@@ -2293,6 +2297,7 @@ window.ConfigsUI = function (kit) {
         { id: 'add-field', label: 'Add a field to a file', desc: 'Declare a new field and where it sits in the record.', fam: 'network-file', tab: 'layout' },
         { id: 'move-field', label: "Change a field's position or length", desc: 'Adjust where a field starts and how long it is.', fam: 'network-file', tab: 'layout' },
         { id: 'map-data', label: 'Change how data maps into a file', desc: 'Point a field at a different source value.', fam: 'network-file', tab: 'transform' },
+        { id: 'add-tcr', label: 'Add a new record type (TCR)', desc: 'Declare a record type the file does not carry yet.', fam: 'network-file', tab: 'layout' },
         { id: 'view-layout', label: "View a file's layout", desc: 'See every field in position order.', fam: 'network-file', tab: 'layout' }
       ]
     },
@@ -2318,8 +2323,11 @@ window.ConfigsUI = function (kit) {
   var TASK_BY_ID = {};
   TASK_GROUPS.forEach(function (g) { g.tasks.forEach(function (t) { t.group = g.key; TASK_BY_ID[t.id] = t; }); });
 
+  /* Part 8.5 — a card opens THAT task's flow. Nothing on this page opens the
+     generic editor any more; the editor is reached from Browse all
+     configurations at the bottom, and only from there. */
   function taskCard(t) {
-    return '<button class="task-card" data-action="cfg-task" data-task="' + t.id + '">' +
+    return '<button class="task-card" data-route="#/dashboard/ops/configs/task/' + t.id + '">' +
       '<span class="task-card-body">' +
       '<span class="task-card-title">' + t.label + '</span>' +
       '<span class="task-card-desc">' + t.desc + '</span></span>' +
@@ -2413,6 +2421,8 @@ window.ConfigsUI = function (kit) {
         '</div>';
     }
 
+    // A task card no longer lands in the editor (Part 8.2), so this only ever
+    // fires for a deep link that still carries ?task=.
     var t = TASK_BY_ID[S.cfg.task];
     if (!t) return rejHint + runHint;
     var extra = {
@@ -3162,9 +3172,34 @@ window.ConfigsUI = function (kit) {
     }
   };
 
+  /* Refinement Part 8 — the guided flows submit through here, so a flow can
+     never write a config by a path the editor does not use. A brand-new config
+     is registered first, then submitted exactly like an edited one. */
+  function submitBody(built) {
+    var cfg = built.cfg;
+    if (built.isNew) {
+      C.configs.push(cfg);
+      cfg.baseBody = null;
+    } else {
+      cfg.baseBody = C.clone(cfg.body);
+    }
+    cfg.body = C.clone(built.body);
+    cfg.state = 'PENDING_APPROVAL';
+    cfg.submittedBy = C.DEMO_USER;
+    cfg.submittedAt = nowStamp();
+    cfg.submittedHoursAgo = 0;
+    cfg.currentDraft = null;
+    cfg.rejectionReason = null;
+    cfg.updatedAt = nowStamp();
+    cfg.comments = cfg.comments || [];
+    cfg.comments.push({ by: C.DEMO_USER, at: nowStamp(), text: built.summary, kind: 'submission' });
+    return cfg;
+  }
+
   /* ---- Public surface used by the queue module and app.js ---------------- */
   var api = {
     S: S, C: C, X: X, kit: kit,
+    submitBody: submitBody,
     statePill: statePill, famBadge: famBadge, facetBadge: facetBadge, tenantChip: tenantChip,
     can: can, role: role, isSelf: isSelf, current: current, edit: edit, resetEdit: resetEdit,
     priorBody: priorBody, approve: approve, reject: reject, nowStamp: nowStamp,
@@ -3182,6 +3217,12 @@ window.ConfigsUI = function (kit) {
       S.opsChild = null;
       kit.renderSidebar();
       return rest[1] ? api.viewApprovalDetail(rest[1]) : api.viewApprovals();
+    }
+    // Part 8.2 — a task card opens its own guided flow.
+    if (head === 'task') {
+      S.opsChild = null; S.cfg.task = null;
+      kit.renderSidebar();
+      return FLOWS ? FLOWS.route(rest) : renderLanding();
     }
     // Part 5.1 — the landing is the task cards, not a config list.
     if (!head) {
@@ -3226,5 +3267,11 @@ window.ConfigsUI = function (kit) {
     return renderFamily(fam, rest[1]);
   }
 
-  return { route: route, actions: ACTIONS, api: api };
+  /* The guided-flow module, handed in by app.js after both are constructed.
+     Kept as a reference rather than a global lookup so the dependency is
+     visible at the wiring site. */
+  var FLOWS = null;
+  function setFlows(f) { FLOWS = f; f.setSubmit(submitBody); }
+
+  return { route: route, actions: ACTIONS, api: api, setFlows: setFlows };
 };

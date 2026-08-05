@@ -569,7 +569,7 @@ window.PFILES = (function () {
      from the cycle model's own authored failures so the two agree. */
   var NO_INCOMING = { 'yesbank|mc|2025-11-12': 1 };
 
-  /* Incoming and outgoing clearing files — the Recon File Management list.
+  /* Incoming and outgoing clearing files — the pipeline's own file records,
      Settlement files are not duplicated here: their home is Settlement File
      Monitoring, which opens the same panel on the same records. */
   function reconFiles() {
@@ -786,7 +786,7 @@ window.PFILES = (function () {
   function retryDurationMs(file) { return 1400 + (seedOf(file.id) % 700); }
 
   /* =========================================================================
-     LIST FILTERING — the Recon File Management screen
+     LIST FILTERING — kept for callers that resolve a file by tenant/date
      ========================================================================= */
   function list(opts) {
     opts = opts || {};

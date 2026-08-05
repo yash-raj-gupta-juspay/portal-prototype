@@ -235,11 +235,12 @@ window.ConfigsQueue = function (ui) {
           '<td class="cell-sub nowrap">' + esc(when || '—') + '</td>' +
           '<td>' + (c.state === 'PENDING_APPROVAL' ? slaBadge(left) : api.statePill(c)) + '</td>' +
           '<td class="cell-sub">' + esc(changeSummary(c)) + '</td>' +
-          '<td>' + actionCell + '</td></tr>';
+          '<td>' + actionCell + '</td>' +
+          '<td class="row-go">' + icon('chevron-right', 16) + '</td></tr>';
       }).join('');
       body = '<div class="table-wrap"><table class="data"><thead><tr>' +
         '<th>Family</th><th>Config</th><th>Submitted by</th><th>' + (tab === 'pending' ? 'Submitted at' : 'Decided at') + '</th>' +
-        '<th>' + (tab === 'pending' ? 'SLA' : 'State') + '</th><th>Change summary</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+        '<th>' + (tab === 'pending' ? 'SLA' : 'State') + '</th><th>Change summary</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
         '<div class="table-foot"><span><span class="num">' + list.length + '</span> config change' + (list.length === 1 ? '' : 's') + '</span>' +
         '<span>SLA target: 48h from submission</span></div></div>';
     }

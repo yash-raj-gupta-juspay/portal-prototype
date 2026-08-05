@@ -47,7 +47,9 @@ window.SFILES = (function () {
     'yesbank': ['GEFU1', 'GEFU2'],
     'hsbc-in': ['MPR', 'MPF', 'JV1', 'JV2'],
     'hsbc-sg': ['MPR', 'MPF', 'JV1', 'JV2'],
-    'hsbc-hk': ['MPR', 'MPF', 'JV1', 'JV2']
+    'hsbc-hk': ['MPR', 'MPF', 'JV1', 'JV2'],
+    'hsbc-au': ['MPR', 'MPF', 'JV1', 'JV2'],
+    'hsbc-my': ['MPR', 'MPF', 'JV1', 'JV2']
   };
   function typesFor(tenantId) { return FILE_TYPES_BY_TENANT[tenantId] || []; }
   /* Union of the types the given tenants produce, registry order preserved. */
@@ -73,6 +75,23 @@ window.SFILES = (function () {
   /* Generation slot per file type — the generator runs them in sequence in the
      early hours of the cycle date, which is why JV2 always lands last. */
   var SLOT = { MPR: 0, GEFU1: 0, MPF: 1, GEFU2: 1, JV1: 2, JV2: 3 };
+
+  /* =========================================================================
+     PART 6.3 — A DELIVERY DATE SPANS TWO CYCLES
+     On any given day the platform delivers MPR, MPF and JV1 for the T-1 cycle
+     alongside JV2 for the T-2 cycle: JV2 posts the adjustments that only exist
+     once the next cycle's incoming has been read, so it is always a full cycle
+     behind its siblings. GEFU2 is YES BANK's equivalent and behaves the same.
+
+     "Did today's files go out" is the operational question, and it cannot be
+     answered by a single cycle — which is why this offset exists rather than
+     the screen pretending one delivery date equals one cycle.
+     ========================================================================= */
+  var CYCLE_OFFSET = { MPR: -1, MPF: -1, JV1: -1, GEFU1: -1, JV2: -2, GEFU2: -2 };
+  function cycleDateFor(type, deliveryDate) {
+    return U.addDays(deliveryDate, CYCLE_OFFSET[type] == null ? -1 : CYCLE_OFFSET[type]);
+  }
+  function cycleOffsetOf(type) { return CYCLE_OFFSET[type] == null ? -1 : CYCLE_OFFSET[type]; }
 
   /* =========================================================================
      PART 6.2 — THE DELIVERY CUTOFF
@@ -236,6 +255,10 @@ window.SFILES = (function () {
     var row = {
       id: tenantId + '|' + date + '|' + type,
       tenantId: tenantId, date: date, dow: U.DOW[U.fromYmd(date).getUTCDay()],
+      // `date` is the delivery date. The cycle the file reports on is one or
+      // two days behind it (Part 6.3) — the two are not the same thing and the
+      // screen must never conflate them.
+      deliveryDate: date, cycleDate: cycleDateFor(type, date), cycleOffset: cycleOffsetOf(type),
       type: type, typeDesc: typeMeta(type).desc,
       name: fileName(tenantId, type, date),
       delivery: st.delivery,
@@ -453,6 +476,7 @@ window.SFILES = (function () {
     validationOutcome: validationOutcome, validationDurationMs: validationDurationMs, finishValidation: finishValidation,
     summarise: summarise, overview: overview, issues: issues,
     cutoffOf: cutoffOf, deliveryTiming: deliveryTiming,
+    cycleDateFor: cycleDateFor, cycleOffsetOf: cycleOffsetOf,
     fileName: fileName, nowStamp: nowStamp
   };
 })();

@@ -1919,7 +1919,10 @@ table.data th.sortable.sorted svg { color: var(--primary); }
    ============================================================================= */
 
 /* ---- §A.2 Merchant Fees — tenant summary tiles --------------------------- */
-.appr-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
+/* Part 3.1 — the tile row wraps on its own rather than assuming a tenant
+   count. auto-fit + minmax means six tenants reflow instead of squeezing, and
+   the row keeps working as regions keep arriving. */
+.appr-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 18px; }
 .appr-tile { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; text-align: left;
   background: #fff; border: 1px solid var(--border-default); border-radius: 8px; padding: 14px 16px;
   transition: border-color .12s, background .12s, box-shadow .12s; }
@@ -1935,7 +1938,14 @@ table.data th.sortable.sorted svg { color: var(--primary); }
 .appr-sla svg { width: 12px; height: 12px; }
 .appr-sla.red { background: var(--status-danger-bg); color: var(--status-danger-fg); }
 .appr-sla.amber { background: var(--status-warning-bg); color: var(--status-warning-fg); }
-@media (max-width: 1279px) { .appr-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* Beyond eight tenants the tiles compress to name and count: at that width the
+   region subtext is the first thing to become unreadable and the last thing
+   anyone reads. */
+.appr-tiles.dense { grid-template-columns: repeat(auto-fit, minmax(136px, 1fr)); }
+.appr-tiles.dense .appr-tile { padding: 10px 12px; }
+.appr-tiles.dense .appr-tile-sub { display: none; }
+.appr-tiles.dense .appr-tile-count { font-size: 22px; }
+@media (max-width: 1279px) { .appr-tiles { grid-template-columns: repeat(auto-fit, minmax(156px, 1fr)); } }
 
 /* ---- §B Reconciliation — batch model ------------------------------------ */
 .leg-card .leg-src { line-height: 1.5; }
@@ -3706,17 +3716,6 @@ table.data.clr-table tbody tr:hover .clr-go { color: var(--primary); }
 @media (max-width: 1279px) {
   .clr-file-grid { grid-template-columns: minmax(0, 1fr); }
 }
-
-/* =============================================================================
-   PART 6 — ACQUIRER REPORTS: ONE TREND, NO METRIC CARDS
-   ============================================================================= */
-.sf-trend {
-  border: 1px solid var(--border-light); border-radius: 12px; background: var(--bg-card);
-  padding: 16px 18px 12px; margin-bottom: 16px;
-}
-.sf-trend-note { font-size: 13px; color: var(--text-secondary); margin-bottom: 10px; }
-.sf-trend-canvas { position: relative; height: 200px; }
-
 /* ---- Part 7 — the Re-rejected view -------------------------------------- */
 .rej-attempt-col { width: 92px; }
 table.data.rej-rerejected tbody td { vertical-align: top; }
@@ -3728,3 +3727,516 @@ table.data.rej-rerejected .reason-cell .reason-text {
   max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 table.data.rej-rerejected .reason-cell .reason-text { max-width: 200px; display: block; }
+
+/* =============================================================================
+   REFINEMENT PART 1 — GLOBAL PRESENTATION RULES
+
+   1.1  Nothing sits beneath a chart, grid or table except a legend. Every
+        instructional line has been removed at the source; there is no CSS here
+        that hides one, because hiding it would leave it in the markup.
+
+   1.2  Clickability is announced by BEHAVIOUR, never by text. Anything that can
+        be clicked takes a pointer cursor and a visible hover state, and a row
+        that navigates grows a chevron at its right edge on hover.
+
+   No new colours anywhere below: every value resolves through a token already
+   declared at the top of the `.dl2` scope.
+   ============================================================================= */
+
+/* A row that navigates carries a chevron cell. It is invisible until the row is
+   hovered or focused, so the column costs nothing at rest and the affordance is
+   unmistakable the moment the pointer arrives. */
+.dl2 table.data tbody tr .row-go,
+.dl2 table.data tbody tr .nf-go,
+.dl2 table.data tbody tr .recon-go,
+.dl2 table.data tbody tr .hol-edit {
+  width: 34px; text-align: right; color: var(--text-faint);
+  opacity: 0; transition: opacity .12s ease, color .12s ease;
+}
+.dl2 table.data tbody tr:hover .row-go,
+.dl2 table.data tbody tr:focus-visible .row-go,
+.dl2 table.data tbody tr:hover .nf-go,
+.dl2 table.data tbody tr:focus-visible .nf-go,
+.dl2 table.data tbody tr:hover .recon-go,
+.dl2 table.data tbody tr:focus-visible .recon-go,
+.dl2 table.data tbody tr:hover .hol-edit,
+.dl2 table.data tbody tr:focus-visible .hol-edit {
+  opacity: 1; color: var(--primary);
+}
+/* Keyboard parity: a row reachable by Tab shows its own focus ring. */
+.dl2 table.data tbody tr[data-route]:focus-visible,
+.dl2 table.data tbody tr[data-action]:focus-visible {
+  outline: 2px solid var(--primary-ring); outline-offset: -2px;
+}
+.dl2 table.data tbody tr[data-route],
+.dl2 table.data tbody tr[data-action] { cursor: pointer; }
+.dl2 table.data tbody tr[data-route]:hover,
+.dl2 table.data tbody tr[data-action]:hover { background: var(--bg-subtle); }
+
+/* Callouts that navigate are clickable elements, so they say so on hover rather
+   than in their own text. */
+.dl2 .clickable-callout { cursor: pointer; transition: background .12s ease, border-color .12s ease; }
+.dl2 .clickable-callout:hover { border-color: var(--border-strong); filter: brightness(.985); }
+
+/* Any inline link built from an <a data-route> is a real link and behaves like
+   one, without needing an href. */
+.dl2 a[data-route], .dl2 [role="link"] { cursor: pointer; }
+.dl2 a[data-route]:hover { text-decoration: underline; }
+
+/* =============================================================================
+   PART 5 — NETWORK FILES (Outgoing + Incoming)
+   One visual language across both sub-sections, and the same step list Acquirer
+   Reports already uses.
+   ============================================================================= */
+.nf-tabs { margin-bottom: 14px; }
+.nf-tabs .tab { display: inline-flex; align-items: center; gap: 7px; }
+.nf-tabs .tab svg { width: 15px; height: 15px; }
+
+.nf-who-col { white-space: nowrap; }
+.nf-file-col { white-space: nowrap; }
+.nf-filename { font-size: 12.5px; }
+.nf-empty { color: var(--text-muted); font-weight: 600; }
+.nf-go { width: 34px; text-align: right; }
+.nf-by {
+  display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px;
+  background: var(--bg-subtle); border: 1px solid var(--border-subtle);
+  font-size: 10.5px; font-weight: 700; color: var(--text-secondary); letter-spacing: .3px;
+}
+/* Two left borders, two meanings: red is wrong, blue is waiting on a person. */
+.nf-row-bad td:first-child { box-shadow: inset 3px 0 0 var(--danger-fg); }
+.nf-row-act td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+
+.nf-tag {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 4px;
+  background: var(--status-warning-bg); color: var(--status-warning-fg);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .2px;
+}
+.nf-tag.danger { background: var(--status-danger-bg); color: var(--status-danger-fg); }
+.nf-tag svg { width: 11px; height: 11px; }
+
+.nf-head { align-items: flex-start; }
+.nf-head .head-actions { align-items: center; gap: 12px; }
+.nf-sub { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* ---- the instruction block (Part 5.3 / 5.5) ------------------------------ */
+.nf-act {
+  border: 1px solid var(--primary); border-radius: 12px; background: var(--primary-subtle-bg);
+  padding: 18px 20px; margin-bottom: 18px;
+}
+.nf-act-head {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 15px; font-weight: 700; color: var(--primary-subtle-fg); margin-bottom: 8px;
+}
+.nf-act-line { font-size: 13.5px; line-height: 1.55; color: var(--text-primary); max-width: 76ch; }
+.nf-act-paths {
+  margin: 14px 0 4px; border: 1px solid var(--border-subtle); border-radius: 8px;
+  background: var(--bg-card); overflow: hidden;
+}
+.nf-act-row {
+  display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  padding: 9px 12px; border-bottom: 1px solid var(--border-subtle);
+}
+.nf-act-row:last-child { border-bottom: 0; }
+.nf-act-key { font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary); font-weight: 600; }
+.nf-act-val { font-size: 12.5px; overflow-wrap: anywhere; }
+.nf-act-foot { display: flex; justify-content: flex-end; margin-top: 14px; }
+
+/* ---- the already-started guard ------------------------------------------- */
+.nf-already { align-items: flex-start; margin-bottom: 18px; }
+.nf-already-line { margin-top: 6px; font-size: 13px; line-height: 1.55; }
+.nf-already-prev {
+  display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; padding: 8px 10px;
+  border-radius: 6px; background: var(--bg-card); border: 1px solid var(--border-subtle);
+  font-size: 12.5px; color: var(--text-secondary);
+}
+.nf-already-act { margin-top: 12px; }
+.nf-override-form { margin-top: 12px; }
+.nf-override-form textarea.input { min-height: 88px; }
+.nf-override-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.nf-override-btns { display: inline-flex; gap: 8px; }
+.nf-count { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+.nf-count.ok { color: var(--status-success-fg); }
+.nf-override-note { margin-top: 8px; font-size: 12px; }
+
+/* ---- detail layout -------------------------------------------------------- */
+.nf-detail-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(340px, .85fr); gap: 18px; align-items: start; }
+@media (max-width: 1279px) { .nf-detail-grid { grid-template-columns: minmax(0, 1fr); } }
+.nf-steps-card { padding: 20px 22px; }
+.nf-side { display: flex; flex-direction: column; gap: 18px; }
+.nf-steps { margin-top: 12px; }
+.nf-step-note { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+.nf-doing {
+  display: flex; gap: 8px; align-items: flex-start; margin-top: 16px; padding: 10px 12px;
+  border-radius: 8px; background: var(--bg-subtle); border: 1px solid var(--border-subtle);
+  font-size: 12.5px; color: var(--text-secondary);
+}
+.nf-doing svg { flex: 0 0 auto; margin-top: 1px; }
+.nf-inline-link {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 14px;
+  font-size: 13px; font-weight: 600; color: var(--primary); cursor: pointer;
+}
+.nf-inline-link:hover { text-decoration: underline; }
+
+/* ---- file block ----------------------------------------------------------- */
+.nf-file-block { padding: 18px 20px; }
+.nf-file-block.empty { padding: 8px; }
+.nf-file-name { font-size: 14px; font-weight: 700; color: var(--text-strong); margin-bottom: 14px; overflow-wrap: anywhere; }
+.nf-file-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; }
+.nf-kv { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nf-kv.wide { grid-column: 1 / -1; }
+.nf-kv-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary); font-weight: 600; }
+.nf-kv-value { font-size: 13px; color: var(--text-primary); overflow-wrap: anywhere; }
+.nf-s3 { font-size: 12px; }
+.nf-file-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+
+/* ---- staging proof -------------------------------------------------------- */
+.nf-proof { padding: 18px 20px; }
+.nf-proof-head { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+.nf-proof.ok .nf-proof-head { color: var(--status-success-fg); }
+.nf-proof.overdue { border-color: #FECACA; }
+.nf-proof.overdue .nf-proof-head { color: var(--status-danger-fg); }
+.nf-proof-line { font-size: 13px; line-height: 1.55; color: var(--text-secondary); margin-bottom: 14px; }
+.nf-proof-act { display: flex; justify-content: flex-end; }
+.nf-proof-upload { display: flex; flex-direction: column; gap: 10px; }
+.nf-manual-tag {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 6px;
+  border-radius: 4px; background: var(--status-warning-bg); color: var(--status-warning-fg);
+  font-size: 10.5px; font-weight: 700;
+}
+.nf-manual-tag svg { width: 11px; height: 11px; }
+
+/* =============================================================================
+   PART 4 — RECONCILIATION (rebuilt)
+   Submitted − Received = Difference, on gross. Zero is the expected outcome, so
+   zero is the colour of success and anything else is a break.
+   ============================================================================= */
+.recon-table tbody tr { cursor: pointer; }
+/* The open row keeps its selected colour on hover — the generic row-hover rule
+   above is more specific than a bare class, so these have to match its weight
+   or the selection would grey out under the pointer. */
+.dl2 table.data.recon-table tbody tr.recon-row-open,
+.dl2 table.data.recon-table tbody tr.recon-row-open:hover { background: var(--primary-subtle-bg); }
+.recon-row-break td:first-child { box-shadow: inset 3px 0 0 var(--danger-fg); }
+.recon-go { width: 34px; text-align: right; }
+.recon-diff.zero { color: var(--status-success-fg); font-weight: 700; }
+.recon-diff.break { color: var(--status-danger-fg); font-weight: 700; }
+.recon-unmatched { color: var(--status-danger-fg); font-weight: 700; }
+.recon-scope-break { color: var(--status-danger-fg); }
+.recon-empty { color: var(--text-muted); font-weight: 600; }
+
+/* ---- the side panel ------------------------------------------------------- */
+.recon-panel .sp-name { font-size: 15px; }
+.recon-panel-id { font-size: 14px; }
+.recon-steps { display: flex; flex-direction: column; gap: 2px; margin-bottom: 20px; }
+.recon-step {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 8px; align-items: center;
+  padding: 7px 0; font-size: 13px;
+}
+.recon-step-ic { display: inline-flex; color: var(--text-faint); }
+.recon-step-ic svg { width: 17px; height: 17px; }
+.recon-step.done .recon-step-ic { color: var(--status-success-fg); }
+.recon-step.active .recon-step-ic { color: var(--primary); }
+.recon-step.failed .recon-step-ic { color: var(--status-danger-fg); }
+.recon-step-name { color: var(--text-primary); font-weight: 500; }
+.recon-step.todo .recon-step-name { color: var(--text-muted); }
+.recon-step-at { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+
+.recon-figures {
+  border: 1px solid var(--border-subtle); border-radius: 10px; overflow: hidden; margin-bottom: 20px;
+}
+.recon-fig {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 11px 14px; border-bottom: 1px solid var(--border-subtle); font-size: 13.5px;
+}
+.recon-fig:last-child { border-bottom: 0; }
+.recon-fig-label { color: var(--text-secondary); font-weight: 600; }
+.recon-fig-val { font-size: 15px; font-weight: 600; color: var(--text-strong); }
+.recon-fig.total { flex-wrap: wrap; background: var(--bg-subtle); border-top: 2px solid var(--border-default); }
+.recon-fig.total.zero .recon-fig-val { color: var(--status-success-fg); font-size: 20px; font-weight: 700; }
+.recon-fig.total.break .recon-fig-val { color: var(--status-danger-fg); font-size: 20px; font-weight: 700; }
+.recon-fig.total.await .recon-fig-val { color: var(--text-muted); font-size: 20px; }
+.recon-verdict {
+  display: inline-flex; align-items: center; gap: 5px; width: 100%; justify-content: flex-end;
+  font-size: 12px; font-weight: 700;
+}
+.recon-verdict.ok { color: var(--status-success-fg); }
+.recon-verdict.bad { color: var(--status-danger-fg); }
+.recon-verdict.await { color: var(--text-secondary); }
+
+/* Fees sit visibly OUTSIDE the arithmetic — a separate block with its own
+   heading, not another row in the sum (Part 4.2). */
+.recon-fees {
+  border: 1px dashed var(--border-default); border-radius: 10px; padding: 14px 16px;
+  background: var(--bg-subtle); margin-bottom: 20px;
+}
+.recon-fees-head { font-size: 13px; font-weight: 700; color: var(--text-strong); }
+.recon-fees-note { font-size: 12px; color: var(--text-secondary); margin: 4px 0 12px; }
+.recon-fee-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 5px 0; font-size: 13px; color: var(--text-primary);
+}
+.recon-fee-row.total { border-top: 1px solid var(--border-default); margin-top: 5px; padding-top: 8px; font-weight: 700; }
+
+.recon-sub { margin-bottom: 20px; }
+.recon-sub-head {
+  font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px;
+  color: var(--text-secondary); font-weight: 700; margin-bottom: 8px;
+}
+table.data.recon-cyc td { padding: 7px 10px; font-size: 12.5px; }
+.recon-got { color: var(--status-success-fg); width: 26px; text-align: right; }
+.recon-more {
+  margin-top: 8px; font-size: 12px; color: var(--text-secondary);
+  padding: 6px 10px; border-radius: 6px; background: var(--bg-subtle);
+  border: 1px dashed var(--border-default);
+}
+.recon-links { display: flex; flex-direction: column; gap: 8px; }
+.recon-links a {
+  display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600;
+  color: var(--primary); cursor: pointer;
+}
+.recon-links a:hover { text-decoration: underline; }
+
+/* =============================================================================
+   PART 2 — OPS HOME
+   ============================================================================= */
+/* The hidden-tenant line. It can only ever appear when every hidden tenant is
+   nominal, so it is deliberately quiet — an issue is promoted into the grid
+   instead of being announced here. */
+.cyc-more { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.cyc-more-btn {
+  border: 0; background: none; cursor: pointer; padding: 4px 8px; border-radius: 6px;
+  font-size: 12.5px; color: var(--text-secondary); font-weight: 600;
+}
+.cyc-more-btn:hover { background: var(--bg-subtle); color: var(--primary); text-decoration: underline; }
+
+.queue-grid { align-items: start; }
+.dl2 .grid.grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 1439px) { .dl2 .grid.grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Part 2.4 — a problem leg's link to where the issue is worked. Rendered only
+   on a leg that is delayed or failed, so it always means something. */
+.cyc-problemlink {
+  display: inline-flex; align-items: center; gap: 7px; margin-top: 14px;
+  padding: 8px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--primary-subtle-bg); border: 1px solid var(--primary);
+  font-size: 13px; font-weight: 600; color: var(--primary-subtle-fg);
+}
+.cyc-problemlink:hover { filter: brightness(.97); text-decoration: none; }
+.cyc-problemlink svg { flex: 0 0 auto; }
+
+/* =============================================================================
+   PART 6.3 — ACQUIRER REPORTS: GROUPING
+   ============================================================================= */
+.sf-group { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-subtle); }
+.sf-group-btn {
+  border: 0; background: none; cursor: pointer; padding: 6px 12px; border-radius: 6px;
+  font-size: 12.5px; font-weight: 600; color: var(--text-secondary); white-space: nowrap;
+}
+.sf-group-btn:hover { color: var(--text-primary); background: var(--bg-card); }
+.sf-group-btn.active { background: var(--bg-card); color: var(--primary); box-shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+
+.sf-group-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin: 22px 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-subtle);
+}
+.sf-group-head:first-child { margin-top: 0; }
+.sf-group-date { font-size: 15px; font-weight: 700; color: var(--text-strong); }
+.sf-group-kind {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .5px; font-weight: 700;
+  color: var(--text-secondary); padding: 1px 6px; border-radius: 4px;
+  background: var(--bg-subtle); border: 1px solid var(--border-subtle);
+}
+.sf-cycle-col { white-space: nowrap; }
+.sf-cycle-col .cell-sub { font-variant-numeric: tabular-nums; }
+
+/* =============================================================================
+   PART 7 — ACQUIRER ONBOARDING: HOLIDAY CALENDAR
+   ============================================================================= */
+.hol-months { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.cal-cell.halfday { background: var(--status-warning-bg); border-color: #FDE68A; }
+.cal-cell.halfday .cal-name { color: var(--status-warning-fg); font-weight: 500; margin-top: 4px; font-size: 11px; }
+.hol-legend { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 12.5px; color: var(--text-secondary); }
+.hol-lg { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.hol-lg.full { background: var(--status-danger-bg); border: 1px solid #FECACA; }
+.hol-lg.half { background: var(--status-warning-bg); border: 1px solid #FDE68A; margin-left: 12px; }
+.hol-edit { width: 40px; text-align: right; }
+.hol-modal { max-width: 460px; }
+
+/* =============================================================================
+   PART 8 — PLATFORM CONFIGS: GUIDED TASK FLOWS
+   One flow shape, thirteen flows. The progress indicator and the pinned footer
+   are the same on every one of them.
+   ============================================================================= */
+.cff-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.cff-stepcount { font-size: 13px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
+.cff-ro {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+  background: var(--bg-subtle); border: 1px solid var(--border-subtle);
+  font-size: 12px; font-weight: 700; color: var(--text-secondary);
+}
+
+.cff-progress { display: flex; align-items: flex-start; gap: 0; margin-bottom: 26px; flex-wrap: wrap; }
+.cff-prog-node { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 92px; flex: 0 0 auto; }
+.cff-prog-dot {
+  width: 26px; height: 26px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
+  border: 2px solid var(--border-default); background: var(--bg-card);
+  font-size: 12px; font-weight: 700; color: var(--text-muted);
+}
+.cff-prog-node.done .cff-prog-dot { background: var(--primary); border-color: var(--primary); color: #FFFFFF; }
+.cff-prog-node.current .cff-prog-dot { border-color: var(--primary); color: var(--primary); box-shadow: 0 0 0 4px var(--primary-subtle-bg); }
+.cff-prog-label { font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.cff-prog-node.done .cff-prog-label, .cff-prog-node.current .cff-prog-label { color: var(--text-primary); }
+.cff-prog-line { flex: 1 1 auto; min-width: 20px; height: 2px; margin-top: 13px; background: var(--border-default); }
+.cff-prog-line.lit { background: var(--primary); opacity: .5; }
+
+.cff-body {
+  border: 1px solid var(--border-light); border-radius: 12px; background: var(--bg-card);
+  padding: 24px 26px; margin-bottom: 18px;
+}
+.cff-step-head { margin-bottom: 18px; }
+.cff-step-title { font-size: 19px; font-weight: 700; color: var(--text-strong); margin: 0; }
+.cff-step-sub { font-size: 13.5px; color: var(--text-secondary); margin: 6px 0 0; max-width: 74ch; line-height: 1.55; }
+
+/* One decision per step, laid out as a choice grid rather than a dropdown: the
+   options are the step. */
+.cff-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.cff-choices.dense { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+.cff-choice {
+  position: relative; display: flex; flex-direction: column; gap: 3px; align-items: flex-start; text-align: left;
+  padding: 12px 34px 12px 14px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--border-default); background: var(--bg-card);
+  transition: border-color .12s ease, background .12s ease;
+}
+.cff-choice:hover { border-color: var(--border-strong); background: var(--bg-subtle); }
+.cff-choice.active { border-color: var(--primary); background: var(--primary-subtle-bg); box-shadow: inset 0 0 0 1px var(--primary); }
+.cff-choice-main { font-size: 13.5px; font-weight: 600; color: var(--text-strong); overflow-wrap: anywhere; }
+.cff-choice-sub { font-size: 12px; color: var(--text-secondary); }
+.cff-choice-tick { position: absolute; top: 12px; right: 12px; display: inline-flex; color: var(--primary); }
+
+.cff-sub-pick { margin-top: 20px; }
+.cff-sub-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary); font-weight: 700; margin-bottom: 8px; }
+
+.cff-search { max-width: 380px; margin-bottom: 14px; }
+.cff-fieldlist {
+  border: 1px solid var(--border-subtle); border-radius: 10px; overflow: hidden; max-height: 320px; overflow-y: auto;
+}
+.cff-fieldrow {
+  position: relative; width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 110px 60px 30px;
+  gap: 12px; align-items: center; text-align: left; cursor: pointer;
+  padding: 10px 14px; border: 0; border-bottom: 1px solid var(--border-subtle); background: var(--bg-card);
+}
+.cff-fieldrow:last-child { border-bottom: 0; }
+.cff-fieldrow:hover { background: var(--bg-subtle); }
+.cff-fieldrow.active { background: var(--primary-subtle-bg); box-shadow: inset 3px 0 0 var(--primary); }
+.cff-fr-name { font-size: 13px; font-weight: 500; color: var(--text-strong); overflow-wrap: anywhere; }
+.cff-fr-pos { font-size: 12px; color: var(--text-secondary); }
+.cff-fr-type { font-size: 12px; color: var(--text-muted); }
+.cff-fieldrow .cff-choice-tick { position: static; justify-self: end; }
+
+.cff-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px 18px; max-width: 720px; }
+.cff-form-row { grid-template-columns: repeat(auto-fit, minmax(180px, auto)); }
+.cff-pos { display: grid; grid-template-columns: repeat(2, minmax(0, 200px)); gap: 18px; margin-top: 18px; }
+.cff-was { font-size: 13px; color: var(--text-secondary); margin-bottom: 14px; }
+.cff-ok {
+  display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 9px 12px; border-radius: 8px;
+  background: var(--status-success-bg); color: var(--status-success-fg); font-size: 13px; font-weight: 600;
+}
+.cff-overlap { margin-top: 14px; }
+.cff-sample {
+  display: flex; flex-direction: column; gap: 4px; margin-top: 16px; padding: 10px 12px;
+  border-radius: 8px; background: var(--bg-subtle); border: 1px solid var(--border-subtle);
+}
+.cff-sample-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary); font-weight: 600; }
+.cff-sample-wrap { max-height: 360px; }
+.cff-patterns { min-height: 92px; }
+.cff-patlist, .cff-view-cols { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.cff-col-chip {
+  display: inline-block; padding: 3px 8px; border-radius: 6px; font-size: 12px;
+  background: var(--bg-subtle); border: 1px solid var(--border-subtle); color: var(--text-primary);
+}
+.cff-addrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+.cff-addrow .input { max-width: 200px; }
+.cff-addrow .input.num { max-width: 110px; }
+.cff-nofields { padding: 14px 0; }
+.cff-rowdel { width: 40px; text-align: right; }
+.cff-checks { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 18px; }
+.cff-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text-primary); cursor: pointer; }
+.cff-empty { padding: 8px 0; }
+.cff-raw { max-height: 420px; overflow: auto; padding: 14px; border-radius: 8px; background: var(--bg-subtle); border: 1px solid var(--border-subtle); font-size: 12px; }
+.cff-view { margin-top: 24px; }
+.cff-skip td { color: var(--text-muted); }
+
+/* Report content editor */
+.cff-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.cff-col-pane { border: 1px solid var(--border-subtle); border-radius: 10px; padding: 12px 14px; max-height: 380px; overflow-y: auto; }
+.cff-col-head { font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--text-secondary); font-weight: 700; margin-bottom: 10px; }
+.cff-col-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 12.5px; border-bottom: 1px solid var(--border-subtle); }
+.cff-col-row:last-child { border-bottom: 0; }
+.cff-col-btns { display: inline-flex; gap: 2px; }
+.cff-col-add {
+  display: flex; align-items: center; gap: 7px; width: 100%; text-align: left; cursor: pointer;
+  padding: 6px 8px; border: 0; border-radius: 6px; background: none; font-size: 12.5px; color: var(--text-primary);
+}
+.cff-col-add:hover { background: var(--primary-subtle-bg); color: var(--primary-subtle-fg); }
+
+/* Fee conditions + calculator */
+.cff-conds { display: flex; flex-direction: column; gap: 8px; }
+.cff-cond {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px;
+  background: var(--bg-subtle); border: 1px solid var(--border-subtle); font-size: 12.5px;
+}
+.cff-cond-op { font-size: 11px; font-weight: 700; color: var(--text-secondary); letter-spacing: .3px; }
+.cff-cond button { margin-left: auto; }
+.cff-calc { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 899px) { .cff-calc { grid-template-columns: minmax(0, 1fr); } }
+.cff-calc-out { border: 1px solid var(--border-subtle); border-radius: 10px; padding: 14px 16px; background: var(--bg-subtle); }
+.cff-calc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 13.5px; }
+.cff-calc-row:first-child { font-weight: 700; color: var(--text-strong); font-size: 15px; }
+.cff-calc-note { margin-top: 8px; font-size: 12px; color: var(--text-secondary); }
+
+/* Review */
+.cff-target {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 10px 12px;
+  border-radius: 8px; background: var(--bg-subtle); border: 1px solid var(--border-subtle); font-size: 13px;
+}
+.def-list.cff-review { margin-bottom: 16px; }
+.cff-summary {
+  display: flex; gap: 9px; align-items: flex-start; padding: 12px 14px; border-radius: 8px;
+  background: var(--primary-subtle-bg); border: 1px solid var(--primary);
+  font-size: 13.5px; color: var(--primary-subtle-fg); font-weight: 600; margin-bottom: 16px;
+}
+.cff-summary svg { flex: 0 0 auto; margin-top: 2px; }
+.cff-approval { align-items: flex-start; }
+
+/* The footer is pinned to the bottom of the flow, always in the same place. */
+.cff-foot {
+  position: sticky; bottom: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 14px 0 18px; background: linear-gradient(to bottom, transparent, var(--bg-app) 22%);
+}
+
+/* Same reason: Acquirer Reports' expanded row and the two attention tints have
+   to out-weigh the global row-hover rule introduced above. */
+.dl2 table.data.sf-table tbody tr.sf-row-open,
+.dl2 table.data.sf-table tbody tr.sf-row-open:hover { background: var(--bg-subtle); }
+.dl2 table.data.sf-table tbody tr.sf-row-failed:hover,
+.dl2 table.data.nf-table tbody tr.nf-row-bad:hover { background: var(--danger-bg); }
+.dl2 table.data.nf-table tbody tr.nf-row-act:hover { background: var(--info-bg); }
+.dl2 table.data.recon-table tbody tr.recon-row-break:hover { background: var(--danger-bg); }
+
+/* The recon history is ten columns wide and the amounts are the widest of them,
+   so the table is tightened to keep Status — the column that says whether this
+   cycle is a problem — inside the first screen at 1512px rather than one scroll
+   to the right of it. */
+table.data.recon-table th, table.data.recon-table td { padding-left: 9px; padding-right: 9px; }
+table.data.recon-table td:first-child, table.data.recon-table th:first-child { padding-left: 14px; }
+table.data.recon-table .cycle-id-code { font-size: 12px; }
+table.data.recon-table .cycle-id-date { font-size: 11px; }
+table.data.recon-table td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Nine columns of content need more width than the 1512px content area gives
+   them, so the wrapper scrolls — the same answer this build gives every wide
+   table, and the right one: truncating a status pill or dropping a column the
+   brief asked for would cost information, and a horizontal scroll costs a
+   gesture. The page itself never scrolls sideways (verified 1440–2560px). */
+.recon-table { min-width: 1240px; }

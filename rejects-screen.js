@@ -306,7 +306,9 @@ window.RejectsUI = function (kit) {
         '<div class="cell-sub num">' + (c.re_rejected ? c.re_rejected + ' re-rejected · ' : '') + R.batchOpen(b) + ' open</div></td>' +
         '<td class="num nowrap">' + fmt(R.batchValue(b), 2, b.currency) + '</td>' +
         '<td class="nowrap cell-sub num">' + esc(b.receivedAt) + '</td>' +
-        '<td class="nowrap"><span class="rej-open-link">Open' + icon('arrow-right', 14) + '</span></td>' +
+        // Part 1.2 — the row navigates, so the affordance is a chevron that
+        // appears on hover, not a permanent "Open →" label.
+        '<td class="row-go">' + icon('chevron-right', 16) + '</td>' +
         '</tr>';
     }).join('');
 
@@ -360,7 +362,7 @@ window.RejectsUI = function (kit) {
         '<td class="num nowrap">' + moneyOf(t) + '</td>' +
         '<td title="' + esc(R.reasonText(t.reasonCode) + ' (' + t.reasonCode + ')') + '">' + reasonCell(t) + '</td>' +
         '<td class="nowrap">' + statusPill(t, false) + '</td>' +
-        '<td class="nowrap"><span class="rej-open-link">Open batch' + icon('arrow-right', 14) + '</span></td>' +
+        '<td class="row-go">' + icon('chevron-right', 16) + '</td>' +
         '</tr>';
     }).join('');
     return '<div class="meta mb-16">' + icon('rotate-ccw', 13) +
@@ -683,11 +685,18 @@ window.RejectsUI = function (kit) {
       : '';
 
     /* Record-level validation is what produces these rejects, so the batch
-       points back at the file processing that produced them. */
+       points back at the incoming file that produced them. Recon File
+       Management is gone as a destination (refinement Part 4.3); the file and
+       its step detail live in Network Files → Incoming now. */
+    /* A batch names its network the way the network names itself ("Mastercard");
+       cycle IDs are keyed on the platform's network key ("mc"). One map, here,
+       rather than a second network vocabulary. */
+    var NET_KEY = { Mastercard: 'mc', Visa: 'visa', RuPay: 'rupay' };
+    var incId = window.OPS.cycleId(b.tenantId, NET_KEY[b.network] || 'visa', b.cycleDate, 1);
     var rcaBlock = '<div class="rej-runlink mt-24">' + icon('file-search', 15) +
       '<span>These records failed the Transaction Level Check on an incoming file.</span>' +
-      '<a class="btn-ghost" data-route="#/dashboard/ops/reconciliation/files">' +
-      'Recon File Management ' + icon('arrow-right', 13) + '</a></div>';
+      '<a class="btn-ghost" data-route="#/dashboard/ops/network-files/incoming/' + esc(incId) + '">' +
+      'Open the incoming file ' + icon('arrow-right', 13) + '</a></div>';
 
     var body = tab === 'file'
       ? '<div class="mt-24">' + tabs + fileTable(b) + '</div>'

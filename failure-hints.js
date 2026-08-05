@@ -94,8 +94,35 @@ window.FailureHints = (function () {
       hint: 'The record count in the file trailer doesn’t match the records parsed.',
       retryable: true
     },
+    PARSE_UNKNOWN_TCR: {
+      hint: 'The file declares a record type (TCR) that this source has no definition for, so the parser stopped rather than guess at the layout.',
+      action: {
+        label: 'Add the record type →',
+        route: '#/dashboard/ops/configs/incoming',
+        tab: 'preprocessor',
+        context: ['network', 'tenant']
+      },
+      retryable: true
+    },
 
     /* ---- Outgoing clearing ---------------------------------------------- */
+    CLR_GEN_UNMAPPED_MCC: {
+      hint: 'Some records carry an MCC with no entry in this tenant’s interchange table, so the generator refused to emit a partial file.',
+      action: {
+        label: 'Open fee rules →',
+        route: '#/dashboard/ops/configs/settlement',
+        tab: 'fees',
+        context: ['tenant']
+      },
+      retryable: true
+    },
+    /* No config owns the network's own proof-file delivery, so there is no
+       destination to send anyone to — the operator investigates with the
+       network desk and can upload the proof by hand. */
+    PROOF_NOT_RECEIVED: {
+      hint: 'The file was staged but the network has not returned its staging-proof file inside the expected window. The staging itself may well have succeeded — this says only that no proof arrived.',
+      retryable: false
+    },
     NO_TRANSACTIONS_FOUND: {
       hint: 'No transactions matched this cycle, so there was nothing to write.',
       action: {
@@ -191,7 +218,10 @@ window.FailureHints = (function () {
 
   // The Platform Configs catalogue uses underscored ids; the ops tenant list
   // uses hyphenated ones. One place knows the difference.
-  var CFG_TENANT = { 'yesbank': 'yes_bank', 'hsbc-in': 'hsbc_in', 'hsbc-sg': 'hsbc_sg', 'hsbc-hk': 'hsbc_hk' };
+  var CFG_TENANT = {
+    'yesbank': 'yes_bank', 'hsbc-in': 'hsbc_in', 'hsbc-sg': 'hsbc_sg', 'hsbc-hk': 'hsbc_hk',
+    'hsbc-au': 'hsbc_au', 'hsbc-my': 'hsbc_my'
+  };
   var CFG_NETWORK = { visa: 'visa', mc: 'mastercard', rupay: 'rupay', onus: 'hsbc_onus' };
   var CFG_SOURCE = { visa: 'visa_incoming', mc: 'mastercard_incoming', rupay: 'rupay_incoming' };
 

@@ -27,7 +27,10 @@ window.FilesUI = function (kit) {
   S.files = {
     q: '', type: 'all', delivery: 'all', validation: 'all',
     dateMode: 'today', date: TODAY, from: U.addDays(TODAY, -6), to: TODAY,
-    openReport: null
+    openReport: null,
+    // Part 6.3 — By delivery date is the default because it answers the
+    // question the ops team actually asks each morning.
+    group: 'delivery'
   };
 
   /* ---- date selection (§C.6) ---------------------------------------------- */
@@ -86,87 +89,10 @@ window.FilesUI = function (kit) {
       icon('help-circle', 13) + 'What failed?' + icon('arrow-right', 12) + '</button>';
   }
 
-  /* ---- §C.7 cross-acquirer overview strip --------------------------------- */
-  /* =======================================================================
-     PART 6.2 — DELIVERY TIMING AGAINST CUTOFF
-     The summary strip that used to sit here is gone (Part 6.1): files
-     expected / shared / pending / failed / mismatches all restated what the
-     table below already shows, row by row.
-
-     This is what the table cannot show. Volume trends live in the Bank Portal
-     and validation counts are in the table; how close to cutoff reports are
-     being delivered, over time, is visible nowhere else — and a line drifting
-     toward zero over several weeks is a breach being announced in advance.
-     One chart. There is no second one.
-     ======================================================================= */
-  var LINE_COLORS = ['#2563EB', '#7C3AED', '#0891B2', '#EA6C0B', '#197A45', '#DB2777'];
-
-  function trendChart() {
-    var tid = S.ops.filesTenant;
-    var t = F.deliveryTiming(tid, 30);
-    if (!t.series.length) return '';
-    return '<div class="sf-trend">' +
-      '<div class="sf-trend-note">Minutes before cutoff at delivery. Below the line means the cutoff was missed.' +
-      (tid === 'all' ? ' <span class="meta">Across all acquirers, the tightest margin each cycle.</span>' : '') +
-      '</div>' +
-      '<div class="sf-trend-canvas"><canvas id="sf-timing"></canvas></div>' +
-      '</div>';
-  }
-
-  /* Any point at or below zero is a filled red dot — the cutoff was missed on
-     that cycle, and it has to be findable without reading the axis. */
-  function paintTrend() {
-    var tid = S.ops.filesTenant;
-    var t = F.deliveryTiming(tid, 30);
-    if (!t.series.length || !kit.chart) return;
-    kit.chart('sf-timing', {
-      type: 'line',
-      data: {
-        labels: t.dates.map(function (d) { var x = U.fromYmd(d); return x.getUTCDate() + ' ' + U.MON[x.getUTCMonth()]; }),
-        datasets: t.series.map(function (s, i) {
-          var color = LINE_COLORS[i % LINE_COLORS.length];
-          return {
-            label: s.type,
-            data: s.points,
-            borderColor: color,
-            backgroundColor: color,
-            borderWidth: 2,
-            tension: 0.25,
-            spanGaps: false,
-            pointRadius: s.points.map(function (p) { return p != null && p <= 0 ? 5 : 2; }),
-            pointBackgroundColor: s.points.map(function (p) { return p != null && p <= 0 ? '#B42318' : color; }),
-            pointBorderColor: s.points.map(function (p) { return p != null && p <= 0 ? '#B42318' : color; })
-          };
-        })
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        scales: {
-          x: { grid: { display: false }, ticks: { maxTicksLimit: 10, autoSkip: true } },
-          y: {
-            title: { display: true, text: 'minutes before cutoff' },
-            grid: {
-              color: function (c) { return c.tick && c.tick.value === 0 ? '#B42318' : '#EDEFF3'; },
-              lineWidth: function (c) { return c.tick && c.tick.value === 0 ? 2 : 1; }
-            }
-          }
-        },
-        plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, pointStyle: 'line' } },
-          tooltip: {
-            callbacks: {
-              label: function (c) {
-                if (c.parsed.y == null) return c.dataset.label + ': not delivered';
-                var m = c.parsed.y;
-                return c.dataset.label + ': ' + (m <= 0 ? Math.abs(m) + ' min AFTER cutoff' : m + ' min before cutoff');
-              }
-            }
-          }
-        }
-      }
-    });
-  }
+  /* PART 6.1 — the delivery-timing chart is gone, with no replacement. It has
+     not proven useful: the table already carries delivery status and the shared
+     time per file, and a trend line nobody acts on costs attention and returns
+     nothing. There is no chart on this screen. */
 
   /* ---- filter row --------------------------------------------------------- */
   function select(action, value, opts) {
@@ -220,8 +146,32 @@ window.FilesUI = function (kit) {
           '<span class="meta">–</span>' +
           '<input type="date" data-action="sf-to" value="' + S.files.to + '" min="' + MIN_DATE + '" max="' + TODAY + '" aria-label="To" />'
           : '<span>' + esc(range().label) + '</span>')) + kit.icon('chevron-down', 16),
-      refresh: 'sf-refresh'
+      refresh: 'sf-refresh',
+      extra: groupToggle()
     }) + '<div class="mb-16"></div>';
+  }
+
+  /* =========================================================================
+     PART 6.3 — TODAY'S DELIVERIES SPAN TWO CYCLES
+
+     On any given day the platform delivers MPR, MPF and JV1 for the T-1 cycle
+     alongside JV2 for the T-2 cycle: JV2 posts adjustments that only exist once
+     the following cycle's incoming has been read, so it is always a full cycle
+     behind its siblings.
+
+     "Did today's files go out" is the operational question and it cannot be
+     answered inside one cycle. So the default grouping is by DELIVERY DATE,
+     with every row stating which cycle it belongs to; By cycle is there for the
+     opposite question — what did this cycle produce.
+     ========================================================================= */
+  function groupToggle() {
+    return '<div class="sf-group" role="radiogroup" aria-label="Grouping">' +
+      [['delivery', 'By delivery date'], ['cycle', 'By cycle']].map(function (o) {
+        var on = S.files.group === o[0];
+        return '<button type="button" class="sf-group-btn' + (on ? ' active' : '') + '" ' +
+          'data-action="sf-group" data-group="' + o[0] + '" role="radio" aria-checked="' + (on ? 'true' : 'false') + '">' +
+          esc(o[1]) + '</button>';
+      }).join('') + '</div>';
   }
 
   /* ---- row actions (§C.4) ------------------------------------------------- */
@@ -275,8 +225,11 @@ window.FilesUI = function (kit) {
       (rep.rows.length
         ? '<div class="cyc-sub-title">Mismatched records</div>' +
         '<div class="table-wrap"><table class="data sf-report-table"><thead><tr><th>Record</th><th>Field</th><th class="num">File value</th><th class="num">Source value</th><th class="num">Delta</th></tr></thead><tbody>' + recRows + '</tbody></table></div>' +
-        '<div class="meta mt-16">Correct these in the source extract, upload the corrected file, then re-run validation.</div>'
-        : '<div class="meta mt-16">Every record reconciles against the source.</div>') +
+        /* Part 1.1 — the correction loop is described by the row's own
+           actions and by the validation pill's hint, not by a line under the
+           table restating it. */
+        ''
+        : '') +
       '<div class="cyc-sub-title">File history</div>' +
       '<div class="sf-events">' + kit.immutableTimeline(row.events.slice().reverse()) + '</div>' +
       '</div>';
@@ -296,12 +249,15 @@ window.FilesUI = function (kit) {
         esc(net.key) + '/' + esc(row.date) + '">' + icon('calendar-clock', 14) +
         'This cycle’s snapshot' + icon('arrow-right', 13) + '</a>');
     }
-    links.push('<a data-route="#/dashboard/ops/reconciliation/files">' + icon('file-search', 14) +
-      'Recon File Management' + icon('arrow-right', 13) + '</a>');
+    /* Recon Files merged into Reconciliation (Part 4.3), so this goes to the
+       reconciliation itself rather than to a screen that no longer exists. */
+    links.push('<a data-route="#/dashboard/ops/reconciliation?reconTenant=' + esc(row.tenantId) + '">' +
+      icon('git-compare', 14) + 'Reconciliation for this acquirer' + icon('arrow-right', 13) + '</a>');
     return '<div class="sf-related">' + links.join('') + '</div>';
   }
 
   /* ---- the table (§C.8) --------------------------------------------------- */
+  var TYPE_ORDER = ['MPR', 'GEFU1', 'MPF', 'GEFU2', 'JV1', 'JV2'];
   function visibleRows(rg) {
     var tid = S.ops.filesTenant, f = S.files;
     return F.rowsForRange(rg.from, rg.to).filter(function (r) {
@@ -312,9 +268,77 @@ window.FilesUI = function (kit) {
       if (f.q && r.name.toLowerCase().indexOf(f.q.toLowerCase()) < 0) return false;
       return true;
     }).sort(function (a, b) {
-      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      /* Grouping decides the outer order; within a group the rows read tenant,
+         then generation order, which puts JV2 last — where it belongs, since it
+         is the one file reporting on the earlier cycle. */
+      var ka = S.files.group === 'cycle' ? a.cycleDate : a.deliveryDate;
+      var kb = S.files.group === 'cycle' ? b.cycleDate : b.deliveryDate;
+      if (ka !== kb) return ka < kb ? 1 : -1;
       if (a.tenantId !== b.tenantId) return a.tenantId < b.tenantId ? -1 : 1;
-      return a.type < b.type ? -1 : 1;
+      return TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type);
+    });
+  }
+
+  function rowHtml(r, colspan) {
+    var cls = r.delivery === 'Failed' ? 'sf-row-failed' : (r.validation === 'Mismatch' ? 'sf-row-mismatch' : '');
+    var open = S.files.openReport === r.id;
+    // Part 6.2 — clicking the row opens the file detail panel, unchanged. The
+    // row actions carry their own data-action and the delegate resolves the
+    // innermost one, so the buttons keep working exactly as before.
+    var main = '<tr class="' + cls + (open ? ' sf-row-open' : '') + ' sf-row-clickable" ' +
+      'data-action="sf-detail" data-id="' + esc(r.id) + '" tabindex="0" ' +
+      'title="' + esc('Open the processing detail for ' + r.name) + '">' +
+      '<td class="sf-tenant-col">' + tenantTag(r.tenantId) + '</td>' +
+      '<td><div class="cell-main"><span class="file-badge sf-type">' + r.type + '</span></div>' +
+      '<div class="cell-sub sf-filename" title="' + esc(r.dest + r.name + ' · ' + r.checksum) + '">' + esc(r.name) + '</div></td>' +
+      /* Part 6.3 — every row states which cycle it belongs to, whichever way the
+         list is grouped. Settlement files have no network dimension, so the
+         cycle is named by its date: a network-bearing cycle identifier here
+         would reintroduce a key this screen deliberately does not carry. */
+      '<td class="nowrap sf-cycle-col"><div class="cell-main">' + U.prettyDate(r.cycleDate) + '</div>' +
+      '<div class="cell-sub">cycle ' + (r.cycleOffset === -2 ? 'T-2' : 'T-1') + '</div></td>' +
+      '<td class="nowrap"><div class="cell-main">' + U.prettyDate(r.deliveryDate) + '</div>' +
+      '<div class="cell-sub">' + r.dow +
+      (r.holiday ? ' · <span class="sf-holiday">' + icon('calendar-x', 11) + esc(r.holiday.name) + '</span>' : '') + '</div></td>' +
+      '<td>' + deliveryPill(r) + (r.failReason ? '<div class="sf-hint danger" title="' + esc(r.failReason) + '">delivery failed — see history</div>' : '') + '</td>' +
+      '<td>' + validationPill(r) + '</td>' +
+      '<td class="nowrap cell-sub">' + esc(r.generatedAt) + '</td>' +
+      '<td class="nowrap cell-sub">' + (r.sharedAt ? esc(r.sharedAt) : '—') + '</td>' +
+      '<td class="num">' + r.size + '</td>' +
+      '<td>' + rowActions(r) + '</td></tr>';
+    var exp = open ? '<tr class="sf-expand"><td colspan="' + colspan + '">' + reportBlock(r) + '</td></tr>' : '';
+    return main + exp;
+  }
+
+  var SF_COLS = 10;
+  function tableShell(body) {
+    return '<div class="table-card"><div class="table-wrap sf-table-wrap"><table class="data sf-table"><thead><tr>' +
+      '<th class="sf-tenant-col">Tenant</th><th>File</th><th class="sf-cycle-col">Cycle</th><th>Delivered on</th>' +
+      '<th>Delivery status</th><th>Validation status</th><th>Generated at</th><th>Shared at</th>' +
+      '<th class="num">Size</th><th>Actions</th></tr></thead><tbody>' + body + '</tbody></table></div></div>';
+  }
+
+  /* Part 6.3 — grouped rendering. Under By delivery date one heading gathers
+     the MPR / MPF / JV1 of the T-1 cycle and the JV2 of the T-2 cycle, which is
+     exactly the set that had to leave that day. Under By cycle the heading is
+     the cycle, and its JV2 sits with it — a full day after its siblings went. */
+  function groupRows(rows) {
+    var byKey = {}, order = [];
+    var byCycle = S.files.group === 'cycle';
+    rows.forEach(function (r) {
+      var key = byCycle ? r.cycleDate : r.deliveryDate;
+      if (!byKey[key]) { byKey[key] = []; order.push(key); }
+      byKey[key].push(r);
+    });
+    order.sort(function (a, b) { return a < b ? 1 : -1; });
+    return order.map(function (key) {
+      var group = byKey[key];
+      var cycles = {};
+      group.forEach(function (r) { cycles[r.cycleDate] = 1; });
+      var n = Object.keys(cycles).length;
+      var sub = group.length + ' file' + (group.length === 1 ? '' : 's') +
+        (!byCycle && n > 1 ? ' · <strong>' + n + ' cycles</strong>' : '');
+      return { key: key, sub: sub, rows: group };
     });
   }
 
@@ -324,34 +348,14 @@ window.FilesUI = function (kit) {
         'Widen the date range or clear the tenant, file and status filters.',
         '<button class="btn btn-secondary" data-action="sf-clear">' + icon('rotate-ccw', 18) + 'Clear filters</button>') + '</div>';
     }
-    var body = rows.map(function (r) {
-      var cls = r.delivery === 'Failed' ? 'sf-row-failed' : (r.validation === 'Mismatch' ? 'sf-row-mismatch' : '');
-      var open = S.files.openReport === r.id;
-      // Part 6 — clicking the row opens the file detail panel. The row actions
-      // carry their own data-action, and the delegate resolves the innermost
-      // one, so the buttons keep working exactly as before.
-      var main = '<tr class="' + cls + (open ? ' sf-row-open' : '') + ' sf-row-clickable" ' +
-        'data-action="sf-detail" data-id="' + esc(r.id) + '" tabindex="0" ' +
-        'title="' + esc('Open the processing detail for ' + r.name) + '">' +
-        '<td class="sf-tenant-col">' + tenantTag(r.tenantId) + '</td>' +
-        '<td class="nowrap"><div class="cell-main">' + U.prettyDate(r.date) + '</div>' +
-        '<div class="cell-sub">' + r.dow +
-        (r.holiday ? ' · <span class="sf-holiday">' + icon('calendar-x', 11) + esc(r.holiday.name) + '</span>' : '') + '</div></td>' +
-        '<td><div class="cell-main"><span class="file-badge sf-type">' + r.type + '</span></div>' +
-        '<div class="cell-sub sf-filename" title="' + esc(r.dest + r.name + ' · ' + r.checksum) + '">' + esc(r.name) + '</div></td>' +
-        '<td>' + deliveryPill(r) + (r.failReason ? '<div class="sf-hint danger" title="' + esc(r.failReason) + '">delivery failed — see history</div>' : '') + '</td>' +
-        '<td>' + validationPill(r) + '</td>' +
-        '<td class="nowrap cell-sub">' + esc(r.generatedAt) + '</td>' +
-        '<td class="nowrap cell-sub">' + (r.sharedAt ? esc(r.sharedAt) : '—') + '</td>' +
-        '<td class="num">' + r.size + '</td>' +
-        '<td>' + rowActions(r) + '</td></tr>';
-      var exp = open ? '<tr class="sf-expand"><td colspan="9">' + reportBlock(r) + '</td></tr>' : '';
-      return main + exp;
+    var byCycle = S.files.group === 'cycle';
+    return groupRows(rows).map(function (g) {
+      return '<div class="sf-group-head">' +
+        '<span class="sf-group-date">' + esc(U.prettyDate(g.key)) + '</span>' +
+        '<span class="sf-group-kind">' + (byCycle ? 'cycle' : 'delivered') + '</span>' +
+        '<span class="meta">' + g.sub + '</span></div>' +
+        tableShell(g.rows.map(function (r) { return rowHtml(r, SF_COLS); }).join(''));
     }).join('');
-    return '<div class="table-card"><div class="table-wrap sf-table-wrap"><table class="data sf-table"><thead><tr>' +
-      '<th class="sf-tenant-col">Tenant</th><th>Cycle date</th><th>File</th>' +
-      '<th>Delivery status</th><th>Validation status</th><th>Generated at</th><th>Shared at</th>' +
-      '<th class="num">Size</th><th>Actions</th></tr></thead><tbody>' + body + '</tbody></table></div></div>';
   }
 
   /* ---- screen ------------------------------------------------------------- */
@@ -364,12 +368,10 @@ window.FilesUI = function (kit) {
       kit.pageHead('Acquirer Reports',
         'Whether each report reached the acquirer, and whether its contents match the source.') +
       filters() +
-      trendChart() +
       '<div class="sf-scope meta">Showing <strong>' + rows.length + '</strong> file' + (rows.length === 1 ? '' : 's') +
       ' · ' + esc(scope) + ' · ' + esc(rg.label) + '</div>' +
       table(rows)
     );
-    paintTrend();
   }
 
   /* Re-render only if this screen is still mounted — a validation run that
@@ -485,6 +487,9 @@ window.FilesUI = function (kit) {
       S.files.dateMode = '30'; S.files.openReport = null; render();
     },
     'sf-refresh': function () { S.files.openReport = null; render(); toast('Refreshed', 'success'); },
+    // Part 6.3 — the grouping toggle. It changes how rows are gathered, never
+    // which rows are in scope, so every other filter survives the switch.
+    'sf-group': function (t) { S.files.group = t.getAttribute('data-group') || 'delivery'; render(); },
     'sf-date': function (t) { S.files.date = clampDate(t.value || TODAY); S.files.dateMode = 'date'; S.files.openReport = null; render(); },
     'sf-from': function (t) { S.files.from = clampDate(t.value || S.files.from); S.files.dateMode = 'range'; S.files.openReport = null; render(); },
     'sf-to': function (t) { S.files.to = clampDate(t.value || S.files.to); S.files.dateMode = 'range'; S.files.openReport = null; render(); },

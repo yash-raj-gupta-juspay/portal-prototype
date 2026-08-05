@@ -1,10 +1,12 @@
 /* =============================================================================
    Juspay Ops Portal — File detail panel (file-detail brief Part 3)
 
-   ONE COMPONENT, THREE ENTRY POINTS (Part 6). Recon File Management is its
-   home; Acquirer Reports opens it on a row click; Cycle Snapshot
-   opens it from a failed leg's "See what failed →". There is no second
-   implementation and no look-alike anywhere.
+   ONE COMPONENT, TWO ENTRY POINTS. Acquirer Reports opens it on a row click;
+   the Cycle Snapshot opens it from a failed leg's "See what failed →". Recon
+   File Management, which used to be its home, folded into Reconciliation
+   (refinement Part 4.3), and Network Files renders the same step pattern inline
+   on its own detail view (Part 6.2). There is no second implementation of the
+   panel and no look-alike anywhere.
 
    The panel keeps everything the existing panel had — the header with the file
    name and UUID beneath it, the File Details / Validation Details tabs, the

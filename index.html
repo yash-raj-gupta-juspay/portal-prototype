@@ -73,25 +73,24 @@
        files, no network dimension. files-data.js needs window.OPS. -->
   <script src="files-data.js"></script>
   <script src="files-screen.js"></script>
-  <!-- Clearing Files (clearing-staging brief Parts 1–3) — the dashboard as the
-       origin point for every clearing file staged to a network. There is no
-       network API: staging happens in VEP, and this section owns the file and
-       the record of what happened. clearing-data.js reads window.OPS for cycle
+  <!-- Network Files (refinement Part 5) — Outgoing (clearing staged to
+       networks) and Incoming (files fetched from networks). Both workflows run
+       through a person in an RDP session that this dashboard cannot see; what
+       it owns is the file, the S3 path the work starts from, and the record of
+       who declared they had begun. netfiles-data.js reads window.OPS for cycle
        identity and window.CYCLES for the holiday calendar, so it loads after
-       both. -->
-  <script src="clearing-data.js"></script>
-  <script src="clearing-screen.js"></script>
-  <!-- File processing detail & failure hints (Ops Portal only).
-       failure-hints.js is pure frontend data with no dependencies — it is the
-       error_code → plain-language lookup and needs no backend at all.
-       proc-files-data.js builds the step records and reads window.CYCLES and
-       window.SFILES, so it comes after both. file-detail-panel.js is the one
-       panel component; recon-files-screen.js is its primary home, a child of
-       Reconciliation. -->
+       both; netfiles-screen.js also needs window.FailureHints, which is why
+       failure-hints.js moves above it. -->
   <script src="failure-hints.js"></script>
+  <script src="netfiles-data.js"></script>
+  <script src="netfiles-screen.js"></script>
+  <!-- File processing detail (Ops Portal only). proc-files-data.js builds the
+       step records and reads window.CYCLES and window.SFILES, so it comes after
+       both. file-detail-panel.js is the one panel component; Acquirer Reports
+       and the Cycle Snapshot are its entry points. -->
   <script src="proc-files-data.js"></script>
   <script src="file-detail-panel.js"></script>
-  <script src="recon-files-screen.js"></script>
+  <script src="configs-flows.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
